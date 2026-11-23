@@ -7,6 +7,7 @@ from app.extraction import (
     extract,
     markdown_to_segments,
     normalize_ws,
+    read_text_file,
 )
 
 
@@ -41,6 +42,18 @@ def test_markdown_preserves_heading_hierarchy():
     assert segs[1].loc["heading"] == "Top > Child"
     assert "Child" in segs[1].text
 
+
+
+
+def test_read_text_file_prefers_cp1252_before_latin1(tmp_path):
+    p = tmp_path / "cp1252.txt"
+    p.write_bytes("aspas “corretas” — preço €10".encode("cp1252"))
+
+    text = read_text_file(p)
+
+    assert text == "aspas “corretas” — preço €10"
+    assert "\x93" not in text
+    assert "\x94" not in text
 
 def test_extract_text_file(tmp_path):
     p = tmp_path / "a.txt"

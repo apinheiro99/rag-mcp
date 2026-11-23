@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import autoconfig
 from .chunking import ConfigError, validate_ingest_config
+from .collection_classifier import classify_document
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
@@ -550,6 +551,55 @@ async def retry_document(doc_id: str):
     if not row:
         raise HTTPException(404, "documento não encontrado ou não está em erro/espera")
     return {"retrying": row["filename"]}
+
+
+class ClassifyDocumentRequest(BaseModel):
+    model: str | None = None
+
+
+@router.post("/documents/{doc_id}/classify")
+async def classify_document_route(doc_id: str, body: ClassifyDocumentRequest):
+    doc_id = _uuid(doc_id)
+    model = body.model or await settings.get("llm_model")
+    if not model:
+        raise HTTPException(400, "select an LLM model before classifying")
+    eff = await settings.effective()
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT d.*, c.name AS collection FROM documents d
+               JOIN collections c ON c.id=d.collection_id WHERE d.id=%s""",
+            (doc_id,),
+        )
+        doc = await cur.fetchone()
+        if not doc:
+            raise HTTPException(404, "document not found")
+        cur = await conn.execute(
+            """SELECT c.id, c.name, c.description,
+                      (SELECT count(*) FROM documents x WHERE x.collection_id=c.id) AS doc_count
+               FROM collections c ORDER BY c.name"""
+        )
+        collections = await cur.fetchall()
+    try:
+        extracted = await _sample_extract(doc)
+        client = await settings.lmstudio_client(timeout=eff["auto"]["request_timeout"], retries=1)
+        result = await classify_document(
+            client, model, filename=doc["filename"], source_path=doc["source_path"],
+            text=extracted.full_text(), collections=collections,
+            sample_chars=eff["auto"]["sample_chars"],
+            timeout=eff["auto"]["request_timeout"],
+        )
+    except ExtractionError as e:
+        raise HTTPException(422, f"could not extract document sample: {e}") from e
+    except LMStudioError as e:
+        raise HTTPException(503, f"LLM unavailable: {e}") from e
+    except ValueError as e:
+        raise HTTPException(502, f"invalid classifier response: {e}") from e
+    result.update({
+        "document_id": doc_id,
+        "filename": doc["filename"],
+        "current_collection": doc["collection"],
+    })
+    return result
 
 
 class DocMove(BaseModel):

@@ -76,7 +76,7 @@ def normalize_ws(text: str) -> str:
 
 def read_text_file(path: Path) -> str:
     raw = path.read_bytes()
-    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
         try:
             return raw.decode(enc)
         except UnicodeDecodeError:

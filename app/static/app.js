@@ -89,6 +89,7 @@ function renderCollections() {
       <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "sem embeddings ainda"}</div>
       <div class="row" style="margin-top:10px">
         <button class="btn mini ${c.default_search ? 'primary' : ''}" onclick="toggleDefaultSearch('${c.id}', ${!c.default_search})">Default search: ${c.default_search ? 'ON' : 'OFF'}</button>
+        <button class="btn mini" onclick="renameCollection('${c.id}', '${esc(c.name)}')">Rename</button>
         <button class="btn mini" onclick="reindexCollectionModal('${c.id}')">Reindexar tudo</button>
         <button class="btn mini danger" onclick="deleteCollection('${c.id}', '${esc(c.name)}')">Excluir</button>
       </div>
@@ -106,6 +107,18 @@ async function createCollection() {
     toast(`Coleção '${name}' criada`);
   } catch (e) { toast(e.message, true); }
 }
+async function renameCollection(id, currentName) {
+  const next = prompt("New collection name:", currentName);
+  if (next === null) return;
+  const name = next.trim();
+  if (!name || name === currentName) return;
+  try {
+    await api(`/api/collections/${id}`, { method: "PATCH", body: { name } });
+    await loadCollections();
+    toast(`Collection renamed to '${name}'`);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function deleteCollection(id, name) {
   if (!confirm(`Excluir a coleção '${name}' e TODOS os seus documentos/vetores?`)) return;
   try { await api(`/api/collections/${id}`, { method: "DELETE" }); await loadCollections(); toast(`Coleção '${name}' excluída`); }
@@ -438,6 +451,7 @@ async function loadDocuments() {
           <button class="btn mini" onclick="docDetails('${d.id}')">Detalhes</button>
           ${["error", "waiting"].includes(d.status) ? `<button class="btn mini" onclick="retryDoc('${d.id}')">Retry</button>` : ""}
           ${["pending", "extracting", "chunking", "embedding", "waiting", "cancelling"].includes(d.status) ? `<button class="btn mini danger" onclick="cancelDoc(&quot;${d.id}&quot;)">Cancelar</button>` : ""}
+          <button class="btn mini" onclick="classifyDoc('${d.id}', '${esc(d.filename)}')">Classify</button>
           <button class="btn mini" onclick="openMoveDoc('${d.id}', '${esc(d.filename)}', '${d.collection_id}')">Mover</button>
           <button class="btn mini" onclick="reindexDoc('${d.id}', '${esc(d.filename)}')">Reindexar</button>
           <button class="btn mini danger" onclick="deleteDoc('${d.id}', '${esc(d.filename)}')">Excluir</button>
@@ -489,6 +503,48 @@ async function reindexDoc(id, name) {
   try { await api(`/api/documents/${id}/reindex`, { method: "POST", body: {} }); toast("Reindexação iniciada"); loadDocuments(); }
   catch (e) { toast(e.message, true); }
 }
+async function classifyDoc(id, name) {
+  try {
+    toast(`Classifying '${name}'…`);
+    const r = await api(`/api/documents/${id}/classify`, { method: "POST", body: {} });
+    state.classificationSuggestions = state.classificationSuggestions || {};
+    state.classificationSuggestions[id] = r;
+    const confidence = Math.round((r.confidence || 0) * 100);
+    const destination = r.existing_collection
+      ? `Existing collection: <b>${esc(r.existing_collection)}</b>`
+      : `Proposed new collection: <b>${esc(r.proposed_collection?.name || "")}</b>`;
+    openModal(`Classify '${esc(name)}'`, `
+      <p>${destination}</p>
+      <p><b>Confidence:</b> ${confidence}%</p>
+      <p class="muted">${esc(r.rationale || "")}</p>
+      <button class="btn primary" onclick="applyClassification('${id}')">Apply suggestion</button>`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function applyClassification(id) {
+  const r = state.classificationSuggestions?.[id];
+  if (!r) return;
+  try {
+    let target = null;
+    if (r.existing_collection) {
+      target = state.collections.find((c) => c.name === r.existing_collection);
+      if (!target) throw new Error(`Collection '${r.existing_collection}' no longer exists`);
+    } else if (r.proposed_collection) {
+      target = await api("/api/collections", { method: "POST", body: {
+        name: r.proposed_collection.name, description: r.proposed_collection.description || ""
+      }});
+      await loadCollections();
+    }
+    if (!target) throw new Error("Classifier did not return a destination");
+    const moved = await api(`/api/documents/${id}/move`, {
+      method: "POST", body: { target_collection_id: target.id },
+    });
+    closeModal();
+    await loadDocuments();
+    toast(`Moved to ${moved.to_collection}`);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function deleteDoc(id, name) {
   if (!confirm(`Excluir '${name}' e seus vetores?`)) return;
   try { await api(`/api/documents/${id}`, { method: "DELETE" }); toast("Documento excluído"); loadDocuments(); loadCollections(); }
