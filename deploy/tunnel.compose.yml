@@ -1,0 +1,20 @@
+services:
+  rag-tunnel:
+    container_name: ${RAG_TUNNEL_CONTAINER_NAME:-rag-mcp-tunnel}
+    image: ${RAG_TUNNEL_BASE_IMAGE:-node:24-bookworm-slim}
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      app:
+        condition: service_started
+    command:
+      - sh
+      - -c
+      - >-
+        until node -e 'fetch("http://app:8000/api/health").then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))';
+        do sleep 2; done;
+        exec /usr/local/bin/tunnel-client run --config /run/rag-tunnel/tunnel-client.yaml
+    volumes:
+      - ${RAG_TUNNEL_BINARY}:/usr/local/bin/tunnel-client:ro
+      - ${RAG_TUNNEL_DIR}:/run/rag-tunnel:ro
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro

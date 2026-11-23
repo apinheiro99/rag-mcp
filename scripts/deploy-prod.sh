@@ -12,7 +12,15 @@ git -C "$ROOT" checkout --detach "$CI_COMMIT_SHA"
 [ -f "$PRIVATE/.env" ] || { echo "missing $PRIVATE/.env" >&2; exit 1; }
 cp "$PRIVATE/.env" "$ROOT/.env"
 cd "$ROOT"
-docker compose up -d --build
+COMPOSE_ARGS=(-f docker-compose.yml)
+if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
+  : "${RAG_TUNNEL_BINARY:?RAG_TUNNEL_BINARY must be set when Secure MCP Tunnel is enabled}"
+  : "${RAG_TUNNEL_DIR:?RAG_TUNNEL_DIR must be set when Secure MCP Tunnel is enabled}"
+  [ -f "$RAG_TUNNEL_BINARY" ] || { echo "missing tunnel client binary: $RAG_TUNNEL_BINARY" >&2; exit 1; }
+  [ -f "$RAG_TUNNEL_DIR/tunnel-client.yaml" ] || { echo "missing tunnel config: $RAG_TUNNEL_DIR/tunnel-client.yaml" >&2; exit 1; }
+  COMPOSE_ARGS+=(-f deploy/tunnel.compose.yml)
+fi
+docker compose "${COMPOSE_ARGS[@]}" up -d --build
 HEALTH_URL="http://127.0.0.1:${RAG_PORT:-8000}/api/health"
 for attempt in $(seq 1 30); do
   if curl -fsS "$HEALTH_URL" >/dev/null; then
