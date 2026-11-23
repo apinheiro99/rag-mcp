@@ -64,6 +64,10 @@ PY
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     backup="$root/pre-migration-$stamp"
     mkdir -p "$root" "$backup"
+
+    echo "stopping RAG application for consistent restore..."
+    docker compose --env-file "$env_file" -f "$compose" stop app || true
+
     if [ -d "$root/data" ] && [ "$(find "$root/data" -mindepth 1 -print -quit 2>/dev/null)" ]; then
       mv "$root/data" "$backup/data"
     fi
@@ -76,6 +80,9 @@ PY
           pg_isready -U "${POSTGRES_USER:-rag}" -d "${POSTGRES_DB:-rag}" >/dev/null 2>&1; then break; fi
       sleep 2
     done
+    docker compose --env-file "$env_file" -f "$compose" exec -T db \
+      psql -U "${POSTGRES_USER:-rag}" -d postgres -v ON_ERROR_STOP=1 \
+      -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${POSTGRES_DB:-rag}' AND pid <> pg_backend_pid();" >/dev/null
     cat "$tmp/database.dump" | docker compose --env-file "$env_file" -f "$compose" exec -T db \
       pg_restore --clean --if-exists --no-owner -U "${POSTGRES_USER:-rag}" -d "${POSTGRES_DB:-rag}"
     docker compose --env-file "$env_file" -f "$compose" up -d --build
