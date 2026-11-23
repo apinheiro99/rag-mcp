@@ -34,7 +34,7 @@ async def test_rerank_runtime_fails_open_to_vector_candidates(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resident_rerank_releases_model_lock_before_inference(monkeypatch):
+async def test_resident_rerank_holds_model_lock_during_inference(monkeypatch):
     class ResidentClient:
         async def ensure_model_loaded(self, model, *, context_length=None):
             return {"status": "already_loaded", "instance_id": model}
@@ -46,7 +46,7 @@ async def test_resident_rerank_releases_model_lock_before_inference(monkeypatch)
 
     async def fake_rerank(query, candidates, config, client):
         from app.lmstudio import model_runtime_lock
-        assert not model_runtime_lock.locked(), "resident inference must not hold model_runtime_lock"
+        assert model_runtime_lock.locked(), "resident inference must hold model_runtime_lock"
         return candidates
 
     monkeypatch.setattr("app.rerank_runtime.settings.get", fake_get)

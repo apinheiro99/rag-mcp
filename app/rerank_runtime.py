@@ -66,7 +66,7 @@ async def rerank_with_runtime(
                     reranker_model=model,
                     context_length=int(cfg.get('context_length', 8192)),
                 )
-            ranked = await rerank_results(query, candidates, cfg, client)
+                ranked = await rerank_results(query, candidates, cfg, client)
             return ranked, (time.perf_counter() - started) * 1000, None
 
         async with model_runtime_lock:
