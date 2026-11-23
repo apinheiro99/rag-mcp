@@ -92,8 +92,8 @@ upload
   -> unload incompatible resident models if required
   -> load classification LLM
   -> classify
-  -> release classification LLM
-  -> next queued job determines the next resident profile
+  -> keep classification LLM resident while compatible jobs remain queued
+  -> next incompatible job determines the next resident profile
 ```
 
 That means a larger classification model can be used without permanently consuming VRAM. Consecutive jobs with the same model profile reuse already loaded models and avoid unnecessary churn.
