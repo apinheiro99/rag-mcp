@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
+<aside class="sidebar">
   <div class="brand">
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.6"/>
@@ -18,35 +18,35 @@
     <h1>RAG Server</h1>
   </div>
   <nav id="nav">
-    <button data-tab="dashboard" class="active">Painel</button>
-    <button data-tab="import">Importar</button>
-    <button data-tab="documents">Documentos</button>
-    <button data-tab="search">Busca</button>
-    <button data-tab="settings">Configurações</button>
+    <button data-tab="dashboard" class="active">Dashboard</button>
+    <button data-tab="import">Import</button>
+    <button data-tab="documents">Documents</button>
+    <button data-tab="search">Search</button>
+    <button data-tab="settings">Settings</button>
   </nav>
   <div class="health-pills" id="healthPills"></div>
-</header>
+</aside>
 
 <div id="tokenBanner" class="banner hidden">
-  Este servidor exige token de API.
+  This server requires an API token.
   <input type="password" id="tokenInput" placeholder="Bearer token">
-  <button onclick="saveToken()">Salvar</button>
+  <button onclick="saveToken()">Save</button>
 </div>
 
 <main>
-  <!-- ==================== PAINEL ==================== -->
+  <!-- ==================== DASHBOARD ==================== -->
   <section id="tab-dashboard" class="tab active">
     <div class="grid-3" id="healthCards"></div>
 
     <div class="card">
       <div class="card-head">
-        <h2>Ingestão</h2>
+        <h2>Ingestion</h2>
         <div>
-          <button id="btnPause" class="btn" onclick="pauseIngest()">Pausar</button>
-          <button id="btnResume" class="btn primary hidden" onclick="resumeIngest()">Retomar</button>
+          <button id="btnPause" class="btn" onclick="pauseIngest()">Pause</button>
+          <button id="btnResume" class="btn primary hidden" onclick="resumeIngest()">Resume</button>
         </div>
       </div>
-      <div id="ingestSummary" class="muted">Carregando…</div>
+      <div id="ingestSummary" class="muted">Loading…</div>
       <div class="progress-wrap"><div class="progress-bar" id="ingestBar"></div></div>
       <div id="ingestCounts" class="chips"></div>
       <div id="currentDoc" class="muted small"></div>
@@ -54,8 +54,8 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Coleções</h2>
-        <button class="btn" onclick="showTab('import')">+ Importar documentos</button></div>
+      <div class="card-head"><h2>Collections</h2>
+        <button class="btn" onclick="showTab('import')">+ Import documents</button></div>
       <div id="collectionsGrid" class="grid-3"></div>
     </div>
 
@@ -67,43 +67,51 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Eventos recentes</h2></div>
+      <div class="card-head"><h2>Recent events</h2>
+        <div class="row compact">
+          <select id="eventLevel" onchange="renderEvents()">
+            <option value="">All levels</option>
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="error">Error</option>
+          </select>
+          <button class="btn mini" onclick="pollEvents()">↻ Refresh</button>
+        </div>
+      </div>
       <div id="eventsLog" class="events"></div>
     </div>
   </section>
 
-  <!-- ==================== IMPORTAR ==================== -->
+  <!-- ==================== IMPORT ==================== -->
   <section id="tab-import" class="tab">
     <div class="card">
       <div class="card-head">
-        <h2>1 · Destino</h2>
+        <h2>1 · Destination</h2>
       </div>
       <div class="row">
-        <label>Coleção
+        <label>Collection
           <select id="importCollection" onchange="onImportCollectionChange()"></select>
         </label>
-        <input type="text" id="newCollectionName" placeholder="Nova coleção (ex.: ARGUS)">
-        <button class="btn" onclick="createCollection()">Criar coleção</button>
+        <input type="text" id="newCollectionName" placeholder="New collection (e.g. ARGUS)">
+        <button class="btn" onclick="createCollection()">Create collection</button>
       </div>
-      <p class="muted small">Coleções são bases independentes (ex.: ARGUS, Documentação, Livros, Projetos, Pesquisa).
-      Uma consulta RAG pode mirar uma ou várias coleções.</p>
+      <p class="muted small">Collections are independent knowledge shelves. By default, RAG searches every collection with Default search ON; explicit filters can target specific collections.</p>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>2 · Arquivos</h2></div>
+      <div class="card-head"><h2>2 · Files</h2></div>
       <div id="dropzone" tabindex="0">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
           <path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
           <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
         </svg>
-        <p><strong>Arraste arquivos ou pastas aqui</strong></p>
-        <p class="muted">ou</p>
+        <p><strong>Drag files or folders here</strong></p>
+        <p class="muted">or</p>
         <div class="row center">
-          <button class="btn" onclick="document.getElementById('fileInput').click()">Selecionar arquivos</button>
-          <button class="btn" onclick="document.getElementById('dirInput').click()">Selecionar pasta</button>
+          <button class="btn" onclick="document.getElementById('fileInput').click()">Select files</button>
+          <button class="btn" onclick="document.getElementById('dirInput').click()">Select folder</button>
         </div>
-        <p class="muted small">Markdown, PDF, EPUB, TXT, HTML, DOCX, código e outros formatos textuais.
-        Pastas são percorridas recursivamente; arquivos não suportados são ignorados com aviso.</p>
+        <p class="muted small">Markdown, PDF, EPUB, TXT, HTML, DOCX, source code, and other text formats. Folders are scanned recursively; unsupported files are reported and skipped.</p>
         <input type="file" id="fileInput" multiple hidden>
         <input type="file" id="dirInput" webkitdirectory hidden>
       </div>
@@ -112,145 +120,156 @@
 
     <div class="card" id="ingestConfigCard">
       <div class="card-head">
-        <h2>3 · Configuração da ingestão</h2>
+        <h2>3 · Ingestion configuration</h2>
         <span id="stagedCount" class="pill"></span>
       </div>
       <div class="tabs-mini">
         <button id="modeManualBtn" class="active" onclick="setMode('manual')">Manual</button>
-        <button id="modeAutoBtn" onclick="setMode('auto')">Automático (LLM)</button>
+        <button id="modeAutoBtn" onclick="setMode('auto')">Automatic (LLM)</button>
       </div>
 
       <div id="modeManual">
-        <p class="muted small">Você determina os parâmetros. Defaults vêm de <code>config/defaults.yaml</code>
-        + ajustes da coleção.</p>
+        <p class="muted small">You control the parameters. Defaults come from <code>config/defaults.yaml</code> plus collection overrides.</p>
         <div class="form-grid" id="manualForm"></div>
       </div>
 
       <div id="modeAuto" class="hidden">
-        <p class="muted small">Um modelo LLM do LM Studio analisa uma amostra dos documentos e recomenda
-        os parâmetros. Você revisa antes de iniciar.</p>
+        <p class="muted small">An LM Studio LLM analyzes a document sample and recommends parameters. You review them before starting.</p>
         <div class="row">
-          <label>Modelo LLM <select id="autoModel"></select></label>
-          <button class="btn primary" id="btnSuggest" onclick="suggestConfig()">Analisar documentos</button>
+          <label>LLM model <select id="autoModel"></select></label>
+          <button class="btn primary" id="btnSuggest" onclick="suggestConfig()">Analyze documents</button>
         </div>
         <div id="suggestionBox"></div>
       </div>
 
       <div class="row between ingest-actions">
-        <label class="check"><input type="checkbox" id="saveAsDefault"> salvar como padrão da coleção</label>
-        <button class="btn primary big" id="btnStart" onclick="startIngest()">Iniciar ingestão</button>
+        <label class="check"><input type="checkbox" id="saveAsDefault"> save as collection default</label>
+        <button class="btn primary big" id="btnStart" onclick="startIngest()">Start ingestion</button>
       </div>
+    </div>
+
+    <div class="card" id="importProgressCard">
+      <div class="card-head">
+        <h2>4 · Ingestion progress</h2>
+        <div>
+          <button id="importBtnPause" class="btn" onclick="pauseIngest()">Pause</button>
+          <button id="importBtnResume" class="btn primary hidden" onclick="resumeIngest()">Resume</button>
+        </div>
+      </div>
+      <div id="importIngestSummary" class="muted">No active ingestion.</div>
+      <div class="progress-wrap"><div class="progress-bar" id="importIngestBar"></div></div>
+      <div id="importIngestCounts" class="chips"></div>
+      <div id="importCurrentDoc" class="muted small"></div>
     </div>
   </section>
 
-  <!-- ==================== DOCUMENTOS ==================== -->
+  <!-- ==================== DOCUMENTS ==================== -->
   <section id="tab-documents" class="tab">
     <div class="card">
       <div class="card-head">
-        <h2>Documentos</h2>
+        <h2>Documents</h2>
         <div class="row">
-          <select id="docFilterCollection" onchange="loadDocuments()"><option value="">Todas as coleções</option></select>
+          <select id="docFilterCollection" onchange="loadDocuments()"><option value="">All collections</option></select>
           <select id="docFilterStatus" onchange="loadDocuments()">
-            <option value="">Todos os status</option>
-            <option value="staged">Aguardando configuração</option>
-            <option value="pending">Na fila</option>
-            <option value="extracting">Extraindo</option>
-            <option value="chunking">Dividindo</option>
+            <option value="">All statuses</option>
+            <option value="staged">Awaiting configuration</option>
+            <option value="pending">Queued</option>
+            <option value="extracting">Extracting</option>
+            <option value="chunking">Chunking</option>
             <option value="embedding">Embeddings</option>
-            <option value="waiting">Aguardando LM Studio</option>
-            <option value="ready">Indexados</option>
-            <option value="error">Com erro</option>
+            <option value="waiting">Waiting for LM Studio</option>
+            <option value="ready">Indexed</option>
+            <option value="error">Errors</option>
           </select>
-          <input type="search" id="docSearch" placeholder="Filtrar por nome/caminho…" oninput="debouncedDocs()">
-          <button class="btn" onclick="loadDocuments()">Atualizar</button>
+          <input type="search" id="docSearch" placeholder="Filter by name/path…" oninput="debouncedDocs()">
+          <button class="btn" onclick="loadDocuments()">Refresh</button>
         </div>
       </div>
       <div id="docsTable"></div>
       <div class="row between">
         <span id="docsTotal" class="muted small"></span>
         <div class="row">
-          <button class="btn" id="docsPrev" onclick="docsPage(-1)">← Anterior</button>
-          <button class="btn" id="docsNext" onclick="docsPage(1)">Próxima →</button>
+          <button class="btn" id="docsPrev" onclick="docsPage(-1)">← Previous</button>
+          <button class="btn" id="docsNext" onclick="docsPage(1)">Next →</button>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ==================== BUSCA ==================== -->
+  <!-- ==================== SEARCH ==================== -->
   <section id="tab-search" class="tab">
     <div class="card">
-      <div class="card-head"><h2>Busca semântica (teste do RAG)</h2></div>
+      <div class="card-head"><h2>Semantic search</h2></div>
       <div class="row">
-        <input type="text" id="searchQuery" placeholder="Pergunte algo à base…" class="grow"
+        <input type="text" id="searchQuery" placeholder="Ask the knowledge base…" class="grow"
                onkeydown="if(event.key==='Enter')doSearch()">
-        <button class="btn primary" onclick="doSearch()">Buscar</button>
+        <button class="btn primary" onclick="doSearch()">Search</button>
       </div>
       <div class="row wrap" id="searchCollections"></div>
       <div class="form-grid">
-        <label>document_id <input type="text" id="searchDocumentId" placeholder="UUID opcional"></label>
-        <label>autor <input type="text" id="searchAuthor" placeholder="match parcial"></label>
-        <label>source_path <input type="text" id="searchSourcePath" placeholder="caminho exato"></label>
-        <label>capítulo <input type="text" id="searchChapter" placeholder="capítulo exato"></label>
-        <label>página <input type="number" id="searchPage" min="1" placeholder="opcional"></label>
+        <label>document_id <input type="text" id="searchDocumentId" placeholder="optional UUID"></label>
+        <label>author <input type="text" id="searchAuthor" placeholder="partial match"></label>
+        <label>source_path <input type="text" id="searchSourcePath" placeholder="exact path"></label>
+        <label>chapter <input type="text" id="searchChapter" placeholder="exact chapter"></label>
+        <label>page <input type="number" id="searchPage" min="1" placeholder="optional"></label>
       </div>
       <div class="row">
         <label>top_k <input type="number" id="searchTopK" value="8" min="1" max="50" style="width:70px"></label>
-        <label>score mínimo <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05" style="width:80px"></label>
-        <span class="muted small">Sem filtros = busca normal em todas as fontes selecionadas.</span>
+        <label>minimum score <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05" style="width:80px"></label>
+        <span class="muted small">No collection filter = search every collection with Default search ON.</span>
       </div>
     </div>
     <div id="searchResults"></div>
     <div class="card">
       <div class="card-head">
-        <h2>Observabilidade de retrieval</h2>
-        <button class="btn" onclick="loadSearchMetrics()">↻ Atualizar</button>
+        <h2>Retrieval observability</h2>
+        <button class="btn" onclick="loadSearchMetrics()">↻ Refresh</button>
       </div>
-      <div id="searchMetrics" class="small muted">Sem dados ainda.</div>
+      <div id="searchMetrics" class="small muted">No data yet.</div>
     </div>
   </section>
 
-  <!-- ==================== CONFIGURAÇÕES ==================== -->
+  <!-- ==================== SETTINGS ==================== -->
   <section id="tab-settings" class="tab">
     <div class="card">
       <div class="card-head"><h2>LM Studio</h2></div>
       <div class="row">
         <input type="text" id="lmUrl" placeholder="http://192.168.1.50:1234" class="grow">
-        <button class="btn" onclick="testLM()">Testar conexão</button>
-        <button class="btn primary" onclick="saveLM()">Salvar</button>
+        <button class="btn" onclick="testLM()">Test connection</button>
+        <button class="btn primary" onclick="saveLM()">Save</button>
       </div>
       <div id="lmTestResult" class="small"></div>
       <div class="form-grid">
-        <label>Modelo de embedding <select id="embeddingModel"></select></label>
-        <label>Modelo LLM (modo automático) <select id="llmModel"></select></label>
-        <label>Modelo de reranker <select id="rerankerModel"></select></label>
+        <label>Embedding model <select id="embeddingModel"></select></label>
+        <label>LLM model (automatic mode) <select id="llmModel"></select></label>
+        <label>Reranker model <select id="rerankerModel"></select></label>
       </div>
-        <label class="check"><input type="checkbox" id="keepRerankerLoaded"> manter reranker carregado <span class="muted small">(carrega na primeira busca e permanece residente)</span></label>
+        <label class="check"><input type="checkbox" id="keepRerankerLoaded"> keep reranker loaded <span class="muted small">(loads on first search and stays resident)</span></label>
       <div class="row">
-        <button class="btn" onclick="loadModels(true)">↻ Atualizar modelos</button>
-        <button class="btn primary" onclick="saveModels()">Salvar modelos</button>
+        <button class="btn" onclick="loadModels(true)">↻ Refresh models</button>
+        <button class="btn primary" onclick="saveModels()">Save models</button>
         <span id="modelsInfo" class="muted small"></span>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Defaults de processamento (avançado)</h2></div>
-      <p class="muted small">Overrides em JSON sobre <code>config/defaults.yaml</code>. Persistidos no banco.
+      <div class="card-head"><h2>Processing defaults (advanced)</h2></div>
+      <p class="muted small">JSON overrides on top of <code>config/defaults.yaml</code>. Persisted in PostgreSQL.
       Ex.: <code>{"ingest": {"chunk_size": 1200}, "search": {"top_k": 6}}</code></p>
       <textarea id="overridesJson" rows="10" spellcheck="false"></textarea>
       <div class="row">
-        <button class="btn primary" onclick="saveOverrides()">Salvar overrides</button>
+        <button class="btn primary" onclick="saveOverrides()">Save overrides</button>
         <span id="overridesMsg" class="small"></span>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Acesso</h2></div>
+      <div class="card-head"><h2>Access</h2></div>
       <div class="row">
-        <input type="password" id="apiTokenField" placeholder="Token de API (se RAG_API_TOKEN estiver definido)" class="grow">
-        <button class="btn" onclick="saveTokenFromField()">Salvar token</button>
+        <input type="password" id="apiTokenField" placeholder="API token (when RAG_API_TOKEN is configured)" class="grow">
+        <button class="btn" onclick="saveTokenFromField()">Save token</button>
       </div>
-      <p class="muted small">O token fica apenas neste navegador (localStorage) e é enviado como
-      <code>Authorization: Bearer …</code>.</p>
+      <p class="muted small">The token stays only in this browser (localStorage) and is sent as <code>Authorization: Bearer …</code>.</p>
       <div id="mcpInfo" class="small"></div>
     </div>
   </section>

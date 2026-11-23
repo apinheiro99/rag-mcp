@@ -1,18 +1,18 @@
-/* RAG Server — interface administrativa (vanilla JS, sem dependências externas) */
+/* RAG Server — administrative interface (vanilla JS, no external dependencies) */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const STATUS_LABEL = {
-  staged: "Aguardando configuração", pending: "Na fila", extracting: "Extraindo",
-  chunking: "Dividindo", embedding: "Embeddings", waiting: "Aguardando LM Studio",
-  ready: "Indexado", error: "Erro", cancelling: "Cancelando", cancelled: "Cancelado",
+  staged: "Awaiting configuration", pending: "Queued", extracting: "Extracting",
+  chunking: "Chunking", embedding: "Embedding", waiting: "Waiting for LM Studio",
+  ready: "Indexed", error: "Error", cancelling: "Cancelling", cancelled: "Cancelled",
 };
 const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
 
 let state = {
-  collections: [], sources: [], models: [], settings: {}, effective: null,
+  collections: [], sources: [], events: [], models: [], settings: {}, effective: null,
   mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
   pollTick: 0, lastActive: 0, uploading: false,
 };
@@ -27,7 +27,7 @@ async function api(path, opts = {}) {
     opts.body = JSON.stringify(opts.body);
   }
   const resp = await fetch(path, { ...opts, headers });
-  if (resp.status === 401) { $("tokenBanner").classList.remove("hidden"); throw new Error("Token de API necessário"); }
+  if (resp.status === 401) { $("tokenBanner").classList.remove("hidden"); throw new Error("API token required"); }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
   return data;
@@ -43,8 +43,8 @@ function toast(msg, isErr = false) {
 function saveToken() { localStorage.setItem("rag_token", $("tokenInput").value.trim()); $("tokenBanner").classList.add("hidden"); location.reload(); }
 function saveTokenFromField() { localStorage.setItem("rag_token", $("apiTokenField").value.trim()); toast("Token salvo neste navegador"); }
 const fmtBytes = (n) => { if (!n && n !== 0) return "—"; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; };
-const fmtDate = (s) => s ? new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
-const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("pt-BR") : "";
+const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
 
 function showTab(name) {
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
@@ -68,11 +68,11 @@ function fillCollectionSelects() {
   const opts = state.collections.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
   const imp = $("importCollection");
   const prev = imp.value;
-  imp.innerHTML = opts || `<option value="">— crie uma coleção —</option>`;
+  imp.innerHTML = opts || `<option value="">— create a collection —</option>`;
   if (prev && state.collections.some((c) => c.id === prev)) imp.value = prev;
   const filt = $("docFilterCollection");
   const prevF = filt.value;
-  filt.innerHTML = `<option value="">Todas as coleções</option>` + opts;
+  filt.innerHTML = `<option value="">All collections</option>` + opts;
   filt.value = prevF;
 }
 function renderCollections() {
@@ -85,27 +85,27 @@ function renderCollections() {
         <span><b>${c.ready_count}</b> indexados</span>
         <span><b>${c.chunk_count}</b> chunks</span>
         ${Number(c.error_count) ? `<span style="color:var(--red)"><b>${c.error_count}</b> erros</span>` : ""}
-        ${Number(c.staged_count) ? `<span style="color:var(--yellow)"><b>${c.staged_count}</b> aguardando</span>` : ""}
+        ${Number(c.staged_count) ? `<span style="color:var(--yellow)"><b>${c.staged_count}</b> waiting</span>` : ""}
       </div>
-      <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "sem embeddings ainda"}</div>
+      <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "no embeddings yet"}</div>
       <div class="row" style="margin-top:10px">
         <button class="btn mini ${c.default_search ? 'primary' : ''}" onclick="toggleDefaultSearch('${c.id}', ${!c.default_search})">Default search: ${c.default_search ? 'ON' : 'OFF'}</button>
         <button class="btn mini" onclick="renameCollection('${c.id}', '${esc(c.name)}')">Rename</button>
-        <button class="btn mini" onclick="reindexCollectionModal('${c.id}')">Reindexar tudo</button>
-        <button class="btn mini danger" onclick="deleteCollection('${c.id}', '${esc(c.name)}')">Excluir</button>
+        <button class="btn mini" onclick="reindexCollectionModal('${c.id}')">Reindex all</button>
+        <button class="btn mini danger" onclick="deleteCollection('${c.id}', '${esc(c.name)}')">Delete</button>
       </div>
-    </div>`).join("") || `<p class="muted">Nenhuma coleção ainda. Crie uma na aba Importar (ex.: ARGUS, Documentação, Livros).</p>`;
+    </div>`).join("") || `<p class="muted">No collections yet. Create one from the Import tab.</p>`;
 }
 async function createCollection() {
   const name = $("newCollectionName").value.trim();
-  if (!name) return toast("Digite um nome para a coleção", true);
+  if (!name) return toast("Enter a collection name", true);
   try {
     const col = await api("/api/collections", { method: "POST", body: { name } });
     $("newCollectionName").value = "";
     await loadCollections();
     $("importCollection").value = col.id;
     onImportCollectionChange();
-    toast(`Coleção '${name}' criada`);
+    toast(`Collection '${name}' created`);
   } catch (e) { toast(e.message, true); }
 }
 async function renameCollection(id, currentName) {
@@ -121,8 +121,8 @@ async function renameCollection(id, currentName) {
 }
 
 async function deleteCollection(id, name) {
-  if (!confirm(`Excluir a coleção '${name}' e TODOS os seus documentos/vetores?`)) return;
-  try { await api(`/api/collections/${id}`, { method: "DELETE" }); await loadCollections(); toast(`Coleção '${name}' excluída`); }
+  if (!confirm(`Delete collection '${name}' and ALL of its documents/vectors?`)) return;
+  try { await api(`/api/collections/${id}`, { method: "DELETE" }); await loadCollections(); toast(`Collection '${name}' deleted`); }
   catch (e) { toast(e.message, true); }
 }
 
@@ -137,15 +137,15 @@ function reindexCollectionModal(id) {
   const c = state.collections.find((x) => x.id === id);
   const cfg = { ...(state.effective?.ingest || {}), ...(c.ingest_config || {}) };
   const modelOpts = state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === (c.embedding_model || state.settings.embedding_model) ? "selected" : ""}>${esc(m.id)}</option>`).join("");
-  openModal(`Reindexar coleção '${esc(c.name)}'`, `
-    <p class="small muted">Reprocessa todos os documentos. Trocar o modelo de embedding apaga os vetores atuais e recria do zero.</p>
+  openModal(`Reindex collection '${esc(c.name)}'`, `
+    <p class="small muted">Reprocesses every document. Changing the embedding model removes current vectors and rebuilds them from scratch.</p>
     <div class="form-grid">
-      <label>Modelo de embedding<select id="rcModel">${modelOpts}</select></label>
+      <label>Embedding model<select id="rcModel">${modelOpts}</select></label>
       <label>chunk_size<input type="number" id="rcSize" value="${cfg.chunk_size || 1500}"></label>
       <label>chunk_overlap<input type="number" id="rcOverlap" value="${cfg.chunk_overlap ?? 200}"></label>
-      <label>estratégia<select id="rcStrategy">${["recursive", "fixed", "markdown", "pages"].map((s) => `<option ${s === cfg.strategy ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+      <label>strategy<select id="rcStrategy">${["recursive", "fixed", "markdown", "pages"].map((s) => `<option ${s === cfg.strategy ? "selected" : ""}>${s}</option>`).join("")}</select></label>
     </div>
-    <button class="btn primary" onclick="reindexCollection('${id}')">Reindexar ${c.doc_count} documento(s)</button>`);
+    <button class="btn primary" onclick="reindexCollection('${id}')">Reindex ${c.doc_count} document(s)</button>`);
 }
 async function reindexCollection(id) {
   try {
@@ -154,7 +154,7 @@ async function reindexCollection(id) {
       config: { chunk_size: +$("rcSize").value, chunk_overlap: +$("rcOverlap").value, strategy: $("rcStrategy").value },
     };
     const r = await api(`/api/collections/${id}/reindex`, { method: "POST", body });
-    closeModal(); toast(`Reindexando ${r.reindexing} documento(s)`); showTab("dashboard");
+    closeModal(); toast(`Reindexing ${r.reindexing} document(s)`); showTab("dashboard");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -197,15 +197,15 @@ $("dirInput").onchange = (e) => uploadFiles([...e.target.files].map((f) => ({ fi
 
 function uploadFiles(items) {
   const colId = $("importCollection").value;
-  if (!colId) return toast("Crie/selecione uma coleção primeiro", true);
+  if (!colId) return toast("Create or select a collection first", true);
   if (!items.length) return;
-  if (state.uploading) return toast("Aguarde o upload atual terminar", true);
+  if (state.uploading) return toast("Wait for the current upload to finish", true);
   state.uploading = true;
   const fd = new FormData();
   fd.append("collection_id", colId);
   for (const it of items) { fd.append("files", it.file, it.file.name); fd.append("paths", it.path); }
   const box = $("uploadResults");
-  box.innerHTML = `<div class="row"><span class="spinner"></span> <span id="upProgressText">Enviando ${items.length} arquivo(s)…</span></div>
+  box.innerHTML = `<div class="row"><span class="spinner"></span> <span id="upProgressText">Uploading ${items.length} file(s)…</span></div>
     <div class="progress-wrap"><div class="progress-bar" id="upBar"></div></div>`;
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/documents/upload");
@@ -214,7 +214,7 @@ function uploadFiles(items) {
     if (e.lengthComputable) {
       const pct = Math.round((e.loaded / e.total) * 100);
       $("upBar").style.width = pct + "%";
-      $("upProgressText").textContent = `Enviando ${items.length} arquivo(s)… ${pct}% (${fmtBytes(e.loaded)} / ${fmtBytes(e.total)})`;
+      $("upProgressText").textContent = `Uploading ${items.length} file(s)… ${pct}% (${fmtBytes(e.loaded)} / ${fmtBytes(e.total)})`;
     }
   };
   xhr.onload = async () => {
@@ -222,23 +222,23 @@ function uploadFiles(items) {
     if (xhr.status === 401) { $("tokenBanner").classList.remove("hidden"); box.innerHTML = ""; return; }
     let data;
     try { data = JSON.parse(xhr.responseText); } catch { data = { detail: xhr.responseText }; }
-    if (xhr.status >= 400) { box.innerHTML = ""; toast(data.detail || "Falha no upload", true); return; }
+    if (xhr.status >= 400) { box.innerHTML = ""; toast(data.detail || "Upload failed", true); return; }
     renderUploadResults(data);
     await refreshStaged(); await loadCollections();
     const parts = [];
-    if (data.queued) parts.push(`${data.queued} enfileirado(s) automaticamente`);
-    if (data.staged) parts.push(`${data.staged} aguardando configuração`);
-    if (data.duplicates) parts.push(`${data.duplicates} duplicado(s) ignorado(s)`);
-    if (data.ignored_empty) parts.push(`${data.ignored_empty} vazio(s) ignorado(s)`);
-    toast(parts.join(", ") || "Upload concluído");
+    if (data.queued) parts.push(`${data.queued} queued automatically`);
+    if (data.staged) parts.push(`${data.staged} awaiting configuration`);
+    if (data.duplicates) parts.push(`${data.duplicates} duplicate(s) skipped`);
+    if (data.ignored_empty) parts.push(`${data.ignored_empty} empty file(s) skipped`);
+    toast(parts.join(", ") || "Upload complete");
   };
-  xhr.onerror = () => { state.uploading = false; box.innerHTML = ""; toast("Erro de rede no upload", true); };
+  xhr.onerror = () => { state.uploading = false; box.innerHTML = ""; toast("Upload network error", true); };
   xhr.send(fd);
   $("fileInput").value = ""; $("dirInput").value = "";
 }
 function renderUploadResults(data) {
   const icon = { pending: "⚙️", staged: "📄", duplicate: "♻️", ignored_empty: "⚪", unsupported: "🚫", too_large: "🐘", error: "❌" };
-  const label = { pending: "importado e enfileirado", staged: "importado; aguardando configuração", duplicate: "duplicado (ignorado)", ignored_empty: "vazio (ignorado)", unsupported: "não suportado", too_large: "grande demais", error: "erro" };
+  const label = { pending: "imported and queued", staged: "imported; awaiting configuration", duplicate: "duplicate (skipped)", ignored_empty: "empty (skipped)", unsupported: "unsupported", too_large: "too large", error: "erro" };
   $("uploadResults").innerHTML = `<div class="upload-list">` + data.results.map((r) => `
     <div class="upload-item">
       <span>${icon[r.status] || ""} <span class="docpath">${esc(r.source_path)}</span></span>
@@ -253,7 +253,7 @@ async function refreshStaged() {
   if (!colId) { $("stagedCount").textContent = ""; return; }
   try {
     const data = await api(`/api/documents?collection_id=${colId}&status=staged&limit=1`);
-    $("stagedCount").textContent = `${data.total} documento(s) aguardando configuração`;
+    $("stagedCount").textContent = `${data.total} document(s) awaiting configuration`;
     $("btnStart").disabled = data.total === 0;
   } catch { /* ignore */ }
 }
@@ -264,13 +264,13 @@ function buildManualForm() {
   const model = state.settings.embedding_model || "";
   const embOpts = state.models
     .filter((m) => m.type !== "llm")
-    .map((m) => `<option value="${esc(m.id)}" ${m.id === model ? "selected" : ""}>${esc(m.id)}${m.type === "unknown" ? " (tipo desconhecido)" : ""}</option>`).join("");
+    .map((m) => `<option value="${esc(m.id)}" ${m.id === model ? "selected" : ""}>${esc(m.id)}${m.type === "unknown" ? " (unknown type)" : ""}</option>`).join("");
   $("manualForm").innerHTML = `
-    <label>Modelo de embedding<select id="mModel">${embOpts || `<option value="">— configure em Configurações —</option>`}</select></label>
-    <label>chunk_size (caracteres)<input type="number" id="mSize" value="${cfg.chunk_size}" min="200" max="8000"></label>
-    <label>chunk_overlap (caracteres)<input type="number" id="mOverlap" value="${cfg.chunk_overlap}" min="0" max="1000"></label>
+    <label>Embedding model<select id="mModel">${embOpts || `<option value="">— configure in Settings —</option>`}</select></label>
+    <label>chunk_size (characters)<input type="number" id="mSize" value="${cfg.chunk_size}" min="200" max="8000"></label>
+    <label>chunk_overlap (characters)<input type="number" id="mOverlap" value="${cfg.chunk_overlap}" min="0" max="1000"></label>
     <label>min_chunk_size<input type="number" id="mMin" value="${cfg.min_chunk_size}" min="0" max="2000"></label>
-    <label>estratégia<select id="mStrategy">${["recursive", "fixed", "markdown", "pages"].map((s) => `<option ${s === cfg.strategy ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+    <label>strategy<select id="mStrategy">${["recursive", "fixed", "markdown", "pages"].map((s) => `<option ${s === cfg.strategy ? "selected" : ""}>${s}</option>`).join("")}</select></label>
     <label>embed_batch_size<input type="number" id="mBatch" value="${cfg.embed_batch_size || 16}" min="1" max="128"></label>`;
 }
 function setMode(mode) {
@@ -282,12 +282,12 @@ function setMode(mode) {
 }
 async function suggestConfig() {
   const colId = $("importCollection").value;
-  if (!colId) return toast("Selecione uma coleção", true);
+  if (!colId) return toast("Select a collection", true);
   const model = $("autoModel").value;
-  if (!model) return toast("Selecione um modelo LLM (aba Configurações carrega a lista)", true);
+  if (!model) return toast("Select an LLM model in Settings", true);
   const btn = $("btnSuggest");
-  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Analisando…`;
-  $("suggestionBox").innerHTML = `<p class="muted small">Extraindo amostra e consultando o LLM — pode levar alguns segundos…</p>`;
+  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Analyzing…`;
+  $("suggestionBox").innerHTML = `<p class="muted small">Extracting a sample and querying the LLM — this may take a few seconds…</p>`;
   try {
     const s = await api("/api/ingest/suggest", { method: "POST", body: { collection_id: colId, model } });
     state.suggestion = s;
@@ -295,24 +295,24 @@ async function suggestConfig() {
   } catch (e) {
     $("suggestionBox").innerHTML = "";
     toast(e.message, true);
-  } finally { btn.disabled = false; btn.textContent = "Analisar documentos"; }
+  } finally { btn.disabled = false; btn.textContent = "Analyze documents"; }
 }
 function renderSuggestion(s) {
   const c = s.config;
-  const srcLabel = s.source === "llm" ? `🤖 sugerido por ${esc(s.model)}` : "⚙️ heurística (LLM indisponível/inválido)";
+  const srcLabel = s.source === "llm" ? `🤖 suggested by ${esc(s.model)}` : "⚙️ heuristic (LLM unavailable/invalid)";
   $("suggestionBox").innerHTML = `
     <div class="suggestion">
-      <h3>Parâmetros sugeridos — ${srcLabel}</h3>
+      <h3>Suggested parameters — ${srcLabel}</h3>
       ${s.warning ? `<p class="small" style="color:var(--yellow)">⚠️ ${esc(s.warning)}</p>` : ""}
       <p class="rationale">${esc(s.rationale)}</p>
       <div class="form-grid">
         <label>chunk_size<input type="number" id="sSize" value="${c.chunk_size}"></label>
         <label>chunk_overlap<input type="number" id="sOverlap" value="${c.chunk_overlap}"></label>
         <label>min_chunk_size<input type="number" id="sMin" value="${c.min_chunk_size}"></label>
-        <label>estratégia<select id="sStrategy">${["recursive", "fixed", "markdown", "pages"].map((x) => `<option ${x === c.strategy ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+        <label>strategy<select id="sStrategy">${["recursive", "fixed", "markdown", "pages"].map((x) => `<option ${x === c.strategy ? "selected" : ""}>${x}</option>`).join("")}</select></label>
       </div>
-      <p class="muted small">Você pode editar os valores acima antes de iniciar, ou
-        <a href="#" onclick="setMode('manual');return false" style="color:var(--accent)">voltar ao modo manual</a>.</p>
+      <p class="muted small">You can edit the values above before starting, or
+        <a href="#" onclick="setMode('manual');return false" style="color:var(--accent)">return to manual mode</a>.</p>
     </div>`;
 }
 function currentConfig() {
@@ -338,9 +338,9 @@ function currentConfig() {
 }
 async function startIngest() {
   const colId = $("importCollection").value;
-  if (!colId) return toast("Selecione uma coleção", true);
+  if (!colId) return toast("Select a collection", true);
   const { config, embedding_model, suggestion } = currentConfig();
-  if (!embedding_model) return toast("Selecione um modelo de embedding (aba Configurações ou modo manual)", true);
+  if (!embedding_model) return toast("Select an embedding model in Settings or manual mode", true);
   try {
     const r = await api("/api/ingest/start", {
       method: "POST",
@@ -349,13 +349,13 @@ async function startIngest() {
         suggestion, save_as_collection_default: $("saveAsDefault").checked,
       },
     });
-    toast(`Ingestão iniciada: ${r.started} documento(s)`);
+    toast(`Ingestion started: ${r.started} document(s)`);
     state.suggestion = null; $("suggestionBox").innerHTML = "";
-    await refreshStaged(); showTab("dashboard");
+    await refreshStaged(); await pollStatus();
   } catch (e) { toast(e.message, true); }
 }
-async function pauseIngest() { try { await api("/api/ingest/pause", { method: "POST" }); toast("Ingestão pausada — progresso preservado"); } catch (e) { toast(e.message, true); } }
-async function resumeIngest() { try { await api("/api/ingest/resume", { method: "POST" }); toast("Ingestão retomada"); } catch (e) { toast(e.message, true); } }
+async function pauseIngest() { try { await api("/api/ingest/pause", { method: "POST" }); toast("Ingestion paused — progress preserved"); } catch (e) { toast(e.message, true); } }
+async function resumeIngest() { try { await api("/api/ingest/resume", { method: "POST" }); toast("Ingestion resumed"); } catch (e) { toast(e.message, true); } }
 
 /* ---------------- dashboard ---------------- */
 async function pollStatus() {
@@ -367,31 +367,33 @@ async function pollStatus() {
     if (s.active_documents > 0 && $("tab-documents").classList.contains("active") && state.pollTick % 2 === 0) loadDocuments();
     if (s.active_documents > 0 && $("tab-import").classList.contains("active") && state.pollTick % 4 === 0) refreshStaged();
     state.pollTick++;
-  } catch { /* servidor offline: health mostrará */ }
+  } catch { /* health polling reports server availability */ }
 }
 function renderIngest(s) {
   const pct = s.chunks_total > 0 ? Math.round((s.chunks_embedded / s.chunks_total) * 100) : (s.active_documents ? 0 : 100);
-  $("ingestBar").style.width = pct + "%";
-  $("btnPause").classList.toggle("hidden", s.paused);
-  $("btnResume").classList.toggle("hidden", !s.paused);
+  ["ingestBar", "importIngestBar"].forEach((id) => { const el = $(id); if (el) el.style.width = pct + "%"; });
+  ["btnPause", "importBtnPause"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", s.paused); });
+  ["btnResume", "importBtnResume"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", !s.paused); });
   const summary = s.paused
-    ? `⏸️ <b>Pausada</b> — progresso preservado; clique em Retomar para continuar do ponto em que parou.`
+    ? `⏸️ <b>Paused</b> — progress preserved; click Resume to continue.`
     : s.active_documents > 0
-      ? `Processando <b>${s.active_documents}</b> documento(s) — <b>${s.chunks_embedded}</b> de <b>${s.chunks_total}</b> chunks embedados (${pct}%), restam <b>${s.chunks_remaining}</b>.`
-      : `Nenhuma ingestão ativa. ${s.counts.ready || 0} documento(s) indexado(s).`;
-  $("ingestSummary").innerHTML = summary;
+      ? `Processing <b>${s.active_documents}</b> document(s) — <b>${s.chunks_embedded}</b> of <b>${s.chunks_total}</b> chunks embedded (${pct}%); <b>${s.chunks_remaining}</b> remaining.`
+      : `No active ingestion. ${s.counts.ready || 0} document(s) indexed.`;
+  ["ingestSummary", "importIngestSummary"].forEach((id) => { const el = $(id); if (el) el.innerHTML = summary; });
   const order = ["staged", "pending", "extracting", "chunking", "embedding", "waiting", "ready", "error"];
-  $("ingestCounts").innerHTML = order
+  const countsHtml = order
     .filter((k) => s.counts[k])
     .map((k) => `<span class="chip">${badge(k)} <b>${s.counts[k]}</b></span>`).join("")
-    || `<span class="muted small">Nenhum documento ainda — importe na aba Importar.</span>`;
-  $("currentDoc").innerHTML = s.current_document
-    ? `Agora: <b>${esc(s.current_document.filename)}</b> — ${badge(s.current_document.status)} ${s.current_document.chunks_embedded}/${s.current_document.chunks_total} chunks`
+    || `<span class="muted small">No documents yet — import files from the Import tab.</span>`;
+  ["ingestCounts", "importIngestCounts"].forEach((id) => { const el = $(id); if (el) el.innerHTML = countsHtml; });
+  const currentHtml = s.current_document
+    ? `Now: <b>${esc(s.current_document.filename)}</b> — ${badge(s.current_document.status)} ${s.current_document.chunks_embedded}/${s.current_document.chunks_total} chunks`
     : "";
+  ["currentDoc", "importCurrentDoc"].forEach((id) => { const el = $(id); if (el) el.innerHTML = currentHtml; });
   $("problems").innerHTML = (s.problems || []).map((p) => `
     <div class="problem ${p.status === "waiting" ? "waiting" : ""}">
       <b>${esc(p.filename)}</b> ${badge(p.status)}
-      ${p.status === "error" ? `<button class="btn mini" onclick="retryDoc('${p.id}')">Tentar novamente</button>` : ""}
+      ${p.status === "error" ? `<button class="btn mini" onclick="retryDoc('${p.id}')">Retry</button>` : ""}
       <div class="err-msg">${esc(p.error || "")}</div>
     </div>`).join("");
 }
@@ -401,25 +403,34 @@ async function pollHealth() {
   const pill = (label, ok, warn = false) =>
     `<span class="pill"><span class="dot ${ok ? (warn ? "warn" : "ok") : "bad"}"></span>${label}</span>`;
   $("healthPills").innerHTML = h
-    ? pill("DB", h.database) + pill("LM Studio", h.lmstudio?.reachable) + pill(h.worker?.paused ? "pausado" : "worker", h.worker?.running, h.worker?.paused)
-    : pill("servidor offline", false);
+    ? pill("DB", h.database) + pill("LM Studio", h.lmstudio?.reachable) + pill(h.worker?.paused ? "paused" : "worker", h.worker?.running, h.worker?.paused)
+    : pill("server offline", false);
   $("healthCards").innerHTML = h ? `
     <div class="card"><div class="stat-label">PostgreSQL + pgvector</div>
       <div class="stat" style="color:${h.database ? "var(--green)" : "var(--red)"}">${h.database ? "online" : "offline"}</div></div>
     <div class="card"><div class="stat-label">LM Studio</div>
       <div class="stat" style="color:${h.lmstudio?.reachable ? "var(--green)" : "var(--red)"}">${h.lmstudio?.reachable ? "online" : "offline"}</div>
-      <div class="muted small">${esc(h.lmstudio?.url || "")}${h.lmstudio?.reachable && state.models.length ? ` · ${state.models.length} modelo(s) conhecidos` : ""}</div>
+      <div class="muted small">${esc(h.lmstudio?.url || "")}${h.lmstudio?.reachable && state.models.length ? ` · ${state.models.length} known model(s)` : ""}</div>
       ${h.lmstudio?.error ? `<div class="small" style="color:var(--yellow)">${esc(h.lmstudio.error)}</div>` : ""}</div>
-    <div class="card"><div class="stat-label">Worker de ingestão</div>
-      <div class="stat" style="color:${h.worker?.paused ? "var(--yellow)" : "var(--green)"}">${h.worker?.paused ? "pausado" : h.worker?.running ? "ativo" : "parado"}</div>
-      <div class="muted small">retomada automática após reinícios</div></div>` : "";
+    <div class="card"><div class="stat-label">Ingestion worker</div>
+      <div class="stat" style="color:${h.worker?.paused ? "var(--yellow)" : "var(--green)"}">${h.worker?.paused ? "paused" : h.worker?.running ? "active" : "stopped"}</div>
+      <div class="muted small">automatically resumes after restart</div></div>` : "";
+}
+function renderEvents() {
+  const level = $("eventLevel")?.value || "";
+  const events = (state.events || []).filter((e) => !level || e.level === level);
+  $("eventsLog").innerHTML = events.map((e) => `
+    <div class="event ${esc(e.level)}">
+      <span class="ts">${fmtTime(e.ts)}</span>
+      <span class="event-level">${esc((e.level || "info").toUpperCase())}</span>
+      <span class="msg">${esc(e.message)}</span>
+    </div>`).join("") || `<p class="muted small">No events for this filter.</p>`;
 }
 async function pollEvents() {
   try {
-    const data = await api("/api/events?limit=60");
-    $("eventsLog").innerHTML = data.events.map((e) => `
-      <div class="event ${esc(e.level)}"><span class="ts">${fmtTime(e.ts)}</span><span class="msg">${esc(e.message)}</span></div>`).join("")
-      || `<p class="muted small">Sem eventos.</p>`;
+    const data = await api("/api/events?limit=100");
+    state.events = data.events || [];
+    renderEvents();
   } catch { /* ignore */ }
 }
 
@@ -537,11 +548,11 @@ async function loadDocuments() {
   if ($("docSearch").value) params.set("q", $("docSearch").value);
   try {
     const data = await api("/api/documents?" + params);
-    $("docsTotal").textContent = `${data.total} documento(s) · página ${Math.floor(state.docsOffset / state.docsLimit) + 1}`;
+    $("docsTotal").textContent = `${data.total} document(s) · page ${Math.floor(state.docsOffset / state.docsLimit) + 1}`;
     $("docsPrev").disabled = state.docsOffset === 0;
     $("docsNext").disabled = state.docsOffset + state.docsLimit >= data.total;
     $("docsTable").innerHTML = `<table><thead><tr>
-      <th>Documento</th><th>Coleção</th><th>Status</th><th>Progresso</th><th>Tamanho</th><th>Atualizado</th><th></th>
+      <th>Document</th><th>Collection</th><th>Status</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
     </tr></thead><tbody>` + data.items.map((d) => {
       const pct = d.chunks_total ? Math.round((d.chunks_embedded / d.chunks_total) * 100) : 0;
       return `<tr>
@@ -554,22 +565,22 @@ async function loadDocuments() {
         <td><div class="row" style="margin:0;flex-wrap:nowrap">
           <button class="btn mini" onclick="docDetails('${d.id}')">Detalhes</button>
           ${["error", "waiting"].includes(d.status) ? `<button class="btn mini" onclick="retryDoc('${d.id}')">Retry</button>` : ""}
-          ${["pending", "extracting", "chunking", "embedding", "waiting", "cancelling"].includes(d.status) ? `<button class="btn mini danger" onclick="cancelDoc(&quot;${d.id}&quot;)">Cancelar</button>` : ""}
+          ${["pending", "extracting", "chunking", "embedding", "waiting", "cancelling"].includes(d.status) ? `<button class="btn mini danger" onclick="cancelDoc(&quot;${d.id}&quot;)">Cancel</button>` : ""}
           <button class="btn mini" onclick="classifyDoc('${d.id}', '${esc(d.filename)}')">Classify</button>
-          <button class="btn mini" onclick="openMoveDoc('${d.id}', '${esc(d.filename)}', '${d.collection_id}')">Mover</button>
-          <button class="btn mini" onclick="reindexDoc('${d.id}', '${esc(d.filename)}')">Reindexar</button>
-          <button class="btn mini danger" onclick="deleteDoc('${d.id}', '${esc(d.filename)}')">Excluir</button>
+          <button class="btn mini" onclick="openMoveDoc('${d.id}', '${esc(d.filename)}', '${d.collection_id}')">Move</button>
+          <button class="btn mini" onclick="reindexDoc('${d.id}', '${esc(d.filename)}')">Reindex</button>
+          <button class="btn mini danger" onclick="deleteDoc('${d.id}', '${esc(d.filename)}')">Delete</button>
         </div></td>
       </tr>`;
     }).join("") + `</tbody></table>`;
   } catch (e) { toast(e.message, true); }
 }
-async function retryDoc(id) { try { await api(`/api/documents/${id}/retry`, { method: "POST" }); toast("Documento reenfileirado"); loadDocuments(); } catch (e) { toast(e.message, true); } }
+async function retryDoc(id) { try { await api(`/api/documents/${id}/retry`, { method: "POST" }); toast("Document requeued"); loadDocuments(); } catch (e) { toast(e.message, true); } }
 async function cancelDoc(id) {
-  if (!confirm("Cancelar o processamento deste documento? Chunks e vetores parciais serão removidos.")) return;
+  if (!confirm("Cancel processing for this document? Partial chunks and vectors will be removed.")) return;
   try {
     const r = await api(`/api/documents/${id}/cancel`, { method: "POST" });
-    toast(r.status === "cancelling" ? "Cancelamento solicitado; aguardando fronteira segura" : "Documento cancelado");
+    toast(r.status === "cancelling" ? "Cancellation requested; waiting for a safe boundary" : "Document cancelled");
     loadDocuments();
     loadCollections();
   } catch (e) { toast(e.message, true); }
@@ -580,12 +591,12 @@ function openMoveDoc(id, name, currentCollectionId) {
     .filter((c) => c.id !== currentCollectionId)
     .map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`)
     .join("");
-  if (!options) { toast("Não há outra coleção disponível", true); return; }
-  openModal(`Mover ${esc(name)}`, `
-    <p class="small muted">Selecione a coleção destino. Documentos já indexados só podem ser movidos sem reindexação entre coleções com o mesmo modelo e dimensão de embedding.</p>
+  if (!options) { toast("No other collection is available", true); return; }
+  openModal(`Move ${esc(name)}`, `
+    <p class="small muted">Select the destination collection. Indexed documents can move without reindexing only between collections using the same embedding model and dimension.</p>
     <div class="row">
       <select id="moveCollectionSelect">${options}</select>
-      <button class="btn primary" onclick="moveDoc('${id}')">Mover documento</button>
+      <button class="btn primary" onclick="moveDoc('${id}')">Move document</button>
     </div>`);
 }
 async function moveDoc(id) {
@@ -603,8 +614,8 @@ async function moveDoc(id) {
   } catch (e) { toast(e.message, true); }
 }
 async function reindexDoc(id, name) {
-  if (!confirm(`Reindexar '${name}'? Os chunks/vetores atuais serão recriados.`)) return;
-  try { await api(`/api/documents/${id}/reindex`, { method: "POST", body: {} }); toast("Reindexação iniciada"); loadDocuments(); }
+  if (!confirm(`Reindex '${name}'? Current chunks/vectors will be recreated.`)) return;
+  try { await api(`/api/documents/${id}/reindex`, { method: "POST", body: {} }); toast("Reindex started"); loadDocuments(); }
   catch (e) { toast(e.message, true); }
 }
 async function classifyDoc(id, name) {
@@ -650,22 +661,22 @@ async function applyClassification(id) {
 }
 
 async function deleteDoc(id, name) {
-  if (!confirm(`Excluir '${name}' e seus vetores?`)) return;
-  try { await api(`/api/documents/${id}`, { method: "DELETE" }); toast("Documento excluído"); loadDocuments(); loadCollections(); }
+  if (!confirm(`Delete '${name}' and its vectors?`)) return;
+  try { await api(`/api/documents/${id}`, { method: "DELETE" }); toast("Document deleted"); loadDocuments(); loadCollections(); }
   catch (e) { toast(e.message, true); }
 }
 async function docDetails(id) {
   try {
     const d = await api(`/api/documents/${id}`);
     openModal(esc(d.filename), `
-      <p class="small muted">${esc(d.source_path)} · coleção <b>${esc(d.collection)}</b> · ${fmtBytes(d.size_bytes)} · sha256 <code>${esc(d.content_sha256.slice(0, 16))}…</code></p>
-      <p>${badge(d.status)} ${d.chunks_embedded}/${d.chunks_total} chunks · ${d.attempts} tentativa(s)</p>
+      <p class="small muted">${esc(d.source_path)} · collection <b>${esc(d.collection)}</b> · ${fmtBytes(d.size_bytes)} · sha256 <code>${esc(d.content_sha256.slice(0, 16))}…</code></p>
+      <p>${badge(d.status)} ${d.chunks_embedded}/${d.chunks_total} chunks · ${d.attempts} attempt(s)</p>
       ${d.error ? `<div class="problem"><b>Erro:</b><div class="err-msg" style="max-height:none">${esc(d.error)}</div></div>` : ""}
-      <h3 class="small">Parâmetros de ingestão</h3><pre>${esc(JSON.stringify(d.ingest_config || {}, null, 2))}</pre>
-      ${d.auto_suggestion ? `<h3 class="small">Sugestão automática aceita</h3><pre>${esc(JSON.stringify(d.auto_suggestion, null, 2))}</pre>` : ""}
+      <h3 class="small">Ingestion parameters</h3><pre>${esc(JSON.stringify(d.ingest_config || {}, null, 2))}</pre>
+      ${d.auto_suggestion ? `<h3 class="small">Accepted automatic suggestion</h3><pre>${esc(JSON.stringify(d.auto_suggestion, null, 2))}</pre>` : ""}
       <h3 class="small">Metadados</h3><pre>${esc(JSON.stringify(d.meta || {}, null, 2))}</pre>
       <h3 class="small">Primeiros chunks</h3>
-      ${(d.chunk_preview || []).map((c) => `<div class="result-card"><div class="result-loc">#${c.seq} · ${esc(JSON.stringify(c.loc))} · ${c.embedded ? "✓ embedado" : "pendente"}</div><div class="result-content">${esc(c.preview)}…</div></div>`).join("") || `<p class="muted small">Sem chunks ainda.</p>`}`);
+      ${(d.chunk_preview || []).map((c) => `<div class="result-card"><div class="result-loc">#${c.seq} · ${esc(JSON.stringify(c.loc))} · ${c.embedded ? "✓ embedded" : "pending"}</div><div class="result-content">${esc(c.preview)}…</div></div>`).join("") || `<p class="muted small">No chunks yet.</p>`}`);
   } catch (e) { toast(e.message, true); }
 }
 function openModal(title, html) { $("modalTitle").innerHTML = title; $("modalBody").innerHTML = html; $("modal").classList.remove("hidden"); }
@@ -675,13 +686,13 @@ function closeModal() { $("modal").classList.add("hidden"); }
 function renderSearchCollections() {
   $("searchCollections").innerHTML = state.collections.map((c) =>
     `<label class="check chip"><input type="checkbox" class="searchCol" value="${esc(c.name)}"> ${esc(c.name)}${c.default_search ? '' : ' · default OFF'}</label>`).join("")
-    || `<span class="muted small">Nenhuma coleção.</span>`;
+    || `<span class="muted small">No collections.</span>`;
 }
 async function doSearch() {
   const query = $("searchQuery").value.trim();
   if (!query) return;
   const cols = [...document.querySelectorAll(".searchCol:checked")].map((c) => c.value);
-  $("searchResults").innerHTML = `<p class="muted"><span class="spinner"></span> Buscando…</p>`;
+  $("searchResults").innerHTML = `<p class="muted"><span class="spinner"></span> Searching…</p>`;
   try {
     const documentId = $("searchDocumentId").value.trim();
     const author = $("searchAuthor").value.trim();
@@ -703,7 +714,7 @@ async function doSearch() {
       },
     });
     if (!r.results.length) {
-      $("searchResults").innerHTML = `<div class="card"><p class="muted">${esc(r.message || "Nenhum resultado.")}</p></div>`;
+      $("searchResults").innerHTML = `<div class="card"><p class="muted">${esc(r.message || "No results.")}</p></div>`;
       await loadSearchMetrics();
       return;
     }
@@ -730,11 +741,11 @@ async function loadSearchMetrics() {
       `<span><b>${s.queries || 0}</b> queries/24h</span>`,
       `<span><b>${s.zero_results || 0}</b> sem resultado</span>`,
       `<span><b>${s.errors || 0}</b> erros</span>`,
-      `<span>média <b>${s.avg_total_ms ?? "—"} ms</b></span>`,
+      `<span>average <b>${s.avg_total_ms ?? "—"} ms</b></span>`,
       `<span>p95 <b>${s.p95_total_ms ?? "—"} ms</b></span>`,
       `<span>embedding <b>${s.avg_embedding_ms ?? "—"} ms</b></span>`,
       `<span>DB <b>${s.avg_db_ms ?? "—"} ms</b></span>`,
-      `<span>top score médio <b>${s.avg_top_score ?? "—"}</b></span>`,
+      `<span>average top score <b>${s.avg_top_score ?? "—"}</b></span>`,
     ];
     let html = `<div class="row wrap">${parts.join("")}</div>`;
     if (recent.length) {
@@ -744,11 +755,11 @@ async function loadSearchMetrics() {
         return `<div class="upload-item"><span>${esc(x.query_text)}${filters}</span><span class="muted">${x.result_count} result. · ${Math.round(x.total_ms)} ms${score}</span></div>`;
       }).join("") + `</div>`;
     } else {
-      html += `<p class="muted">Nenhuma busca registrada.</p>`;
+      html += `<p class="muted">No searches recorded.</p>`;
     }
     $("searchMetrics").innerHTML = html;
   } catch (e) {
-    $("searchMetrics").textContent = "Falha ao carregar métricas: " + e.message;
+    $("searchMetrics").textContent = "Failed to load metrics: " + e.message;
   }
 }
 
@@ -770,7 +781,7 @@ async function loadSettingsTab() {
   await loadModels(false);
 }
 async function loadModels(verbose) {
-  $("modelsInfo").textContent = "consultando LM Studio…";
+  $("modelsInfo").textContent = "querying LM Studio…";
   try {
     const data = await api("/api/lmstudio/models");
     state.models = data.models;
@@ -778,27 +789,27 @@ async function loadModels(verbose) {
     const llm = state.settings.llm_model || "";
     const reranker = state.settings.reranker_model || state.effective?.rerank?.model || "";
     const opts = (filter, sel) => state.models.filter(filter)
-      .map((m) => `<option value="${esc(m.id)}" ${m.id === sel ? "selected" : ""}>${esc(m.id)}${m.type === "unknown" ? " (tipo desconhecido)" : ""}${m.state === "loaded" ? " ●" : ""}</option>`).join("");
-    $("rerankerModel").innerHTML = `<option value="">— selecione —</option>` + opts((m) => m.type !== "embedding", reranker);
-    $("embeddingModel").innerHTML = `<option value="">— selecione —</option>` + opts((m) => m.type !== "llm", emb);
-    $("llmModel").innerHTML = `<option value="">— selecione —</option>` + opts((m) => m.type !== "embedding", llm);
-    $("autoModel").innerHTML = opts((m) => m.type !== "embedding", llm) || `<option value="">nenhum modelo</option>`;
+      .map((m) => `<option value="${esc(m.id)}" ${m.id === sel ? "selected" : ""}>${esc(m.id)}${m.type === "unknown" ? " (unknown type)" : ""}${m.state === "loaded" ? " ●" : ""}</option>`).join("");
+    $("rerankerModel").innerHTML = `<option value="">— select —</option>` + opts((m) => m.type !== "embedding", reranker);
+    $("embeddingModel").innerHTML = `<option value="">— select —</option>` + opts((m) => m.type !== "llm", emb);
+    $("llmModel").innerHTML = `<option value="">— select —</option>` + opts((m) => m.type !== "embedding", llm);
+    $("autoModel").innerHTML = opts((m) => m.type !== "embedding", llm) || `<option value="">no model</option>`;
     $("modelsInfo").textContent = `${state.models.length} modelo(s) em ${data.url}`;
     buildManualForm();
     if (verbose) toast("Lista de modelos atualizada");
   } catch (e) {
     $("modelsInfo").textContent = "";
     if (verbose) toast(e.message, true);
-    else $("modelsInfo").textContent = "LM Studio indisponível — configure a URL e teste";
+    else $("modelsInfo").textContent = "LM Studio unavailable — configure the URL and test";
   }
 }
 async function testLM() {
-  $("lmTestResult").innerHTML = `<span class="spinner"></span> testando…`;
+  $("lmTestResult").innerHTML = `<span class="spinner"></span> testing…`;
   try {
     const r = await api("/api/lmstudio/test", { method: "POST", body: { url: $("lmUrl").value.trim() || null } });
     $("lmTestResult").innerHTML = r.reachable
-      ? `<span style="color:var(--green)">✓ conectado — ${r.models} modelo(s) disponíveis</span>`
-      : `<span style="color:var(--red)">✗ ${esc(r.error || "falha")}</span>`;
+      ? `<span style="color:var(--green)">✓ connected — ${r.models} model(s) available</span>`
+      : `<span style="color:var(--red)">✗ ${esc(r.error || "failure")}</span>`;
   } catch (e) { $("lmTestResult").innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`; }
 }
 async function saveLM() {
@@ -818,11 +829,11 @@ async function saveModels() {
 async function saveOverrides() {
   let parsed;
   try { parsed = JSON.parse($("overridesJson").value || "{}"); }
-  catch (e) { $("overridesMsg").innerHTML = `<span style="color:var(--red)">JSON inválido: ${esc(e.message)}</span>`; return; }
+  catch (e) { $("overridesMsg").innerHTML = `<span style="color:var(--red)">Invalid JSON: ${esc(e.message)}</span>`; return; }
   try {
     await api("/api/settings", { method: "PUT", body: { overrides: parsed } });
     await loadSettings();
-    $("overridesMsg").innerHTML = `<span style="color:var(--green)">✓ salvo</span>`;
+    $("overridesMsg").innerHTML = `<span style="color:var(--green)">✓ saved</span>`;
     buildManualForm();
   } catch (e) { $("overridesMsg").innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`; }
 }
@@ -842,7 +853,7 @@ async function pollDevReload() {
       return;
     }
   } catch (_) {
-    // O backend pode ficar indisponível por alguns instantes durante o reload.
+    // The backend can be briefly unavailable during reload.
   }
   setTimeout(pollDevReload, delay);
 }
