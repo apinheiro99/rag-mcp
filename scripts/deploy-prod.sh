@@ -6,6 +6,7 @@ mkdir -p "$(dirname "$ROOT")"
 if [ ! -d "$ROOT/.git" ]; then
   git clone "$CI_REPOSITORY_URL" "$ROOT"
 fi
+git -C "$ROOT" remote set-url origin "$CI_REPOSITORY_URL"
 git -C "$ROOT" fetch origin "$CI_COMMIT_SHA"
 git -C "$ROOT" checkout --detach "$CI_COMMIT_SHA"
 [ -f "$PRIVATE/.env" ] || { echo "missing $PRIVATE/.env" >&2; exit 1; }
