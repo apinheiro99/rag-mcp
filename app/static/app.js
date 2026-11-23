@@ -88,6 +88,7 @@ function renderCollections() {
       </div>
       <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "sem embeddings ainda"}</div>
       <div class="row" style="margin-top:10px">
+        <button class="btn mini ${c.default_search ? 'primary' : ''}" onclick="toggleDefaultSearch('${c.id}', ${!c.default_search})">Default search: ${c.default_search ? 'ON' : 'OFF'}</button>
         <button class="btn mini" onclick="reindexCollectionModal('${c.id}')">Reindexar tudo</button>
         <button class="btn mini danger" onclick="deleteCollection('${c.id}', '${esc(c.name)}')">Excluir</button>
       </div>
@@ -109,6 +110,14 @@ async function deleteCollection(id, name) {
   if (!confirm(`Excluir a coleção '${name}' e TODOS os seus documentos/vetores?`)) return;
   try { await api(`/api/collections/${id}`, { method: "DELETE" }); await loadCollections(); toast(`Coleção '${name}' excluída`); }
   catch (e) { toast(e.message, true); }
+}
+
+async function toggleDefaultSearch(id, enabled) {
+  try {
+    await api(`/api/collections/${id}`, { method: "PATCH", body: { default_search: enabled } });
+    await loadCollections();
+    toast(`Default search ${enabled ? 'ON' : 'OFF'}`);
+  } catch (e) { toast(e.message, true); }
 }
 function reindexCollectionModal(id) {
   const c = state.collections.find((x) => x.id === id);
@@ -505,7 +514,7 @@ function closeModal() { $("modal").classList.add("hidden"); }
 /* ---------------- search ---------------- */
 function renderSearchCollections() {
   $("searchCollections").innerHTML = state.collections.map((c) =>
-    `<label class="check chip"><input type="checkbox" class="searchCol" value="${esc(c.name)}"> ${esc(c.name)}</label>`).join("")
+    `<label class="check chip"><input type="checkbox" class="searchCol" value="${esc(c.name)}"> ${esc(c.name)}${c.default_search ? '' : ' · default OFF'}</label>`).join("")
     || `<span class="muted small">Nenhuma coleção.</span>`;
 }
 async function doSearch() {

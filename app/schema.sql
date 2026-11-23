@@ -17,9 +17,11 @@ CREATE TABLE IF NOT EXISTS collections (
     embedding_model TEXT,                -- travado no 1º embedding bem-sucedido
     embedding_dim   INT,
     ingest_config   JSONB NOT NULL DEFAULT '{}',
+    default_search  BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS default_search BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- status: staged | pending | extracting | chunking | embedding | waiting | ready | error
 CREATE TABLE IF NOT EXISTS documents (

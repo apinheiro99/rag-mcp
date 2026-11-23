@@ -2,6 +2,8 @@ image: python:3.13-bookworm
 
 stages:
   - validate
+  - tag
+  - publish
   - deploy
 
 default:
@@ -10,17 +12,26 @@ default:
     - python3 -m pip install --upgrade pip
     - pip install -r requirements.txt -r requirements-dev.txt
 
+.branch-push-only:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
 "Public Surface":
+  extends: .branch-push-only
   stage: validate
   script:
     - python3 scripts/public_surface_check.py
 
 "Unit + Regression":
+  extends: .branch-push-only
   stage: validate
   script:
     - python3 -m pytest -q tests/unit tests/regression
 
 "Integration":
+  extends: .branch-push-only
   stage: validate
   services:
     - name: pgvector/pgvector:0.8.7-pg19
@@ -35,11 +46,67 @@ default:
   script:
     - python3 -m pytest -q tests/integration
 
+.ci-tag:
+  stage: tag
+  image: debian:13-slim
+  interruptible: false
+  variables:
+    GIT_DEPTH: "0"
+  before_script: []
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+    - 'if [ -n "$CI_SERVER_TLS_CA_FILE" ]; then export GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"; fi'
+    - git remote set-url origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - 'TAG="v$(date -u -d "$CI_PIPELINE_CREATED_AT" +%Y.%m).$(printf "%06d" "$CI_PIPELINE_IID")"; if [ "$CI_TAG_RESULT" = "fail" ]; then TAG="${TAG}-fail"; fi; export TAG'
+    - git tag "$TAG" "$CI_COMMIT_SHA"
+    - git push origin "refs/tags/$TAG"
+
+ci-tag-green:
+  extends: .ci-tag
+  variables:
+    CI_TAG_RESULT: pass
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: on_success
+
+ci-tag-red:
+  extends: .ci-tag
+  variables:
+    CI_TAG_RESULT: fail
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: on_failure
+
+"Publish GitHub":
+  stage: publish
+  image: debian:13-slim
+  before_script: []
+  needs:
+    - "Public Surface"
+    - "Unit + Regression"
+    - "Integration"
+    - "ci-tag-green"
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates
+    - bash scripts/publish-github.sh
+
 "Deploy Production":
   stage: deploy
   tags: [rag-prod]
   before_script: []
+  needs:
+    - "Publish GitHub"
   script:
     - bash scripts/deploy-prod.sh
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

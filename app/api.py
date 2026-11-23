@@ -153,6 +153,7 @@ class CollectionPatch(BaseModel):
     name: str | None = None
     description: str | None = None
     ingest_config: dict[str, Any] | None = None
+    default_search: bool | None = None
 
 
 @router.get("/collections")
@@ -200,6 +201,8 @@ async def patch_collection(col_id: str, body: CollectionPatch):
         sets.append("name=%s"); params.append(body.name.strip())
     if body.description is not None:
         sets.append("description=%s"); params.append(body.description)
+    if body.default_search is not None:
+        sets.append("default_search=%s"); params.append(body.default_search)
     if body.ingest_config is not None:
         eff = await settings.effective()
         try:

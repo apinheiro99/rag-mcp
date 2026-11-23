@@ -1042,3 +1042,67 @@ async def test_ingestor_finalizes_cancelling_document_and_cleans_partial_chunks(
     assert state["chunks_total"] == 0
     assert state["chunks_embedded"] == 0
     assert chunk_count["n"] == 0
+
+@pytest.mark.asyncio
+async def test_default_search_flag_defaults_on_and_can_be_patched(api_client, live_db, monkeypatch):
+    async def fake_effective():
+        return {
+            "ingest": {
+                "chunk_size": 1500,
+                "chunk_overlap": 200,
+                "min_chunk_size": 120,
+                "strategy": "recursive",
+                "separators": ["\n\n", "\n", ". ", " "],
+                "embed_batch_size": 16,
+            },
+            "limits": {
+                "chunk_size_range": [200, 8000],
+                "chunk_overlap_range": [0, 1000],
+                "min_chunk_size_range": [0, 2000],
+                "embed_batch_size_range": [1, 128],
+            },
+        }
+    monkeypatch.setattr(api_module.settings, "effective", fake_effective)
+    name = f"default-search-{uuid.uuid4().hex[:8]}"
+    resp = await api_client.post('/api/collections', json={'name': name})
+    created = resp.json()
+    assert created['default_search'] is True
+
+    changed = (await api_client.patch(
+        f"/api/collections/{created['id']}", json={'default_search': False}
+    )).json()
+    assert changed['default_search'] is False
+
+
+@pytest.mark.asyncio
+async def test_collection_resolution_uses_default_search_unless_explicit(live_db, monkeypatch):
+    await live_db.apply_schema()
+    enabled_id = uuid.uuid4()
+    disabled_id = uuid.uuid4()
+    enabled_name = f"enabled-{uuid.uuid4().hex[:8]}"
+    disabled_name = f"disabled-{uuid.uuid4().hex[:8]}"
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            """INSERT INTO collections(id,name,embedding_model,embedding_dim,default_search)
+               VALUES (%s,%s,'integration-test',3,TRUE),
+                      (%s,%s,'integration-test',3,FALSE)""",
+            (enabled_id, enabled_name, disabled_id, disabled_name),
+        )
+
+    monkeypatch.setattr(search_module, 'db', live_db)
+    filters = search_module.SearchFilters()
+
+    default_rows = await search_module._resolve_collections(None, filters)
+    default_names = {row['name'] for row in default_rows}
+    assert enabled_name in default_names
+    assert disabled_name not in default_names
+
+    explicit_rows = await search_module._resolve_collections([disabled_name], filters)
+    assert [row['name'] for row in explicit_rows] == [disabled_name]
+
+
+@pytest.mark.asyncio
+async def test_explicit_missing_collection_is_an_error(live_db, monkeypatch):
+    monkeypatch.setattr(search_module, 'db', live_db)
+    with pytest.raises(search_module.SearchError, match='coleções não encontradas'):
+        await search_module._resolve_collections(['does-not-exist'], search_module.SearchFilters())

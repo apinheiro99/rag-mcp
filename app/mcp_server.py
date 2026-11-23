@@ -28,12 +28,14 @@ from .search_filters import SearchFilters
 log = logging.getLogger("rag.mcp")
 
 INSTRUCTIONS = """Servidor RAG self-hosted. Use rag_search para buscar conhecimento
-nas bases indexadas. Cada resultado traz o trecho (content), score de relevância,
-documento e caminho de origem, coleção, localização (página/capítulo/seção) e
-metadados — cite a fonte ao responder. Use list_collections para descobrir as
-bases disponíveis e filtre a busca com o parâmetro collections quando souber
-qual base consultar. Use get_document para ler o documento completo de um
-resultado quando o trecho não for suficiente."""
+nas bases indexadas. Por padrão, NUNCA filtre por coleção: omita `collections` e
+pesquise todas as coleções marcadas para busca padrão. Só use `collections` quando
+o usuário pedir explicitamente uma coleção/base específica; esse pedido explícito
+funciona mesmo se a coleção estiver fora da busca padrão. Cada resultado traz o
+trecho (content), score de relevância, documento/caminho de origem, coleção,
+localização e metadados — cite a fonte ao responder. Erros de coleção/filtro são
+erros da ferramenta, não resultados vazios. Use get_document quando o trecho não
+for suficiente."""
 
 
 def create_mcp() -> FastMCP:
@@ -71,7 +73,8 @@ def create_mcp() -> FastMCP:
 
         Args:
             query: pergunta ou texto a buscar (linguagem natural).
-            collections: nomes/ids das coleções. Omita para todas.
+            collections: nomes/ids das coleções SOMENTE quando o usuário pedir explicitamente.
+                Omita para pesquisar todas as coleções habilitadas para busca padrão.
             document_ids: restringe a documentos específicos por UUID.
             authors: restringe por autor (match parcial, case-insensitive).
             source_paths: restringe ao caminho original exato.
@@ -93,9 +96,9 @@ def create_mcp() -> FastMCP:
             )
             return await semantic_search(query, collections, top_k, min_score, filters)
         except SearchError as e:
-            return {"error": str(e), "results": []}
+            raise ValueError(str(e)) from e
         except LMStudioError as e:
-            return {"error": f"LM Studio indisponível no servidor RAG: {e}", "results": []}
+            raise RuntimeError(f"LM Studio indisponível no servidor RAG: {e}") from e
 
     @mcp.tool()
     async def rag_search_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str, Any]:
@@ -108,7 +111,7 @@ def create_mcp() -> FastMCP:
         com contagem de documentos e chunks indexados."""
         async with db.pool.connection() as conn:
             cur = await conn.execute(
-                """SELECT c.name, c.description, c.embedding_model,
+                """SELECT c.name, c.description, c.embedding_model, c.default_search,
                     (SELECT count(*) FROM documents d WHERE d.collection_id=c.id AND d.status='ready') AS documents,
                     (SELECT coalesce(sum(d.chunks_total),0) FROM documents d
                       WHERE d.collection_id=c.id AND d.status='ready') AS chunks

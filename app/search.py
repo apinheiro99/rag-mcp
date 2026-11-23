@@ -39,7 +39,7 @@ async def _resolve_collections(
     async with db.pool.connection() as conn:
         if identifiers:
             cur = await conn.execute(
-                """SELECT id, name, embedding_model, embedding_dim FROM collections
+                """SELECT id, name, embedding_model, embedding_dim, default_search FROM collections
                    WHERE name = ANY(%s) OR id::text = ANY(%s)""",
                 (identifiers, identifiers),
             )
@@ -50,7 +50,7 @@ async def _resolve_collections(
                 raise SearchError(f"coleções não encontradas: {', '.join(missing)}")
         elif filters.document_ids:
             cur = await conn.execute(
-                """SELECT DISTINCT c.id, c.name, c.embedding_model, c.embedding_dim
+                """SELECT DISTINCT c.id, c.name, c.embedding_model, c.embedding_dim, c.default_search
                    FROM collections c
                    JOIN documents d ON d.collection_id=c.id
                    WHERE d.id = ANY(%s::uuid[])""",
@@ -59,8 +59,8 @@ async def _resolve_collections(
             rows = await cur.fetchall()
         else:
             cur = await conn.execute(
-                """SELECT id, name, embedding_model, embedding_dim FROM collections
-                   WHERE embedding_model IS NOT NULL"""
+                """SELECT id, name, embedding_model, embedding_dim, default_search FROM collections
+                   WHERE embedding_model IS NOT NULL AND default_search=TRUE"""
             )
             rows = await cur.fetchall()
     return [r for r in rows if r["embedding_model"] and r["embedding_dim"]]
