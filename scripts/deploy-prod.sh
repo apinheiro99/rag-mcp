@@ -21,7 +21,16 @@ if [ ! -e "$PRIVATE" ]; then
 fi
 [ -d "$PRIVATE" ] || { echo "RAG_PRIVATE_PATH is not a directory: $PRIVATE" >&2; exit 1; }
 [ -w "$PRIVATE" ] || { echo "RAG_PRIVATE_PATH is not writable: $PRIVATE" >&2; exit 1; }
-install -d -m 700 "$PRIVATE/data" "$PRIVATE/postgres"
+
+# Existing persistent directories may be owned by the containers that use them
+# (not by the gitlab-runner account). Preserve ownership/permissions exactly as-is.
+# Only create a directory when it does not exist yet.
+for persistent_dir in "$PRIVATE/data" "$PRIVATE/postgres"; do
+  if [ ! -e "$persistent_dir" ]; then
+    mkdir "$persistent_dir"
+  fi
+  [ -d "$persistent_dir" ] || { echo "persistent path is not a directory: $persistent_dir" >&2; exit 1; }
+done
 
 # Empty-root first deployment: create only infrastructure bootstrap values.
 # Installation-specific state subsequently remains in this root across deploys.
