@@ -67,7 +67,7 @@ set -a
 set +a
 
 cd "$ROOT"
-COMPOSE_ARGS=(-f deploy/prod/compose.yml)
+COMPOSE_ARGS=(-p rag-mcp -f deploy/prod/compose.yml)
 if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   : "${RAG_TUNNEL_BINARY:?RAG_TUNNEL_BINARY must be set when Secure MCP Tunnel is enabled}"
   : "${RAG_TUNNEL_DIR:?RAG_TUNNEL_DIR must be set when Secure MCP Tunnel is enabled}"

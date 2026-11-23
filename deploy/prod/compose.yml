@@ -1,3 +1,5 @@
+name: rag-mcp
+
 # Production stack. RAG_PRIVATE_PATH is an operator-owned durable host root.
 # It is never a Git checkout requirement and is never replaced by deployment.
 services:
