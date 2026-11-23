@@ -2,7 +2,7 @@
 
 **Self-hosted Retrieval-Augmented Generation platform.** RAG MCP ingests private knowledge, indexes it with local embeddings, retrieves source-traceable context through PostgreSQL/pgvector, and exposes the same knowledge to ChatGPT, Claude and other clients through REST and MCP.
 
-> Status: **active development.** Ingestion, semantic retrieval, MCP access, parser specialization and per-document cancellation are operational. Optional LLM reranking is implemented and is in final end-to-end validation.
+> Status: **operational, under active development.** Ingestion, semantic retrieval, Qwen reranking, MCP access, collection routing, incremental directory sync, CI/CD publication and production deployment are operational.
 
 ## How it fits together
 
@@ -21,6 +21,17 @@ PostgreSQL + pgvector
 ```
 
 The architecture, model roles, ingestion lifecycle, retrieval/reranking pipeline, Mermaid diagrams, configuration, decisions, validation evidence and current engineering state live in one canonical document: [docs/architecture.md](docs/architecture.md).
+
+## Key capabilities
+
+- local embeddings with PostgreSQL/pgvector retrieval;
+- configurable Qwen3 reranking with fail-open behavior;
+- collection-wide default search with explicit collection override;
+- source-traceable REST and read-only MCP search;
+- LLM-assisted collection classification with human apply;
+- incremental directory sources: new/changed/deleted file synchronization;
+- text encoding recovery before quality gating;
+- GitLab CI validation, version tags, GitHub publication and production deployment.
 
 ## What RAG MCP is not
 

@@ -118,6 +118,8 @@ These addresses are deployment facts, not architecture requirements.
 | `rerank.py` | rerank prompt, response parsing and ordering |
 | `rerank_runtime.py` | model-switch orchestration and fail-open behavior |
 | `autoconfig.py` | ingestion configuration suggestion |
+| `collection_classifier.py` | LLM-assisted collection routing suggestions |
+| `source_sync.py` | incremental directory-source synchronization + scheduler |
 
 Rule: one owner per responsibility. New behavior should extend the owning module instead of creating parallel policy elsewhere.
 
@@ -134,7 +136,10 @@ Persistent runtime configuration.
 Logical knowledge bases. A collection records the embedding model/dimension that owns its vectors.
 
 ### `documents`
-Lifecycle record for each uploaded/indexed source.
+Lifecycle record for each uploaded/indexed source. Directory-managed documents also record their `source_id` and source mtime.
+
+### `collection_sources`
+Configurable server-visible directory sources with interval, exclusions, last-sync state and incremental synchronization metadata.
 
 ### `chunks`
 Derived text chunks linked to both document and collection.
@@ -213,7 +218,7 @@ Examples already observed in production:
 - text too short;
 - mojibake percentage above configured threshold.
 
-Quality policy belongs to configuration and must not be silently hardcoded per document.
+Quality policy belongs to configuration and must not be silently hardcoded per document. Text decoding attempts UTF-8/UTF-8-SIG and common legacy encodings such as CP1252 before the quality gate declares mojibake/corruption.
 
 ---
 
@@ -273,7 +278,7 @@ flowchart LR
     S --> K[Top K]
 ```
 
-Search can span collections that use compatible embedding model/dimension groups.
+Search can span collections that use compatible embedding model/dimension groups. With no explicit collection filter, retrieval searches every collection whose `Default search` flag is ON. A collection filter is only applied when the caller explicitly requests it; explicit selection can search a collection even when its default flag is OFF.
 
 Returned results preserve:
 - chunk id;
@@ -299,7 +304,7 @@ Reranking is a second retrieval stage. It does **not** replace embeddings.
 flowchart LR
     Q[Query] --> E[Embedding Retrieval]
     E --> CP[Candidate Pool]
-    CP --> RR[Gemma Reranker]
+    CP --> RR[Configured Reranker]
     Q --> RR
     RR --> RS[Rerank Score]
     RS --> FK[Final Top K]
@@ -315,8 +320,10 @@ Three roles are explicit:
 - `llm_model`
 - `reranker_model`
 
-Current default reranker:
-`google/gemma-4-12b-qat`
+Reference deployment current reranker:
+`qwen3-reranker-4b` (resident runtime override)
+
+Repository fallback/default remains configuration-driven in `config/defaults.yaml`.
 
 Current embedding:
 `text-embedding-qwen3-embedding-8b`
@@ -354,7 +361,7 @@ sequenceDiagram
     PG-->>Search: candidate pool
     Search->>Lock: acquire
     Search->>LM: unload embedding model
-    Search->>LM: load Gemma 4 12B QAT
+    Search->>LM: load configured reranker
     Search->>LM: rerank(query + candidates)
     LM-->>Search: rerank scores
     Search->>LM: unload reranker
@@ -389,12 +396,12 @@ Empirical finding:
 - JIT Auto-Evict caused the initial observation where loading one model evicted another;
 - the project nevertheless chooses switch mode initially to preserve VRAM headroom.
 
-Benchmark on a fixed rerank prompt:
+Historical benchmark on a fixed generic-JSON rerank prompt:
 
 - Gemma 4 12B QAT: ~1.97 s
 - Gemma 4 26B-A4B QAT: ~2.58 s
 
-Both ranked the relevant candidates correctly in that test; 12B is default until measurements show a quality reason to choose the larger model.
+Those measurements motivated the original generic reranker implementation. The reference deployment now uses `qwen3-reranker-4b` with its model-specific binary/logprob strategy.
 
 ---
 
@@ -412,8 +419,16 @@ Current primary routes include:
 ### Collections
 - `GET /api/collections`
 - `POST /api/collections`
+- `PATCH /api/collections/{id}`
 - `DELETE /api/collections/{id}`
 - `POST /api/collections/{id}/reindex`
+
+### Directory sources
+- `GET /api/collection-sources`
+- `POST /api/collections/{id}/sources`
+- `PATCH /api/collection-sources/{id}`
+- `POST /api/collection-sources/{id}/sync`
+- `DELETE /api/collection-sources/{id}`
 
 ### Documents
 - `GET /api/documents`
@@ -422,6 +437,7 @@ Current primary routes include:
 - `DELETE /api/documents/{id}`
 - `POST /api/documents/{id}/retry`
 - `POST /api/documents/{id}/reindex`
+- `POST /api/documents/{id}/classify`
 - `POST /api/documents/{id}/move`
 - `POST /api/documents/{id}/cancel`
 
@@ -445,7 +461,7 @@ MCP is intentionally read-only. Administration remains an HTTP/UI concern.
 Tools:
 
 ### `rag_search`
-Semantic search with collection/source filters and source traceability.
+Semantic search with collection/source filters and source traceability. By default the MCP does not guess a collection filter: it searches all Default-search-enabled collections. Explicit collection selection is reserved for an explicit user request.
 
 ### `rag_search_metrics`
 Retrieval observability summary.
@@ -559,7 +575,12 @@ A document that no longer represents the system should be updated, archived or r
 - expanded candidate pool;
 - switch and resident reranker modes;
 - fail-open fallback to vector ranking;
-- UI checkbox to keep reranker resident.
+- UI checkbox to keep reranker resident;
+- Default search ON/OFF per collection with explicit-filter override;
+- LLM-assisted collection classification with confidence/new-collection proposal;
+- incremental directory source synchronization with configurable intervals;
+- CP1252/legacy text decoding recovery before quality gating;
+- backend administrative API parity in the Web UI.
 
 ### Executed evidence
 
@@ -596,7 +617,7 @@ Resident mode is implemented and exposed in the UI as **manter reranker carregad
 - unchecked -> switch mode;
 - checked -> resident mode.
 
-In resident mode the runtime explicitly ensures the Gemma reranker is loaded and leaves it resident between searches. Switch mode unloads the reranker/embedding as needed and restores the embedding model in `finally`.
+In resident mode the runtime explicitly ensures the configured reranker is loaded and leaves it resident between searches. Switch mode unloads the reranker/embedding as needed and restores the embedding model in `finally`.
 
 Measured benefit with the optimized 8×800 prompt: resident ~9.2 s versus switch ~14.0 s on the same query and ranking quality, saving ~4.8 s per query in that benchmark.
 
@@ -717,7 +738,7 @@ Viável e rápido, mas 12B foi mais rápido e não mostrou perda de qualidade no
 
 ## 22. Current operational state
 
-**Atualizado:** 2026-11-21
+**Atualizado:** 2026-11-23
 
 RAG MCP está operacional:
 - API local: `http://127.0.0.1:8000`
@@ -730,54 +751,19 @@ RAG MCP está operacional:
 ### Models
 
 - embedding: `text-embedding-qwen3-embedding-8b`
-- reranker default: `google/gemma-4-12b-qat`
+- reranker runtime: `qwen3-reranker-4b`
+- reranker mode: resident
 - rerank optimized: multiplier 2, max 8 candidates, 800 chars/candidate
-- UI supports switch/resident mode
+- repository still supports switch/resident strategies
 
-### Corpus additions/classification
+### Corpus organization
 
-- Code Complete -> `software-engineering`
-- Designing Data-Intensive Applications -> `distributed-systems-infra`
-- Release It! -> `distributed-systems-infra`
-- Designing Distributed Systems -> `distributed-systems-infra`
-- Building Microservices -> `distributed-systems-infra`
-- API Design Patterns -> `backend-python-node-typescript`
-- Patterns for API Design -> `backend-python-node-typescript`
-- Docs for Developers -> `software-engineering`
-- Design and Build Great Web APIs -> `backend-python-node-typescript`
-- Windows PowerShell in Action -> `distributed-systems-infra`
-- Windows Server 2019 Automation with PowerShell Cookbook -> `distributed-systems-infra`
-- Windows Server 2019 Administration Fundamentals -> `distributed-systems-infra`
-- Patterns of Distributed Systems -> `distributed-systems-infra`
+The library uses specific topic shelves rather than broad implementation buckets. Current examples include Software Architecture, Software Craftsmanship, Design Patterns, Domain-Driven Design, Python, PostgreSQL, Distributed Systems, RAG & AI Agents, Transformers & Generative AI and AI Application Engineering. `Knowledge Base` remains Default search OFF and is still searchable when explicitly selected.
 
-Patterns of Distributed Systems smoke retrieved Write-Ahead Log, Leader/Follower, HeartBeat, Paxos, Replicated Log and Quorum.
+### LLM-assisted collection classification
 
-### Future idea — automatic collection classification
+Implemented as an assistive workflow: the model receives the existing taxonomy plus a document sample and returns an exact existing collection with confidence or proposes a new collection with rationale. The classifier never moves or creates content by itself; the UI exposes an explicit Apply action. Automatic high-confidence routing remains a future trust-policy step.
 
-Upload should support **collection: automatic**.
-
-Proposed classifier:
-1. read authoritative document metadata first (EPUB OPF/DC metadata such as title, author, subject, publisher, language, identifiers);
-2. match metadata against existing collection descriptions/taxonomy;
-3. if ambiguous, semantically classify from extracted sample chunks using the RAG;
-4. if no existing collection clears a confidence threshold, suggest a new collection/category rather than creating it silently;
-5. always allow manual override.
-
-```mermaid
-flowchart LR
-    U[Upload] --> M[Native Metadata]
-    M --> C{Confident existing collection?}
-    C -->|yes| A[Assign Collection]
-    C -->|no| S[Semantic Sample]
-    S --> R[RAG Classification]
-    R --> E{Existing collection fits?}
-    E -->|yes| A
-    E -->|no| N[Suggest New Collection]
-    N --> H[Human / Policy Approval]
-```
-
-
-This is metadata-first with semantic fallback, not filename-only classification.
 
 ### Known corpus issue
 
@@ -882,7 +868,7 @@ Model roles:
 
 Current embedding model: `text-embedding-qwen3-embedding-8b`
 
-Current default reranker: `google/gemma-4-12b-qat`
+Reference deployment reranker: `qwen3-reranker-4b` in resident mode; repository defaults remain configurable
 
 The UI exposes all three choices under **Configurações → LM Studio**.
 
@@ -977,7 +963,7 @@ The design follows Strategy for interchangeable ranking behavior and Adapter for
 
 ### Generic JSON strategy
 
-General-purpose chat models such as the current Gemma control keep the original batch JSON protocol.
+General-purpose chat models such as the Gemma control models keep the original batch JSON protocol.
 
 ### Qwen3-Reranker strategy
 
