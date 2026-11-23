@@ -95,7 +95,7 @@ ci-tag-red:
       when: never
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates
+    - apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates curl
     - bash scripts/publish-github.sh
 
 "Deploy Production":

@@ -12,7 +12,20 @@ CONFIG="$PRIVATE_DIR/config/github.env"
 [ -f "$CONFIG" ] || { echo "missing GitHub config in rag-private: config/github.env" >&2; exit 1; }
 # shellcheck disable=SC1090
 . "$CONFIG"
-: "${RAG_GITHUB_REPOSITORY:?RAG_GITHUB_REPOSITORY must be set in rag-private/config/github.env}"
+: "${RAG_GITHUB_OWNER:?RAG_GITHUB_OWNER must be set in rag-private/config/github.env}"
+: "${RAG_GITHUB_REPO:=rag-mcp}"
+: "${RAG_GITHUB_REPOSITORY:=git@github.com:${RAG_GITHUB_OWNER}/${RAG_GITHUB_REPO}.git}"
+
+if [ -n "${RAG_GITHUB_TOKEN:-}" ]; then
+  api="https://api.github.com/repos/${RAG_GITHUB_OWNER}/${RAG_GITHUB_REPO}"
+  if ! curl -fsS -H "Authorization: Bearer ${RAG_GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "$api" >/dev/null; then
+    curl -fsS -X POST \
+      -H "Authorization: Bearer ${RAG_GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      https://api.github.com/user/repos \
+      -d "{\"name\":\"${RAG_GITHUB_REPO}\",\"private\":false,\"description\":\"Self-hosted RAG server with MCP, pgvector, reranking and automated deployment\"}" >/dev/null
+  fi
+fi
 
 chmod 600 "$KEY"
 export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
