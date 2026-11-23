@@ -12,4 +12,12 @@ git -C "$ROOT" checkout --detach "$CI_COMMIT_SHA"
 cp "$PRIVATE/.env" "$ROOT/.env"
 cd "$ROOT"
 docker compose up -d --build
-curl -fsS "http://127.0.0.1:${RAG_PORT:-8000}/api/health" >/dev/null
+HEALTH_URL="http://127.0.0.1:${RAG_PORT:-8000}/api/health"
+for attempt in $(seq 1 30); do
+  if curl -fsS "$HEALTH_URL" >/dev/null; then
+    exit 0
+  fi
+  sleep 2
+done
+echo "health check failed after startup grace period: $HEALTH_URL" >&2
+exit 1
