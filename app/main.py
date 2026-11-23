@@ -23,6 +23,7 @@ from .db import db
 from .ingest import worker
 from .mcp_server import create_mcp
 from .settings import settings
+from .source_sync import source_worker
 
 logging.basicConfig(
     level=getattr(logging, env.log_level, logging.INFO),
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     await db.start()
     await settings.load()
     await worker.start()
+    await source_worker.start()
     await db.event("Servidor RAG iniciado")
     log.info("RAG server pronto em %s:%s (MCP: %s)", env.app_host, env.app_port,
              "/mcp" if mcp else "desabilitado")
@@ -52,6 +54,7 @@ async def lifespan(app: FastAPI):
             yield
     else:
         yield
+    await source_worker.stop()
     await worker.stop()
     await db.stop()
 

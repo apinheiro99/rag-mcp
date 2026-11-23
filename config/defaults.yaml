@@ -63,6 +63,13 @@ worker:
 workflow:
   auto_start_configured_uploads: true  # coleção já configurada: upload entra direto na fila
 
+sources:
+  poll_interval_seconds: 30
+  error_retry_seconds: 5
+  default_interval_seconds: 21600
+  interval_options_seconds: [600, 21600, 43200, 86400]
+  default_exclude_patterns: [".git/**", "node_modules/**", "__pycache__/**", ".venv/**"]
+
 quality:
   enabled: true
   fail_on_bad: true

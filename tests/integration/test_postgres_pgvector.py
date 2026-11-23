@@ -1106,3 +1106,80 @@ async def test_explicit_missing_collection_is_an_error(live_db, monkeypatch):
     monkeypatch.setattr(search_module, 'db', live_db)
     with pytest.raises(search_module.SearchError, match='coleções não encontradas'):
         await search_module._resolve_collections(['does-not-exist'], search_module.SearchFilters())
+
+@pytest.mark.asyncio
+async def test_directory_source_sync_tracks_new_changed_and_deleted_files(live_db, tmp_path, monkeypatch):
+    import app.source_sync as source_sync_module
+
+    class FakeSourceSettings:
+        async def effective(self):
+            return {
+                "allowed_extensions": [".txt"],
+                "ingest": {"max_file_mb": 10},
+                "workflow": {"auto_start_configured_uploads": False},
+                "sources": {
+                    "default_exclude_patterns": [".git/**"],
+                    "interval_options_seconds": [600],
+                    "default_interval_seconds": 600,
+                    "poll_interval_seconds": 30,
+                    "error_retry_seconds": 5,
+                },
+            }
+
+        async def get(self, key, default=None):
+            return default
+
+    monkeypatch.setattr(source_sync_module, "db", live_db)
+    monkeypatch.setattr(source_sync_module, "settings", FakeSourceSettings())
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(source_sync_module.env, "data_dir", data_dir)
+
+    root = tmp_path / "source"
+    root.mkdir()
+    document = root / "notes.txt"
+    document.write_text("version one with enough useful text", encoding="utf-8")
+
+    collection_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO collections(id,name,ingest_config) VALUES (%s,%s,'{}'::jsonb)",
+            (collection_id, f"source-sync-{collection_id}"),
+        )
+        await conn.execute(
+            """INSERT INTO collection_sources(
+                   id, collection_id, path, interval_seconds, exclude_patterns, next_sync_at)
+               VALUES (%s,%s,%s,600,'[]'::jsonb,now())""",
+            (source_id, collection_id, str(root)),
+        )
+
+    first = await source_sync_module.sync_collection_source(str(source_id))
+    assert first["new"] == 1
+    async with live_db.pool.connection() as conn:
+        row = await (await conn.execute(
+            "SELECT id, content_sha256, status, source_path FROM documents WHERE source_id=%s",
+            (source_id,),
+        )).fetchone()
+    assert row["source_path"] == "notes.txt"
+    assert row["status"] == "staged"
+    document_id = row["id"]
+    first_digest = row["content_sha256"]
+
+    document.write_text("version two changed content with enough useful text", encoding="utf-8")
+    second = await source_sync_module.sync_collection_source(str(source_id))
+    assert second["changed"] == 1
+    async with live_db.pool.connection() as conn:
+        changed = await (await conn.execute(
+            "SELECT id, content_sha256 FROM documents WHERE source_id=%s", (source_id,)
+        )).fetchone()
+    assert changed["id"] == document_id
+    assert changed["content_sha256"] != first_digest
+
+    document.unlink()
+    third = await source_sync_module.sync_collection_source(str(source_id))
+    assert third["deleted"] == 1
+    async with live_db.pool.connection() as conn:
+        count = await (await conn.execute(
+            "SELECT count(*) AS n FROM documents WHERE source_id=%s", (source_id,)
+        )).fetchone()
+    assert count["n"] == 0

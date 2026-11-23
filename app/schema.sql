@@ -23,12 +23,32 @@ CREATE TABLE IF NOT EXISTS collections (
 );
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS default_search BOOLEAN NOT NULL DEFAULT TRUE;
 
+CREATE TABLE IF NOT EXISTS collection_sources (
+    id               UUID PRIMARY KEY,
+    collection_id    UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    path             TEXT NOT NULL,
+    enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+    interval_seconds INT NOT NULL,
+    exclude_patterns JSONB NOT NULL DEFAULT '[]',
+    last_sync_at     TIMESTAMPTZ,
+    next_sync_at     TIMESTAMPTZ,
+    last_error       TEXT,
+    last_stats       JSONB NOT NULL DEFAULT '{}',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (collection_id, path)
+);
+CREATE INDEX IF NOT EXISTS collection_sources_due_idx
+    ON collection_sources(enabled, next_sync_at);
+
 -- status: staged | pending | extracting | chunking | embedding | waiting | ready | error
 CREATE TABLE IF NOT EXISTS documents (
     id              UUID PRIMARY KEY,
     collection_id   UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
     filename        TEXT NOT NULL,
     source_path     TEXT NOT NULL,       -- caminho relativo original (árvore de pastas)
+    source_id       UUID REFERENCES collection_sources(id) ON DELETE SET NULL,
+    source_mtime_ns BIGINT,
     stored_path     TEXT NOT NULL,       -- blob no disco (content-addressed)
     content_sha256  TEXT NOT NULL,
     size_bytes      BIGINT NOT NULL DEFAULT 0,
@@ -47,6 +67,9 @@ CREATE TABLE IF NOT EXISTS documents (
     UNIQUE (collection_id, content_sha256)
 );
 CREATE INDEX IF NOT EXISTS documents_collection_idx ON documents(collection_id);
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_id UUID REFERENCES collection_sources(id) ON DELETE SET NULL;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_mtime_ns BIGINT;
+CREATE UNIQUE INDEX IF NOT EXISTS documents_source_path_idx ON documents(source_id, source_path) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_status_idx ON documents(status);
 CREATE INDEX IF NOT EXISTS documents_queue_idx ON documents(status, created_at)
     WHERE status IN ('pending','extracting','chunking','embedding','waiting');

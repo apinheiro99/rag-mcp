@@ -12,7 +12,7 @@ const STATUS_LABEL = {
 const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
 
 let state = {
-  collections: [], models: [], settings: {}, effective: null,
+  collections: [], sources: [], models: [], settings: {}, effective: null,
   mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
   pollTick: 0, lastActive: 0, uploading: false,
 };
@@ -62,6 +62,7 @@ async function loadCollections() {
   state.collections = data.collections;
   renderCollections();
   fillCollectionSelects();
+  await loadCollectionSources();
 }
 function fillCollectionSelects() {
   const opts = state.collections.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
@@ -420,6 +421,109 @@ async function pollEvents() {
       <div class="event ${esc(e.level)}"><span class="ts">${fmtTime(e.ts)}</span><span class="msg">${esc(e.message)}</span></div>`).join("")
       || `<p class="muted small">Sem eventos.</p>`;
   } catch { /* ignore */ }
+}
+
+/* ---------------- directory sources ---------------- */
+function formatInterval(seconds) {
+  if (seconds % 86400 === 0) return `${seconds / 86400}d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  return `${Math.round(seconds / 60)}m`;
+}
+function sourceIntervalOptions(selected) {
+  const values = state.effective?.sources?.interval_options_seconds || [];
+  return values.map((v) => `<option value="${v}" ${Number(selected) === Number(v) ? "selected" : ""}>${formatInterval(Number(v))}</option>`).join("");
+}
+async function loadCollectionSources() {
+  if (!$("sourcesList")) return;
+  try {
+    const data = await api("/api/collection-sources");
+    state.sources = data.sources || [];
+    $("sourcesList").innerHTML = state.sources.length ? `<div class="upload-list">` + state.sources.map((s) => {
+      const stats = s.last_stats || {};
+      const summary = s.last_sync_at
+        ? `last ${fmtDate(s.last_sync_at)} · +${stats.new || 0} ~${stats.changed || 0} -${stats.deleted || 0}`
+        : "not synced yet";
+      return `<div class="upload-item">
+        <span><b>${esc(s.collection)}</b> · <code>${esc(s.path)}</code><br><span class="muted small">${summary}${s.last_error ? ` · error: ${esc(s.last_error)}` : ""}</span></span>
+        <span class="row" style="margin:0">
+          <span class="pill">${s.enabled ? "ON" : "OFF"} · ${formatInterval(Number(s.interval_seconds))}</span>
+          <button class="btn mini" onclick="syncSource('${s.id}')">Sync now</button>
+          <button class="btn mini" onclick="editSource('${s.id}')">Edit</button>
+          <button class="btn mini danger" onclick="deleteSource('${s.id}')">Delete</button>
+        </span>
+      </div>`;
+    }).join("") + `</div>` : `<p class="muted">No directory sources configured.</p>`;
+  } catch (e) { $("sourcesList").textContent = e.message; }
+}
+function openAddSource() {
+  if (!state.collections.length) return toast("Create a collection first", true);
+  const collectionOptions = state.collections.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  const defaultInterval = state.effective?.sources?.default_interval_seconds;
+  openModal("Add directory source", `
+    <div class="form-grid">
+      <label>Collection<select id="sourceCollection">${collectionOptions}</select></label>
+      <label>Interval<select id="sourceInterval">${sourceIntervalOptions(defaultInterval)}</select></label>
+    </div>
+    <label>Path visible inside RAG container<input id="sourcePath" type="text" placeholder="/sources/project"></label>
+    <label>Extra exclude patterns (one per line)<textarea id="sourceExcludes" rows="4" placeholder="build/**&#10;dist/**"></textarea></label>
+    <button class="btn primary" onclick="createSource()">Create source</button>`);
+}
+async function createSource() {
+  try {
+    const collectionId = $("sourceCollection").value;
+    const body = {
+      path: $("sourcePath").value.trim(),
+      interval_seconds: Number($("sourceInterval").value),
+      exclude_patterns: $("sourceExcludes").value.split("\n").map((x) => x.trim()).filter(Boolean),
+    };
+    await api(`/api/collections/${collectionId}/sources`, { method: "POST", body });
+    closeModal();
+    await loadCollectionSources();
+    toast("Directory source created; first sync queued");
+  } catch (e) { toast(e.message, true); }
+}
+function editSource(id) {
+  const s = state.sources.find((x) => x.id === id);
+  if (!s) return;
+  openModal("Edit directory source", `
+    <label>Path<input id="sourceEditPath" type="text" value="${esc(s.path)}"></label>
+    <div class="form-grid">
+      <label>Interval<select id="sourceEditInterval">${sourceIntervalOptions(s.interval_seconds)}</select></label>
+      <label class="check"><input id="sourceEditEnabled" type="checkbox" ${s.enabled ? "checked" : ""}> enabled</label>
+    </div>
+    <label>Extra exclude patterns (one per line)<textarea id="sourceEditExcludes" rows="4">${esc((s.exclude_patterns || []).join("\n"))}</textarea></label>
+    <button class="btn primary" onclick="saveSource('${id}')">Save</button>`);
+}
+async function saveSource(id) {
+  try {
+    await api(`/api/collection-sources/${id}`, { method: "PATCH", body: {
+      path: $("sourceEditPath").value.trim(),
+      interval_seconds: Number($("sourceEditInterval").value),
+      enabled: $("sourceEditEnabled").checked,
+      exclude_patterns: $("sourceEditExcludes").value.split("\n").map((x) => x.trim()).filter(Boolean),
+    }});
+    closeModal();
+    await loadCollectionSources();
+    toast("Directory source updated");
+  } catch (e) { toast(e.message, true); }
+}
+async function syncSource(id) {
+  try {
+    toast("Syncing directory source…");
+    const r = await api(`/api/collection-sources/${id}/sync`, { method: "POST", body: {} });
+    await loadCollectionSources();
+    await loadCollections();
+    const s = r.stats;
+    toast(`Sync complete: +${s.new} ~${s.changed} -${s.deleted}`);
+  } catch (e) { toast(e.message, true); }
+}
+async function deleteSource(id) {
+  if (!confirm("Delete this directory source? Existing documents stay in the collection.")) return;
+  try {
+    await api(`/api/collection-sources/${id}`, { method: "DELETE" });
+    await loadCollectionSources();
+    toast("Directory source deleted");
+  } catch (e) { toast(e.message, true); }
 }
 
 /* ---------------- documents ---------------- */

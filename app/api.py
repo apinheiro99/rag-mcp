@@ -26,6 +26,7 @@ from .retrieval_observability import retrieval_metrics
 from .search import SearchError, semantic_search
 from .search_filters import SearchFilters
 from .settings import settings
+from .source_sync import sync_collection_source, validate_interval
 
 log = logging.getLogger("rag.api")
 router = APIRouter(prefix="/api")
@@ -277,6 +278,125 @@ async def reindex_collection(col_id: str, body: ReindexAll):
     await db.event(f"Reindexação da coleção '{col['name']}' iniciada ({n} documentos, modelo {model})",
                    collection_id=col_id)
     return {"reindexing": n, "embedding_model": model, "config": cfg}
+
+
+# ----------------------------------------------------------------- directory sources
+class CollectionSourceCreate(BaseModel):
+    path: str = Field(min_length=1)
+    interval_seconds: int | None = None
+    enabled: bool = True
+    exclude_patterns: list[str] = Field(default_factory=list)
+
+
+class CollectionSourcePatch(BaseModel):
+    path: str | None = None
+    interval_seconds: int | None = None
+    enabled: bool | None = None
+    exclude_patterns: list[str] | None = None
+
+
+@router.get("/collection-sources")
+async def list_collection_sources(collection_id: str | None = None):
+    where, params = "", []
+    if collection_id:
+        where = "WHERE s.collection_id=%s"
+        params.append(_uuid(collection_id))
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            f"""SELECT s.*, c.name AS collection
+                FROM collection_sources s JOIN collections c ON c.id=s.collection_id
+                {where} ORDER BY c.name, s.path""", params
+        )
+        return {"sources": await cur.fetchall()}
+
+
+@router.post("/collections/{col_id}/sources", status_code=201)
+async def create_collection_source(col_id: str, body: CollectionSourceCreate):
+    col_id = _uuid(col_id)
+    eff = await settings.effective()
+    cfg = eff.get("sources", {})
+    interval = body.interval_seconds or int(cfg["default_interval_seconds"])
+    try:
+        interval = validate_interval(interval, cfg)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    path = str(Path(body.path).expanduser().resolve())
+    if not Path(path).is_dir():
+        raise HTTPException(400, f"directory not found or not readable: {path}")
+    async with db.pool.connection() as conn:
+        cur = await conn.execute("SELECT id FROM collections WHERE id=%s", (col_id,))
+        if not await cur.fetchone():
+            raise HTTPException(404, "collection not found")
+        try:
+            cur = await conn.execute(
+                """INSERT INTO collection_sources(
+                       id, collection_id, path, enabled, interval_seconds, exclude_patterns, next_sync_at)
+                   VALUES (%s,%s,%s,%s,%s,%s::jsonb,now()) RETURNING *""",
+                (str(uuid.uuid4()), col_id, path, body.enabled, interval, json.dumps(body.exclude_patterns)),
+            )
+            row = await cur.fetchone()
+        except Exception as e:
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise HTTPException(409, "source already exists for this collection") from e
+            raise
+    return row
+
+
+@router.patch("/collection-sources/{source_id}")
+async def patch_collection_source(source_id: str, body: CollectionSourcePatch):
+    source_id = _uuid(source_id)
+    eff = await settings.effective()
+    cfg = eff.get("sources", {})
+    sets, params = ["updated_at=now()"], []
+    if body.path is not None:
+        path = str(Path(body.path).expanduser().resolve())
+        if not Path(path).is_dir():
+            raise HTTPException(400, f"directory not found or not readable: {path}")
+        sets.extend(["path=%s", "next_sync_at=now()"]); params.append(path)
+    if body.interval_seconds is not None:
+        try:
+            interval = validate_interval(body.interval_seconds, cfg)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        sets.extend(["interval_seconds=%s", "next_sync_at=now()"]); params.append(interval)
+    if body.enabled is not None:
+        sets.append("enabled=%s"); params.append(body.enabled)
+        if body.enabled:
+            sets.append("next_sync_at=now()")
+    if body.exclude_patterns is not None:
+        sets.extend(["exclude_patterns=%s::jsonb", "next_sync_at=now()"]); params.append(json.dumps(body.exclude_patterns))
+    params.append(source_id)
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            f"UPDATE collection_sources SET {', '.join(sets)} WHERE id=%s RETURNING *", params
+        )
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(404, "source not found")
+    return row
+
+
+@router.post("/collection-sources/{source_id}/sync")
+async def sync_collection_source_route(source_id: str):
+    source_id = _uuid(source_id)
+    try:
+        stats = await sync_collection_source(source_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"source_id": source_id, "stats": stats}
+
+
+@router.delete("/collection-sources/{source_id}")
+async def delete_collection_source(source_id: str):
+    source_id = _uuid(source_id)
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM collection_sources WHERE id=%s RETURNING path", (source_id,)
+        )
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(404, "source not found")
+    return {"deleted": row["path"]}
 
 
 # ----------------------------------------------------------------- documents
