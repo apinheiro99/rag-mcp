@@ -56,22 +56,55 @@ PY
     [ -f "$compose" ] || { echo "compose file not found: $compose" >&2; exit 1; }
     [ -f "$env_file" ] || { echo "runtime env not found: $env_file" >&2; exit 1; }
     set -a; . "$env_file"; set +a
-    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    tmp="$(mktemp -d)"
+    app_stopped=0
+    cleanup_import() {
+      rc=$?
+      trap - EXIT
+      if [ "$app_stopped" = "1" ] && [ "$rc" -ne 0 ]; then
+        echo "migration failed; restarting RAG application..." >&2
+        docker compose --env-file "$env_file" -f "$compose" up -d app >/dev/null 2>&1 || true
+      fi
+      rm -rf "$tmp"
+      exit "$rc"
+    }
+    trap cleanup_import EXIT
+
     tar -C "$tmp" -xzf "$bundle"
     [ -f "$tmp/database.dump" ] || { echo "bundle missing database.dump" >&2; exit 1; }
     [ -d "$tmp/data" ] || { echo "bundle missing data/" >&2; exit 1; }
 
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    backup="$root/pre-migration-$stamp"
-    mkdir -p "$root" "$backup"
+    backup_name="pre-migration-$stamp"
+    backup="$root/$backup_name"
+    mkdir -p "$root"
 
     echo "stopping RAG application for consistent restore..."
     docker compose --env-file "$env_file" -f "$compose" stop app || true
+    app_stopped=1
 
-    if [ -d "$root/data" ] && [ "$(find "$root/data" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-      mv "$root/data" "$backup/data"
-    fi
-    cp -a "$tmp/data" "$root/data"
+    echo "backing up current production database..."
+    docker compose --env-file "$env_file" -f "$compose" up -d db
+    docker compose --env-file "$env_file" -f "$compose" exec -T db \
+      pg_dump -U "${POSTGRES_USER:-rag}" -d "${POSTGRES_DB:-rag}" -Fc > "$tmp/preexisting.dump"
+
+    echo "replacing persistent RAG data through a root helper container..."
+    docker run --rm \
+      -e BACKUP_NAME="$backup_name" \
+      -v "$root:/dst" \
+      -v "$tmp:/src:ro" \
+      python:3.12-slim sh -ec '''
+        mkdir -p "/dst/$BACKUP_NAME"
+        cp /src/preexisting.dump "/dst/$BACKUP_NAME/database.dump"
+        if [ -d /dst/data ]; then
+          if [ -n "$(find /dst/data -mindepth 1 -print -quit 2>/dev/null)" ]; then
+            mv /dst/data "/dst/$BACKUP_NAME/data"
+          else
+            rmdir /dst/data
+          fi
+        fi
+        cp -a /src/data /dst/data
+      '''
 
     echo "starting PostgreSQL for logical restore..."
     docker compose --env-file "$env_file" -f "$compose" up -d db
@@ -86,7 +119,8 @@ PY
     cat "$tmp/database.dump" | docker compose --env-file "$env_file" -f "$compose" exec -T db \
       pg_restore --clean --if-exists --no-owner -U "${POSTGRES_USER:-rag}" -d "${POSTGRES_DB:-rag}"
     docker compose --env-file "$env_file" -f "$compose" up -d --build
-    echo "migration restored; previous data backup (if any): $backup"
+    app_stopped=0
+    echo "migration restored; previous production backup: $backup"
     ;;
 
   *) usage >&2; exit 2 ;;
