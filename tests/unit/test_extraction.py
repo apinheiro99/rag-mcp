@@ -8,6 +8,7 @@ from app.extraction import (
     markdown_to_segments,
     normalize_ws,
     read_text_file,
+    decode_text_bytes,
 )
 
 
@@ -43,6 +44,11 @@ def test_markdown_preserves_heading_hierarchy():
     assert "Child" in segs[1].text
 
 
+
+
+def test_decode_text_bytes_recovers_cp1252_smart_punctuation():
+    raw = "‘quoted’ — €".encode("cp1252")
+    assert decode_text_bytes(raw) == "‘quoted’ — €"
 
 
 def test_read_text_file_prefers_cp1252_before_latin1(tmp_path):

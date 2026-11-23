@@ -74,14 +74,17 @@ def normalize_ws(text: str) -> str:
     return text.strip()
 
 
-def read_text_file(path: Path) -> str:
-    raw = path.read_bytes()
+def decode_text_bytes(raw: bytes) -> str:
     for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
         try:
             return raw.decode(enc)
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def read_text_file(path: Path) -> str:
+    return decode_text_bytes(path.read_bytes())
 
 
 # ---------------------------------------------------------------- HTML
@@ -260,7 +263,7 @@ def _epub_chapter_titles(opf_dir: str, manifest: dict, zf: zipfile.ZipFile) -> d
     for item in manifest.values():
         if "nav" in (item.get("properties") or ""):
             try:
-                html = zf.read(item["href"]).decode("utf-8", errors="replace")
+                html = decode_text_bytes(zf.read(item["href"]))
                 root = ET.fromstring(re.sub(r'xmlns="[^"]+"', "", html, count=1))
                 for a in root.iter("a"):
                     href = a.get("href")
@@ -290,7 +293,7 @@ def _epub_chapter_titles(opf_dir: str, manifest: dict, zf: zipfile.ZipFile) -> d
 def extract_epub(path: Path, max_chapters: int | None = None) -> ExtractedDoc:
     try:
         with zipfile.ZipFile(path) as zf:
-            container = zf.read("META-INF/container.xml").decode("utf-8", errors="replace")
+            container = decode_text_bytes(zf.read("META-INF/container.xml"))
             root = ET.fromstring(container)
             opf_path = None
             for rf in root.iter():
@@ -326,7 +329,7 @@ def extract_epub(path: Path, max_chapters: int | None = None) -> ExtractedDoc:
                     continue
                 href = (opf_dir + "/" + item["href"]).lstrip("/") if opf_dir else item["href"]
                 try:
-                    html = zf.read(href).decode("utf-8", errors="replace")
+                    html = decode_text_bytes(zf.read(href))
                 except KeyError:
                     continue
                 chapter_idx += 1
