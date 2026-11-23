@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import autoconfig
 from .chunking import ConfigError, validate_ingest_config
-from .classification_runtime import classify_document_runtime
+from .classification_runtime import classification_worker, classify_document_runtime
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
@@ -25,8 +25,9 @@ from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable
 from .retrieval_observability import retrieval_metrics
 from .search import SearchError, semantic_search
 from .search_filters import SearchFilters
+from .model_runtime import runtime_scheduler
 from .settings import settings
-from .source_sync import sync_collection_source, validate_interval
+from .source_sync import source_worker, sync_collection_source, validate_interval
 
 log = logging.getLogger("rag.api")
 router = APIRouter(prefix="/api")
@@ -82,6 +83,14 @@ async def health():
         "worker": {"running": worker._task is not None and not worker._task.done(),
                    "paused": await settings.paused(),
                    "current_document": worker.current_document},
+        "classification_worker": {
+            "running": classification_worker._task is not None and not classification_worker._task.done(),
+            "current_document": classification_worker.current_document,
+        },
+        "source_worker": {
+            "running": source_worker._task is not None and not source_worker._task.done(),
+        },
+        "model_runtime": runtime_scheduler.status(),
         "lmstudio": lm,
         "mcp_enabled": env.mcp_enabled,
     }

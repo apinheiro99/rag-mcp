@@ -48,11 +48,17 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         doc = await cur.fetchone()
         if not doc:
             raise ValueError("document not found")
+        staging_name = str(eff["classification"]["staging_collection_name"]).strip()
         cur = await conn.execute(
             """SELECT c.id, c.name, c.description, c.embedding_model, c.embedding_dim,
-                      (SELECT count(*) FROM documents x WHERE x.collection_id=c.id) AS doc_count
-               FROM collections c WHERE c.id<>%s ORDER BY c.name""",
-            (doc["collection_id"],),
+                      (SELECT count(*) FROM documents x WHERE x.collection_id=c.id) AS doc_count,
+                      ARRAY(
+                          SELECT x.filename FROM documents x
+                          WHERE x.collection_id=c.id AND x.status='ready'
+                          ORDER BY x.created_at, x.filename LIMIT 4
+                      ) AS examples
+               FROM collections c WHERE c.name<>%s ORDER BY c.name""",
+            (staging_name,),
         )
         collections = await cur.fetchall()
 
@@ -73,8 +79,8 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
             sample_chars=eff["auto"]["sample_chars"],
             timeout=eff["auto"]["request_timeout"],
             reasoning_effort=cfg.get("reasoning_effort"),
+            seed=cfg.get("seed"),
         ),
-        release_after=True,
     )
     threshold = float(cfg["confidence_threshold"])
     result.update({
@@ -152,6 +158,7 @@ async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dic
                     (doc["source_model"], doc["source_dim"], target["id"]),
                 )
 
+            result.update({"auto_applied": True, "routed_to": existing_name, "status": "ready"})
             await conn.execute(
                 """UPDATE documents SET collection_id=%s,auto_suggestion=%s::jsonb,
                        meta=(coalesce(meta,'{}'::jsonb) - 'auto_classify'),updated_at=now()
@@ -163,7 +170,6 @@ async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dic
                 (target["id"], doc_id),
             )
 
-    result.update({"auto_applied": True, "routed_to": existing_name, "status": "ready"})
     await db.event(
         f"Automatically classified: {doc['filename']} → {existing_name} ({float(result['confidence']):.2f})",
         collection_id=target["id"], document_id=doc_id,

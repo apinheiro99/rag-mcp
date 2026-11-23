@@ -571,9 +571,9 @@ A document that no longer represents the system should be updated, archived or r
 - explicit LM Studio model load/unload and ensure-loaded;
 - separate embedding / general LLM / reranker model roles;
 - reranker core parsing/scoring;
-- shared model runtime lock between search and ingestion;
+- bounded FIFO model-runtime scheduler with per-caller futures and backpressure;
 - expanded candidate pool;
-- switch and resident reranker modes;
+- model-profile residency controlled centrally by the runtime scheduler;
 - fail-open fallback to vector ranking;
 - UI checkbox to keep reranker resident;
 - Default search ON/OFF per collection with explicit-filter override;
@@ -612,18 +612,11 @@ Current optimized defaults: candidate_multiplier=2, max_candidates=8, max_chars_
 
 ## 20. Resident reranker mode
 
-Resident mode is implemented and exposed in the UI as **manter reranker carregado**.
+Model residency is now owned by `app/model_runtime.py`, not by independent search/ingest load-unload branches. Jobs enter a bounded FIFO queue and declare the exact model profile they need. Consecutive jobs with the same profile reuse resident models; incompatible jobs trigger a controlled profile transition.
 
-- unchecked -> switch mode;
-- checked -> resident mode.
+Semantic search is atomic from query embedding through pgvector retrieval and reranking, so a classification job cannot unload the reranker in the middle of an active request. Classification jobs may use a larger generative LLM and keep it resident across consecutive compatible classification jobs; the following incompatible queued job determines when the runtime transitions to another model profile.
 
-In resident mode the runtime explicitly ensures the configured reranker is loaded and leaves it resident between searches. Switch mode unloads the reranker/embedding as needed and restores the embedding model in `finally`.
-
-Measured benefit with the optimized 8×800 prompt: resident ~9.2 s versus switch ~14.0 s on the same query and ranking quality, saving ~4.8 s per query in that benchmark.
-
-`config/defaults.yaml` keeps `mode: switch` as the conservative default. The current runtime override may use resident mode when the operator selects the checkbox.
-
-Future work: measure GPU VRAM, ingestion throughput and concurrent search+ingestion stability before considering resident as the global default.
+This supersedes the older switch-vs-resident operational model while preserving the same goal: avoid unnecessary model churn without allowing concurrent callers to race over finite VRAM.
 
 ---
 
@@ -769,12 +762,12 @@ Implemented in two modes. Manual classification returns an exact existing collec
 
 Older infrastructure documents can compete with current canonical documents (e.g. legacy DEV `-01` naming). This remains a corpus canonicality/versioning problem. Private operational credentials remain valid searchable knowledge.
 
-### Next retrieval work
+### Remaining roadmap
 
-- rerank observability/latency metrics;
-- automatic retrieval evaluation;
-- corpus canonicality/versioning;
-- then remaining roadmap items.
+- corpus canonicality/versioning remains a corpus-governance improvement, not a runtime blocker;
+- optional OpenAI Secure MCP Tunnel activation remains operator-gated by the OpenAI `tunnel_id`/credentials.
+
+All original runtime/product roadmap items (default-search semantics, explicit error semantics, automatic classification, directory synchronization, administrative UI parity, encoding recovery, GitHub publication and production deployment) are implemented.
 
 ---
 
@@ -862,6 +855,17 @@ This separation is intentional:
 - RAG local: `http://127.0.0.1:8000`
 - RAG LAN: `http://192.168.1.142:8000`
 - LM Studio: `http://192.168.1.10:1234`
+
+## MCP validation
+
+A real MCP SDK client was executed against `http://127.0.0.1:8000/mcp` using Streamable HTTP. Validation completed successfully:
+
+- session initialized against `rag-server`;
+- tools listed: `rag_search`, `rag_search_metrics`, `list_collections`, `get_document`;
+- `list_collections` returned successfully;
+- `rag_search` returned a source-traceable result.
+
+This validates the server-side MCP transport/tool contract independently of the optional OpenAI Secure MCP Tunnel.
 
 ## Validation
 
