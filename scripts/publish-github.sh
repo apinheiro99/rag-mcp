@@ -5,6 +5,10 @@ set -euo pipefail
 PRIVATE_DIR="$(mktemp -d)"
 trap 'rm -rf "$PRIVATE_DIR"' EXIT
 
+if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then
+  export GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"
+fi
+
 git clone --depth 1 "$RAG_PRIVATE_REPOSITORY" "$PRIVATE_DIR"
 KEY="$PRIVATE_DIR/credentials/github/rag-mcp"
 CONFIG="$PRIVATE_DIR/config/github.env"
