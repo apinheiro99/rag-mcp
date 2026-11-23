@@ -28,5 +28,5 @@ TAG="v$(date -u -d "$CI_PIPELINE_CREATED_AT" +%Y.%m).$(printf "%06d" "$CI_PIPELI
 
 git remote remove github 2>/dev/null || true
 git remote add github "$RAG_GITHUB_REPOSITORY"
-git push --force-with-lease github "$CI_COMMIT_SHA:refs/heads/main"
+git push --force github "$CI_COMMIT_SHA:refs/heads/main"
 git push github "refs/tags/$TAG:refs/tags/$TAG"
