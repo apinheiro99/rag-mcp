@@ -109,3 +109,22 @@ async def test_health_reports_unreachable_without_listing_models(monkeypatch):
     assert result["url"] == "http://lm.example:1234"
     assert "connection refused" in result["error"]
 
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_forwards_seed(monkeypatch):
+    client = LMStudioClient("http://lm")
+    captured = {}
+
+    async def fake_request(method, path, *, json_body=None, timeout=None):
+        captured["json"] = json_body
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    await client.chat_completion(
+        [{"role": "user", "content": "classify"}],
+        "model",
+        temperature=0.0,
+        seed=42,
+    )
+    assert captured["json"]["seed"] == 42

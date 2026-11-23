@@ -187,7 +187,7 @@ class LMStudioClient:
         self, messages: list[dict], model: str, *, temperature: float = 0.2,
         max_tokens: int = 1500, timeout: float | None = None,
         reasoning_effort: str | None = None, logprobs: bool | None = None,
-        top_logprobs: int | None = None,
+        top_logprobs: int | None = None, seed: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -202,16 +202,18 @@ class LMStudioClient:
             payload["logprobs"] = bool(logprobs)
         if top_logprobs is not None:
             payload["top_logprobs"] = int(top_logprobs)
+        if seed is not None:
+            payload["seed"] = int(seed)
         return await self._request(
             "POST", "/v1/chat/completions", json_body=payload, timeout=timeout
         )
 
     async def chat(self, messages: list[dict], model: str, *, temperature: float = 0.2,
                    max_tokens: int = 1500, timeout: float | None = None,
-                   reasoning_effort: str | None = None) -> str:
+                   reasoning_effort: str | None = None, seed: int | None = None) -> str:
         data = await self.chat_completion(
             messages, model, temperature=temperature, max_tokens=max_tokens,
-            timeout=timeout, reasoning_effort=reasoning_effort,
+            timeout=timeout, reasoning_effort=reasoning_effort, seed=seed,
         )
         try:
             choices = data["choices"]

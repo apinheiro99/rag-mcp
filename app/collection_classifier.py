@@ -27,6 +27,8 @@ Rules:
 - confidence is 0..1 and measures confidence in the routing decision.
 - proposed_collection must be null when an existing collection is selected.
 - prefer an existing specific collection over creating a near-duplicate.
+- use each collection's description AND representative document examples as evidence of its intended scope.
+- representative examples are not exhaustive; a new document can belong when it is semantically consistent with them.
 """
 
 
@@ -109,12 +111,14 @@ async def classify_document(
     sample_chars: int,
     timeout: float,
     reasoning_effort: str | None = None,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     shelves = [
         {
             "name": c["name"],
             "description": c.get("description") or "",
             "documents": int(c.get("doc_count") or 0),
+            "examples": [str(x) for x in (c.get("examples") or [])[:4]],
         }
         for c in collections
     ]
@@ -130,6 +134,7 @@ async def classify_document(
         max_tokens=1000,
         timeout=timeout,
         reasoning_effort=reasoning_effort,
+        seed=seed,
     )
     result = validate_classification(parse_json_object(content), collections)
     result.update({"model": model, "source": "llm"})

@@ -1283,16 +1283,18 @@ async def test_auto_route_applies_only_above_configured_confidence(live_db, monk
     assert low["auto_apply_eligible"] is False
 
     async with live_db.pool.connection() as conn:
-        high_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (high_id,))).fetchone()
+        high_row = await (await conn.execute("SELECT collection_id,status,auto_suggestion FROM documents WHERE id=%s", (high_id,))).fetchone()
         low_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (low_id,))).fetchone()
     assert high_row["collection_id"] == target_id
     assert high_row["status"] == "ready"
+    assert high_row["auto_suggestion"]["auto_applied"] is True
+    assert high_row["auto_suggestion"]["routed_to"] == target_name
     assert low_row["collection_id"] == inbox_id
     assert low_row["status"] == "ready"
 
 
 @pytest.mark.asyncio
-async def test_classification_runtime_queues_llm_and_releases_after_use(live_db, monkeypatch):
+async def test_classification_runtime_queues_llm_and_keeps_profile_resident(live_db, monkeypatch):
     import app.classification_runtime as classification_module
 
     collection_id = uuid.uuid4()
@@ -1319,8 +1321,11 @@ async def test_classification_runtime_queues_llm_and_releases_after_use(live_db,
                 "auto": {"sample_chars": 3500, "request_timeout": 240},
                 "classification": {
                     "context_length": 8192,
-                    "confidence_threshold": 0.92,
+                    "confidence_threshold": 0.90,
                     "auto_apply_existing": True,
+                    "staging_collection_name": "Unclassified",
+                    "reasoning_effort": "none",
+                    "seed": 42,
                 },
             }
 
@@ -1364,4 +1369,4 @@ async def test_classification_runtime_queues_llm_and_releases_after_use(live_db,
     assert captured["name"] == f"classify:{doc_id}"
     assert captured["requirements"][0].model == "google/gemma-4-12b-qat"
     assert captured["requirements"][0].context_length == 8192
-    assert captured["release_after"] is True
+    assert captured["release_after"] is False
