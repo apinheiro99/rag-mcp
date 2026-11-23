@@ -98,8 +98,21 @@
       <p class="muted small">Collections are independent knowledge shelves. Choose Automatic classification to route uploads by content; high-confidence matches are applied, while uncertain/new-shelf proposals stay in Unclassified for review.</p>
     </div>
 
+    <div class="card" id="importProgressCard">
+      <div class="card-head">
+        <h2>2 · Ingestion progress</h2>
+        <div>
+          <button id="importBtnPause" class="btn" onclick="pauseIngest()">Pause</button>
+          <button id="importBtnResume" class="btn primary hidden" onclick="resumeIngest()">Resume</button>
+        </div>
+      </div>
+      <div id="importIngestSummary" class="muted">No active ingestion.</div>
+      <div class="progress-wrap"><div class="progress-bar" id="importIngestBar"></div></div>
+      <div id="importIngestCounts" class="chips"></div>
+      <div id="importCurrentDoc" class="muted small"></div>
+    </div>
     <div class="card">
-      <div class="card-head"><h2>2 · Files</h2></div>
+      <div class="card-head"><h2>3 · Files</h2></div>
       <div id="dropzone" tabindex="0">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
           <path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
@@ -120,7 +133,7 @@
 
     <div class="card" id="ingestConfigCard">
       <div class="card-head">
-        <h2>3 · Ingestion configuration</h2>
+        <h2>4 · Ingestion configuration</h2>
         <span id="stagedCount" class="pill"></span>
       </div>
       <div class="tabs-mini">
@@ -148,19 +161,6 @@
       </div>
     </div>
 
-    <div class="card" id="importProgressCard">
-      <div class="card-head">
-        <h2>4 · Ingestion progress</h2>
-        <div>
-          <button id="importBtnPause" class="btn" onclick="pauseIngest()">Pause</button>
-          <button id="importBtnResume" class="btn primary hidden" onclick="resumeIngest()">Resume</button>
-        </div>
-      </div>
-      <div id="importIngestSummary" class="muted">No active ingestion.</div>
-      <div class="progress-wrap"><div class="progress-bar" id="importIngestBar"></div></div>
-      <div id="importIngestCounts" class="chips"></div>
-      <div id="importCurrentDoc" class="muted small"></div>
-    </div>
   </section>
 
   <!-- ==================== DOCUMENTS ==================== -->
