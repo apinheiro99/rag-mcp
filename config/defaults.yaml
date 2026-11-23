@@ -50,13 +50,19 @@ auto:
   max_tokens: 1500
   request_timeout: 240      # timeout (s) da chamada ao LLM
 
+model_runtime:
+  queue_maxsize: 32
+
 classification:
+  enabled: true
   staging_collection_name: Unclassified
+  poll_interval_seconds: 2
   confidence_threshold: 0.92
   auto_apply_existing: true
-  unload_after_use: true
-  temporarily_unload_reranker: true
   context_length: 8192
+  reasoning_effort: none
+  max_attempts: 3
+  retry_backoff_seconds: [60, 300, 1800]
 
 limits:
   chunk_size_range: [200, 8000]

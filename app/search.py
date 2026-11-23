@@ -7,8 +7,8 @@ from typing import Any
 
 from .db import db, vector_literal
 from .retrieval_observability import record_retrieval
-from .lmstudio import model_runtime_lock
-from .rerank_runtime import rerank_with_runtime
+from .model_runtime import ModelRequirement, runtime_scheduler
+from .rerank import rerank_results
 from .search_filters import SearchFilters
 from .settings import settings
 
@@ -84,8 +84,7 @@ async def _search_group(
     table, coltype = table_type
 
     t0 = time.perf_counter()
-    async with model_runtime_lock:
-        qvec = (await client.embed([query], model))[0]
+    qvec = (await client.embed([query], model))[0]
     embedding_ms = (time.perf_counter() - t0) * 1000
     if len(qvec) != dim:
         raise SearchError(
@@ -187,47 +186,66 @@ async def semantic_search(
             groups.setdefault((c["embedding_model"], c["embedding_dim"]), []).append(c)
 
         client = await settings.lmstudio_client()
-        for (model, dim), group_cols in groups.items():
-            rows, emb_elapsed, db_elapsed = await _search_group(
-                query=query,
-                model=model,
-                dim=dim,
-                group_cols=group_cols,
-                filters=filters,
-                top_k=candidate_k,
-                scfg=scfg,
-                client=client,
-            )
-            embedding_ms += emb_elapsed
-            db_ms += db_elapsed
-            for r in rows:
-                score = float(r["score"])
-                if score < min_score:
-                    continue
-                results.append({
-                    "chunk_id": str(r["chunk_id"]),
-                    "document_id": str(r["document_id"]),
-                    "content": r["content"],
-                    "score": round(score, 4),
-                    "collection": r["collection"],
-                    "document": r["filename"],
-                    "source_path": r["source_path"],
-                    "location": r["loc"],
-                    "location_label": location_label(r["loc"]),
-                    "chunk_seq": r["seq"],
-                    "metadata": r["meta"],
-                })
+        reranker_model = await settings.get("reranker_model", rcfg.get("model")) if rcfg.get("enabled") else None
+        context_length = int(rcfg.get("context_length", 8192))
+        requirements = [ModelRequirement(model, context_length) for model, _ in sorted(groups)]
+        if reranker_model:
+            requirements.append(ModelRequirement(reranker_model, context_length))
 
-        results.sort(key=lambda x: x["score"], reverse=True)
-        rerank_pool = results[:candidate_k]
-        reranked, rerank_ms, rerank_error = await rerank_with_runtime(
-            query,
-            rerank_pool,
-            rcfg,
-            client,
-            sorted({model for model, _ in groups}),
+        async def execute_search_pipeline():
+            nonlocal embedding_ms, db_ms, results
+            for (model, dim), group_cols in groups.items():
+                rows, emb_elapsed, db_elapsed = await _search_group(
+                    query=query,
+                    model=model,
+                    dim=dim,
+                    group_cols=group_cols,
+                    filters=filters,
+                    top_k=candidate_k,
+                    scfg=scfg,
+                    client=client,
+                )
+                embedding_ms += emb_elapsed
+                db_ms += db_elapsed
+                for r in rows:
+                    score = float(r["score"])
+                    if score < min_score:
+                        continue
+                    results.append({
+                        "chunk_id": str(r["chunk_id"]),
+                        "document_id": str(r["document_id"]),
+                        "content": r["content"],
+                        "score": round(score, 4),
+                        "collection": r["collection"],
+                        "document": r["filename"],
+                        "source_path": r["source_path"],
+                        "location": r["loc"],
+                        "location_label": location_label(r["loc"]),
+                        "chunk_seq": r["seq"],
+                        "metadata": r["meta"],
+                    })
+
+            results.sort(key=lambda x: x["score"], reverse=True)
+            rerank_pool = results[:candidate_k]
+            rerank_started = time.perf_counter()
+            rerank_error = None
+            reranked = rerank_pool
+            if rcfg.get("enabled") and rerank_pool:
+                try:
+                    reranked = await rerank_results(
+                        query, rerank_pool, {**rcfg, "model": reranker_model}, client
+                    )
+                except Exception as exc:
+                    rerank_error = f"{type(exc).__name__}: {exc}"
+                    if not rcfg.get("fail_open", True):
+                        raise
+                    log.warning("rerank failed; using vector ranking: %s", rerank_error)
+            rerank_ms = (time.perf_counter() - rerank_started) * 1000 if rcfg.get("enabled") and rerank_pool else 0.0
+            return reranked[:top_k], rerank_pool, rerank_ms, rerank_error
+
+        final_results, rerank_pool, rerank_ms, rerank_error = await runtime_scheduler.run(
+            "semantic-search", client, requirements, execute_search_pipeline
         )
-        final_results = reranked[:top_k]
         response = {
             "query": query,
             "results": final_results,

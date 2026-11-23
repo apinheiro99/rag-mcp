@@ -18,10 +18,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router as api_router
+from .classification_runtime import classification_worker
 from .config import env
 from .db import db
 from .ingest import worker
 from .mcp_server import create_mcp
+from .model_runtime import runtime_scheduler
 from .settings import settings
 from .source_sync import source_worker
 
@@ -44,7 +46,11 @@ async def lifespan(app: FastAPI):
     env.extracted_dir.mkdir(parents=True, exist_ok=True)
     await db.start()
     await settings.load()
+    effective = await settings.effective()
+    await runtime_scheduler.configure(maxsize=int(effective["model_runtime"]["queue_maxsize"]))
+    await runtime_scheduler.start()
     await worker.start()
+    await classification_worker.start()
     await source_worker.start()
     await db.event("Servidor RAG iniciado")
     log.info("RAG server pronto em %s:%s (MCP: %s)", env.app_host, env.app_port,
@@ -55,7 +61,9 @@ async def lifespan(app: FastAPI):
     else:
         yield
     await source_worker.stop()
+    await classification_worker.stop()
     await worker.stop()
+    await runtime_scheduler.stop()
     await db.stop()
 
 

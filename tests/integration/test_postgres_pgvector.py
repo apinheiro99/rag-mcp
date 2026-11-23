@@ -600,8 +600,22 @@ async def test_embedding_progress_counts_only_embedded_chunks(live_db, monkeypat
 
 
 class _FakeEmbeddingClient:
+    def __init__(self):
+        self.loaded = {"integration-test"}
+
     async def embed(self, texts, model):
         return [[1.0, 0.0, 0.0] for _ in texts]
+
+    async def list_models(self):
+        return [{"id": m, "state": "loaded"} for m in sorted(self.loaded)]
+
+    async def unload_model(self, model):
+        self.loaded.discard(model)
+        return {"status": "ok"}
+
+    async def ensure_model_loaded(self, model, *, context_length=None):
+        self.loaded.add(model)
+        return {"instance_id": model}
 
 
 class _FakeSearchSettings:
@@ -617,6 +631,9 @@ class _FakeSearchSettings:
 
     async def lmstudio_client(self):
         return _FakeEmbeddingClient()
+
+    async def get(self, key, default=None):
+        return default
 
 
 @pytest.mark.asyncio
@@ -1200,6 +1217,9 @@ async def test_auto_classification_inbox_is_default_search_off(live_db, monkeypa
                 "limits": {"chunk_size_range": [200,8000], "chunk_overlap_range": [0,1000], "min_chunk_size_range": [0,2000], "embed_batch_size_range": [1,128]},
             }
 
+        async def get(self, key, default=None):
+            return "text-embedding-qwen3-embedding-8b" if key == "embedding_model" else default
+
     monkeypatch.setattr(api_module, "db", live_db)
     monkeypatch.setattr(api_module, "settings", FakeSettings())
     inbox = await api_module._ensure_auto_inbox()
@@ -1209,51 +1229,47 @@ async def test_auto_classification_inbox_is_default_search_off(live_db, monkeypa
 
 @pytest.mark.asyncio
 async def test_auto_route_applies_only_above_configured_confidence(live_db, monkeypatch):
-    import app.api as api_module
+    import app.classification_runtime as classification_module
 
     class FakeSettings:
         async def effective(self):
             return {
                 "classification": {
-                    "staging_collection_name": "Unclassified Test",
                     "confidence_threshold": 0.92,
                     "auto_apply_existing": True,
                 },
-                "workflow": {"auto_start_configured_uploads": False},
             }
 
-        async def get(self, key, default=None):
-            return default
-
-    monkeypatch.setattr(api_module, "db", live_db)
-    monkeypatch.setattr(api_module, "settings", FakeSettings())
+    monkeypatch.setattr(classification_module, "db", live_db)
+    monkeypatch.setattr(classification_module, "settings", FakeSettings())
 
     inbox_id, target_id = uuid.uuid4(), uuid.uuid4()
     high_id, low_id = uuid.uuid4(), uuid.uuid4()
+    model = "text-embedding-qwen3-embedding-8b"
     async with live_db.pool.connection() as conn:
         await conn.execute(
-            "INSERT INTO collections(id,name,ingest_config,default_search) VALUES (%s,%s,'{}'::jsonb,false)",
-            (inbox_id, f"Inbox-{inbox_id}"),
+            "INSERT INTO collections(id,name,ingest_config,default_search,embedding_model,embedding_dim) VALUES (%s,%s,'{}'::jsonb,false,%s,4096)",
+            (inbox_id, f"Inbox-{inbox_id}", model),
         )
         await conn.execute(
-            "INSERT INTO collections(id,name,ingest_config,default_search) VALUES (%s,%s,'{}'::jsonb,true)",
-            (target_id, f"Python-{target_id}"),
+            "INSERT INTO collections(id,name,ingest_config,default_search,embedding_model,embedding_dim) VALUES (%s,%s,'{}'::jsonb,true,%s,4096)",
+            (target_id, f"Python-{target_id}", model),
         )
         for doc_id, digest in ((high_id, "a" * 64), (low_id, "b" * 64)):
             await conn.execute(
-                """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
-                   VALUES (%s,%s,%s,%s,%s,%s,10,'staged')""",
+                """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status,meta)
+                   VALUES (%s,%s,%s,%s,%s,%s,10,'ready','{"auto_classify":true}'::jsonb)""",
                 (doc_id, inbox_id, f"{doc_id}.txt", f"{doc_id}.txt", f"blobs/{doc_id}", digest),
             )
 
     target_name = f"Python-{target_id}"
-    high = await api_module._route_classified_staged_document(str(high_id), {
+    high = await classification_module.apply_ready_classification(str(high_id), {
         "existing_collection": target_name,
         "confidence": 0.95,
         "proposed_collection": None,
         "rationale": "clear Python content",
     })
-    low = await api_module._route_classified_staged_document(str(low_id), {
+    low = await classification_module.apply_ready_classification(str(low_id), {
         "existing_collection": target_name,
         "confidence": 0.70,
         "proposed_collection": None,
@@ -1268,13 +1284,14 @@ async def test_auto_route_applies_only_above_configured_confidence(live_db, monk
         high_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (high_id,))).fetchone()
         low_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (low_id,))).fetchone()
     assert high_row["collection_id"] == target_id
-    assert high_row["status"] == "staged"
+    assert high_row["status"] == "ready"
     assert low_row["collection_id"] == inbox_id
-    assert low_row["status"] == "staged"
+    assert low_row["status"] == "ready"
+
 
 @pytest.mark.asyncio
-async def test_classification_runtime_temporarily_swaps_reranker_for_llm(live_db, monkeypatch):
-    import app.api as api_module
+async def test_classification_runtime_queues_llm_and_releases_after_use(live_db, monkeypatch):
+    import app.classification_runtime as classification_module
 
     collection_id = uuid.uuid4()
     doc_id = uuid.uuid4()
@@ -1285,46 +1302,27 @@ async def test_classification_runtime_temporarily_swaps_reranker_for_llm(live_db
         )
         await conn.execute(
             """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
-               VALUES (%s,%s,'book.txt','book.txt','blobs/book',%s,10,'staged')""",
+               VALUES (%s,%s,'book.txt','book.txt','blobs/book',%s,10,'ready')""",
             (doc_id, collection_id, "c" * 64),
         )
 
-    calls = []
+    captured = {}
 
     class FakeClient:
-        async def list_models(self):
-            calls.append(("list", None))
-            return [
-                {"id": "text-embedding-qwen3-embedding-8b", "state": "loaded"},
-                {"id": "qwen3-reranker-4b", "state": "loaded"},
-                {"id": "google/gemma-4-12b-qat", "state": "not-loaded"},
-            ]
-
-        async def unload_model(self, model):
-            calls.append(("unload", model))
-            return {"status": "ok"}
-
-        async def ensure_model_loaded(self, model, *, context_length=None):
-            calls.append(("load", model, context_length))
-            return {"instance_id": model}
+        pass
 
     class FakeSettings:
         async def effective(self):
             return {
                 "auto": {"sample_chars": 3500, "request_timeout": 240},
                 "classification": {
-                    "unload_after_use": True,
-                    "temporarily_unload_reranker": True,
                     "context_length": 8192,
                     "confidence_threshold": 0.92,
                     "auto_apply_existing": True,
                 },
-                "rerank": {"model": "qwen3-reranker-4b", "context_length": 8192},
             }
 
         async def get(self, key, default=None):
-            if key == "reranker_model":
-                return "qwen3-reranker-4b"
             if key == "llm_model":
                 return "google/gemma-4-12b-qat"
             return default
@@ -1340,7 +1338,6 @@ async def test_classification_runtime_temporarily_swaps_reranker_for_llm(live_db
         return FakeExtracted()
 
     async def fake_classify(client, model, **kwargs):
-        calls.append(("classify", model))
         return {
             "existing_collection": None,
             "confidence": 0.5,
@@ -1348,18 +1345,21 @@ async def test_classification_runtime_temporarily_swaps_reranker_for_llm(live_db
             "rationale": "test",
         }
 
-    monkeypatch.setattr(api_module, "db", live_db)
-    monkeypatch.setattr(api_module, "settings", FakeSettings())
-    monkeypatch.setattr(api_module, "_sample_extract", fake_sample_extract)
-    monkeypatch.setattr(api_module, "classify_document", fake_classify)
+    async def fake_run(name, client, requirements, operation, *, release_after=False):
+        captured["name"] = name
+        captured["requirements"] = requirements
+        captured["release_after"] = release_after
+        return await operation()
 
-    result = await api_module._classify_document_core(str(doc_id), "google/gemma-4-12b-qat")
+    monkeypatch.setattr(classification_module, "db", live_db)
+    monkeypatch.setattr(classification_module, "settings", FakeSettings())
+    monkeypatch.setattr(classification_module, "_sample_extract", fake_sample_extract)
+    monkeypatch.setattr(classification_module, "classify_document", fake_classify)
+    monkeypatch.setattr(classification_module.runtime_scheduler, "run", fake_run)
+
+    result = await classification_module.classify_document_runtime(str(doc_id), "google/gemma-4-12b-qat")
     assert result["filename"] == "book.txt"
-    assert calls == [
-        ("list", None),
-        ("unload", "qwen3-reranker-4b"),
-        ("load", "google/gemma-4-12b-qat", 8192),
-        ("classify", "google/gemma-4-12b-qat"),
-        ("unload", "google/gemma-4-12b-qat"),
-        ("load", "qwen3-reranker-4b", 8192),
-    ]
+    assert captured["name"] == f"classify:{doc_id}"
+    assert captured["requirements"][0].model == "google/gemma-4-12b-qat"
+    assert captured["requirements"][0].context_length == 8192
+    assert captured["release_after"] is True

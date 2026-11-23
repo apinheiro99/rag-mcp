@@ -108,6 +108,7 @@ async def classify_document(
     collections: list[dict[str, Any]],
     sample_chars: int,
     timeout: float,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     shelves = [
         {
@@ -126,8 +127,9 @@ async def classify_document(
         [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
         model,
         temperature=0.0,
-        max_tokens=600,
+        max_tokens=1000,
         timeout=timeout,
+        reasoning_effort=reasoning_effort,
     )
     result = validate_classification(parse_json_object(content), collections)
     result.update({"model": model, "source": "llm"})

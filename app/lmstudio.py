@@ -20,8 +20,6 @@ import httpx
 
 log = logging.getLogger("rag.lmstudio")
 
-model_runtime_lock = asyncio.Lock()
-
 
 class LMStudioError(Exception):
     """Erro permanente (ex.: modelo inexistente, resposta inválida)."""
