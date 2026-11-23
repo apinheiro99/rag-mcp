@@ -1,0 +1,1010 @@
+# RAG MCP — Architecture
+
+**Status:** arquitetura operacional em evolução ativa.  
+**Audience:** desenvolvedores e agentes que precisam entender, modificar, operar ou validar o RAG MCP.  
+**Authority:** este arquivo é a fonte arquitetural única do RAG MCP: estado atual, decisões, configuração relevante, diagramas, invariantes, validação e próximos experimentos.
+
+---
+
+## 1. Mental model
+
+RAG MCP é um serviço self-hosted que transforma documentos em conhecimento pesquisável e expõe esse conhecimento por API HTTP, MCP e UI.
+
+O sistema tem quatro responsabilidades principais:
+
+1. **Ingestão:** receber documento, extrair, validar, chunkar, gerar embeddings e persistir.
+2. **Retrieval:** transformar pergunta em embedding, buscar candidatos no pgvector, aplicar filtros e opcionalmente reranquear.
+3. **Operação:** configurar modelos/defaults, acompanhar fila, cancelar/reindexar documentos e observar métricas.
+4. **Integração:** permitir que ChatGPT, Claude e outros clientes consultem a mesma base via MCP/API.
+
+Fluxo mental:
+
+```text
+documento
+  -> extraction
+  -> quality gate
+  -> chunks
+  -> embedding model
+  -> PostgreSQL + pgvector
+
+pergunta
+  -> embedding model
+  -> pgvector candidates
+  -> optional reranker
+  -> resultados com rastreabilidade
+```
+
+---
+
+## 2. Boundaries
+
+### RAG MCP owns
+
+- ingestão e lifecycle de documentos;
+- extração por formato;
+- validação de qualidade do texto;
+- chunking;
+- embeddings;
+- armazenamento e índices vetoriais;
+- busca semântica e filtros;
+- reranking opcional;
+- métricas de retrieval;
+- API HTTP;
+- MCP read-only;
+- UI operacional;
+- settings de runtime;
+- reindexação, retry e cancelamento por documento.
+
+### RAG MCP does not own
+
+- o conteúdo-fonte original;
+- administração geral da máquina;
+- governança de outros projetos;
+- política de rede do ambiente;
+- administração genérica do LM Studio;
+- gerenciamento corporativo de segredos;
+- verdade canônica do conteúdo da KB: o RAG recupera o que foi indexado; curadoria/canonicalidade é responsabilidade do corpus.
+
+A KB privada pode conter credenciais operacionais. No modelo deste projeto elas são conhecimento válido e devem continuar recuperáveis quando a consulta as pede.
+
+---
+
+## 3. Runtime topology
+
+```mermaid
+flowchart LR
+    C[ChatGPT / Claude / Clients] -->|HTTP API / MCP| API[RAG API / FastAPI]
+    UI[Web UI] --> API
+    API --> ING[Ingestion Worker]
+    API --> SEARCH[Semantic Search]
+    ING --> DB[(PostgreSQL + pgvector)]
+    SEARCH --> DB
+    ING --> LMS[LM Studio]
+    SEARCH --> LMS
+    SEARCH --> RR[Reranker Runtime]
+    RR --> LMS
+```
+
+Reference runtime currently observed:
+
+- local API: `http://127.0.0.1:8000`
+- LAN API: `http://192.168.1.142:8000`
+- LM Studio: `http://192.168.1.10:1234`
+
+These addresses are deployment facts, not architecture requirements.
+
+---
+
+## 4. Code ownership map
+
+| Module | Responsibility |
+|---|---|
+| `main.py` | process composition / FastAPI startup |
+| `api.py` | administrative and search HTTP API |
+| `mcp_server.py` | read-only MCP surface |
+| `settings.py` | runtime settings + defaults/overrides resolution |
+| `config.py` | environment/default configuration loading |
+| `db.py` | PostgreSQL access and vector table helpers |
+| `schema.sql` | persistence schema |
+| `extraction.py` | document parsing and parser dispatch |
+| `quality.py` | extracted-text quality gate |
+| `chunking.py` | chunk generation |
+| `ingest.py` | persistent/resumable ingestion worker |
+| `ingest_policy.py` | upload/ingestion policy |
+| `search.py` | semantic retrieval orchestration |
+| `search_filters.py` | validated retrieval filters |
+| `retrieval_observability.py` | retrieval event persistence/metrics |
+| `lmstudio.py` | LM Studio transport, embeddings, chat, model lifecycle |
+| `rerank.py` | rerank prompt, response parsing and ordering |
+| `rerank_runtime.py` | model-switch orchestration and fail-open behavior |
+| `autoconfig.py` | ingestion configuration suggestion |
+
+Rule: one owner per responsibility. New behavior should extend the owning module instead of creating parallel policy elsewhere.
+
+---
+
+## 5. Persistence model
+
+Core tables:
+
+### `settings`
+Persistent runtime configuration.
+
+### `collections`
+Logical knowledge bases. A collection records the embedding model/dimension that owns its vectors.
+
+### `documents`
+Lifecycle record for each uploaded/indexed source.
+
+### `chunks`
+Derived text chunks linked to both document and collection.
+
+`chunks.document_id` and `chunks.collection_id` use `ON DELETE CASCADE`.
+
+### vector tables
+Dimension-specific pgvector storage. Vector rows reference chunks; deleting a chunk/document removes derived vector state through cascading relationships.
+
+### `events`
+Operational events.
+
+### `retrieval_events`
+Search observability including timing, candidates, result counts, score and errors.
+
+Derived extraction cache is not authoritative and may be deleted/rebuilt.
+
+---
+
+## 6. Ingestion lifecycle
+
+```mermaid
+flowchart LR
+    U[Upload] --> P[Pending]
+    P --> E[Extracting]
+    E --> Q{Quality Gate}
+    Q -->|pass| C[Chunking]
+    Q -->|fail| ERR[Error]
+    C --> EMB[Embedding]
+    EMB --> R[Ready]
+    EMB -->|LM Studio unavailable| W[Waiting]
+    W --> EMB
+```
+
+Other states include waiting/error/cancelling/cancelled as appropriate.
+
+The pipeline is designed to be restartable and progress-aware. Existing embedded chunks are not intentionally recomputed on an ordinary worker restart.
+
+### Extraction dispatch
+
+Public contract remains:
+
+`extract(path, filename, sample=False, ...)`
+
+Specialized detectors run before generic fallbacks.
+
+Current specialized parsers:
+
+- ChatGPT Data Export JSON;
+- ChatGPT Data Export HTML with embedded JSON;
+- generic JSON;
+- JSONL/NDJSON.
+
+ChatGPT export parsing intentionally keeps useful semantic content such as title, user/assistant messages and timestamps while excluding raw mapping identifiers and hidden/system noise.
+
+### Reindex invariant
+
+Reindex is not "reuse the old parser forever".
+
+It:
+- removes old chunks;
+- resets progress/status;
+- removes extraction cache;
+- re-runs extraction;
+- therefore re-runs parser detection against current content/code.
+
+---
+
+## 7. Quality gate
+
+`quality.py` validates extracted text before expensive embedding work.
+
+Quality failures are document-level failures and do not stop unrelated documents.
+
+Examples already observed in production:
+- text too short;
+- mojibake percentage above configured threshold.
+
+Quality policy belongs to configuration and must not be silently hardcoded per document.
+
+---
+
+## 8. Cancellation contract
+
+Per-document cancellation is cooperative and idempotent.
+
+### Immediate case
+Pending/waiting documents can be cancelled without interrupting the rest of the queue.
+
+### Active case
+An active document transitions to `cancelling`. The worker checks cancellation at safe boundaries, stops processing, removes partial chunks, resets counters and finishes as `cancelled`.
+
+Because vectors are derived from chunks and linked through cascading deletion, cleanup removes partial vector state as well.
+
+Repeated cancel requests must remain safe.
+
+### Document lifecycle state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> extracting
+    extracting --> chunking
+    chunking --> embedding
+    embedding --> ready
+    embedding --> waiting
+    waiting --> embedding
+    pending --> cancelled
+    waiting --> cancelled
+    extracting --> cancelling
+    chunking --> cancelling
+    embedding --> cancelling
+    cancelling --> cancelled
+    pending --> error
+    extracting --> error
+    chunking --> error
+    embedding --> error
+    waiting --> error
+    error --> pending: retry
+    ready --> pending: reindex
+```
+
+---
+
+## 9. Retrieval pipeline
+
+### Base retrieval
+
+```mermaid
+flowchart LR
+    Q[Query] --> QE[Query Embedding]
+    QE --> PG[pgvector Search]
+    PG --> F[Source Filters]
+    F --> MS[Min Score]
+    MS --> S[Sort by Vector Score]
+    S --> K[Top K]
+```
+
+Search can span collections that use compatible embedding model/dimension groups.
+
+Returned results preserve:
+- chunk id;
+- document id;
+- content;
+- vector score;
+- collection;
+- source filename/path;
+- location metadata;
+- document metadata.
+
+### Filters
+
+Current search filters include document IDs, authors, source paths, chapters and pages.
+
+---
+
+## 10. Reranking
+
+Reranking is a second retrieval stage. It does **not** replace embeddings.
+
+```mermaid
+flowchart LR
+    Q[Query] --> E[Embedding Retrieval]
+    E --> CP[Candidate Pool]
+    CP --> RR[Gemma Reranker]
+    Q --> RR
+    RR --> RS[Rerank Score]
+    RS --> FK[Final Top K]
+```
+
+The original vector `score` remains intact. Reranking adds `rerank_score`.
+
+### Model roles
+
+Three roles are explicit:
+
+- `embedding_model`
+- `llm_model`
+- `reranker_model`
+
+Current default reranker:
+`google/gemma-4-12b-qat`
+
+Current embedding:
+`text-embedding-qwen3-embedding-8b`
+
+### Switch mode
+
+Initial approved mode is model switching:
+
+1. generate query embedding;
+2. retrieve larger candidate pool;
+3. acquire global model runtime lock;
+4. unload embedding model;
+5. load reranker;
+6. rerank;
+7. unload reranker;
+8. restore embedding model in `finally`;
+9. release lock.
+
+The ingestion worker uses the same global model runtime lock for embedding batches, preventing it from racing the reranker model switch.
+
+### Model-switch sequence
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Search
+    participant Lock as Model Runtime Lock
+    participant LM as LM Studio
+    participant PG as pgvector
+
+    Client->>Search: query
+    Search->>LM: embed(query) with Qwen 8B
+    LM-->>Search: query vector
+    Search->>PG: nearest-neighbor search
+    PG-->>Search: candidate pool
+    Search->>Lock: acquire
+    Search->>LM: unload embedding model
+    Search->>LM: load Gemma 4 12B QAT
+    Search->>LM: rerank(query + candidates)
+    LM-->>Search: rerank scores
+    Search->>LM: unload reranker
+    Search->>LM: restore embedding model
+    Search->>Lock: release
+    Search-->>Client: final ranked results
+```
+
+### Fail-open invariant
+
+Reranking is a quality enhancement, not a prerequisite for retrieval.
+
+If reranking fails and `fail_open=true`, the original vector-ranked candidates are returned.
+
+---
+
+## 11. LM Studio behavior
+
+`lmstudio.py` owns:
+
+- model discovery;
+- health;
+- embeddings;
+- chat;
+- explicit model load;
+- explicit model unload;
+- retries/backoff for transient failures.
+
+Empirical finding:
+
+- explicit LM Studio loading can keep multiple models resident;
+- JIT Auto-Evict caused the initial observation where loading one model evicted another;
+- the project nevertheless chooses switch mode initially to preserve VRAM headroom.
+
+Benchmark on a fixed rerank prompt:
+
+- Gemma 4 12B QAT: ~1.97 s
+- Gemma 4 26B-A4B QAT: ~2.58 s
+
+Both ranked the relevant candidates correctly in that test; 12B is default until measurements show a quality reason to choose the larger model.
+
+---
+
+## 12. HTTP API surface
+
+Current primary routes include:
+
+### Health/settings/models
+- `GET /api/health`
+- `GET /api/settings`
+- `PUT /api/settings`
+- `GET /api/lmstudio/models`
+- `POST /api/lmstudio/test`
+
+### Collections
+- `GET /api/collections`
+- `POST /api/collections`
+- `DELETE /api/collections/{id}`
+- `POST /api/collections/{id}/reindex`
+
+### Documents
+- `GET /api/documents`
+- `GET /api/documents/{id}`
+- `POST /api/documents/upload`
+- `DELETE /api/documents/{id}`
+- `POST /api/documents/{id}/retry`
+- `POST /api/documents/{id}/reindex`
+- `POST /api/documents/{id}/move`
+- `POST /api/documents/{id}/cancel`
+
+### Ingestion
+- `GET /api/ingest/status`
+- `POST /api/ingest/start`
+- `POST /api/ingest/pause`
+- `POST /api/ingest/resume`
+- `POST /api/ingest/suggest`
+
+### Retrieval
+- `POST /api/search`
+- `GET /api/search/metrics`
+
+---
+
+## 13. MCP surface
+
+MCP is intentionally read-only. Administration remains an HTTP/UI concern.
+
+Tools:
+
+### `rag_search`
+Semantic search with collection/source filters and source traceability.
+
+### `rag_search_metrics`
+Retrieval observability summary.
+
+### `list_collections`
+Available knowledge bases with document/chunk counts.
+
+### `get_document`
+Read extracted document text, bounded by requested maximum length.
+
+MCP and HTTP search use the same underlying `semantic_search` owner.
+
+---
+
+## 14. Configuration model
+
+Configuration layers:
+
+```mermaid
+flowchart LR
+    D[config/defaults.yaml] --> M[Settings Merge]
+    O[Runtime DB Overrides] --> M
+    M --> E[Effective Settings]
+    E --> API[API / UI / Workers / Search]
+```
+
+The UI/API persists runtime choices. Consumer modules should request effective settings rather than embed policy constants.
+
+ADR-0007 principle: nothing operationally meaningful should be hardcoded when it belongs to configuration.
+
+---
+
+## 15. Failure behavior
+
+### LM Studio unavailable
+Embedding operations surface transient failure behavior; ingestion can wait/retry rather than destroy progress.
+
+### One document fails
+Failure is isolated to that document. Other queue items continue.
+
+### Reranker fails
+Fail open to vector ranking when configured.
+
+### Parser/quality fails
+Document receives extraction/quality error; no invalid chunks should become ready knowledge.
+
+### Model switch interrupted
+Embedding restoration is a `finally` responsibility.
+
+---
+
+## 16. Observability
+
+Retrieval events persist:
+
+- query;
+- collections/filters;
+- requested top_k/min_score;
+- embedding latency;
+- database latency;
+- total latency;
+- candidate count;
+- result count;
+- top score;
+- errors.
+
+Rerank observability is being extended; unfinished validation is tracked later in this same document.
+
+---
+
+## 17. Corpus policy and known quality issue
+
+The retrieval engine can only rank what the corpus contains.
+
+Observed issue:
+older infrastructure documents sometimes compete with current canonical documents.
+
+Example:
+legacy DEV hostname convention with `-01` can surface above current convention without `-01`.
+
+This is a corpus curation/canonicality/versioning concern and remains future work.
+
+It is **not** a reason to redact operational credentials from the private KB.
+
+---
+
+## 18. Documentation information architecture
+
+This documentation follows a task-oriented structure informed by **Docs for Developers** and the existing REACH documentation pattern:
+
+- root `README.md` — orientação rápida e link para esta arquitetura;
+- `architecture.md` — única fonte canônica de arquitetura, configuração, decisões, estado, diagramas e validação;
+
+A document that no longer represents the system should be updated, archived or removed. Stale documentation is considered harmful retrieval input.
+
+---
+
+## 19. Implementation status and validation evidence
+
+### Implemented and validated
+
+- specialized extraction dispatcher;
+- ChatGPT export JSON/HTML parser;
+- generic JSON and JSONL parser;
+- parser re-detection on reindex;
+- per-document cooperative cancellation + UI;
+- explicit LM Studio model load/unload and ensure-loaded;
+- separate embedding / general LLM / reranker model roles;
+- reranker core parsing/scoring;
+- shared model runtime lock between search and ingestion;
+- expanded candidate pool;
+- switch and resident reranker modes;
+- fail-open fallback to vector ranking;
+- UI checkbox to keep reranker resident.
+
+### Executed evidence
+
+- parser-focused tests: GREEN;
+- cancellation integration tests: GREEN;
+- unit + regression suite: PASS in this cycle;
+- reranker/lifecycle focused tests: 8/8 PASS;
+- search/rerank/LM Studio focused tests: 17/17 PASS;
+- explicit fail-open runtime test: 1/1 PASS;
+- Python compile check for search/ingest/lmstudio/rerank runtime: PASS;
+- PostgreSQL/pgvector integration: 20/20 PASS in this cycle.
+
+### Live retrieval benchmark
+
+Same cancellation/cleanup query on API Design Patterns:
+
+- vector-only: ~0.37 s;
+- rerank switch, 20 candidates × 1800 chars: ~28.7 s;
+- rerank resident, 20 × 1800: ~22.9 s;
+- rerank resident, 10 × 1000: ~11.4 s;
+- rerank resident, 8 × 800: ~9.2 s;
+- short resident smoke, 4 candidates: ~5.54 s.
+
+Reranking improved ordering: the chunk explicitly describing cleanup of intermediate work moved above the more generic cancellation-definition chunk.
+
+Current optimized defaults: candidate_multiplier=2, max_candidates=8, max_chars_per_candidate=800.
+
+---
+
+## 20. Resident reranker mode
+
+Resident mode is implemented and exposed in the UI as **manter reranker carregado**.
+
+- unchecked -> switch mode;
+- checked -> resident mode.
+
+In resident mode the runtime explicitly ensures the Gemma reranker is loaded and leaves it resident between searches. Switch mode unloads the reranker/embedding as needed and restores the embedding model in `finally`.
+
+Measured benefit with the optimized 8×800 prompt: resident ~9.2 s versus switch ~14.0 s on the same query and ranking quality, saving ~4.8 s per query in that benchmark.
+
+`config/defaults.yaml` keeps `mode: switch` as the conservative default. The current runtime override may use resident mode when the operator selects the checkbox.
+
+Future work: measure GPU VRAM, ingestion throughput and concurrent search+ingestion stability before considering resident as the global default.
+
+---
+
+## 21. Decision log
+
+### ADR-0001 — Specialized extraction dispatcher
+
+## Context
+O extrator anterior selecionava principalmente por extensão. JSON era tratado como texto bruto e ChatGPT Data Export HTML escondia conteúdo útil em payload JavaScript, gerando ruído de mapping IDs, metadata e mensagens não úteis.
+
+## Decision
+Preservar o contrato público `extract(path, filename, ...)` e inserir uma cadeia ordenada de extratores especializados antes dos fallbacks genéricos.
+
+Suporte inicial:
+- ChatGPT Export JSON
+- ChatGPT Export HTML
+- JSON genérico
+- JSONL/NDJSON
+
+A detecção usa extensão mais assinatura forte de conteúdo quando necessário. Reindexação apaga o extraction cache e executa a detecção novamente.
+
+## Rationale
+O corpus de engenharia do próprio RAG apontou Strategy + Chain of Responsibility como padrão adequado: detectores especializados podem ser adicionados sem quebrar consumidores existentes nem transformar o dispatcher em um bloco monolítico.
+
+## Consequences
+- menos ruído bruto nos embeddings;
+- extensão simples para novos formatos;
+- fallback genérico preservado;
+- melhorias futuras de parser passam a valer em reindexação.
+
+### ADR-0002 — Per-document cooperative cancellation
+
+## Context
+Cancelar um documento ativo não deve exigir pausar toda a fila de ingestão.
+
+## Decision
+Cancelamento é uma operação de primeira classe, idempotente e por documento.
+
+- pending/waiting pode cancelar imediatamente;
+- trabalho ativo muda para `cancelling`;
+- worker para na próxima fronteira segura;
+- chunks parciais são removidos;
+- vetores são removidos por FK cascade;
+- contadores são zerados;
+- estado terminal é `cancelled`;
+- chamadas repetidas não causam efeitos adicionais.
+
+## Rationale
+API Design Patterns recuperado pelo próprio RAG trouxe diretamente o padrão de cancelamento de long-running operation e a expectativa de idempotência/cleanup de trabalho intermediário.
+
+## Consequences
+- uma operação não bloqueia a fila inteira;
+- estado parcial não fica órfão;
+- cliente pode repetir cancelamento com segurança;
+- UI e API compartilham o mesmo lifecycle.
+
+### ADR-0003 — Optional reranking with model switch
+
+## Context
+Embedding + pgvector oferece bom recall, mas similaridade semântica não garante que o trecho que melhor responde a pergunta fique no topo.
+
+Testes reais no host:
+- Gemma 4 12B QAT: ~1.97 s;
+- Gemma 4 26B-A4B QAT: ~2.58 s;
+- ambos produziram ranking correto no benchmark fixo;
+- carregamento explícito no LM Studio permite múltiplos modelos residentes;
+- JIT Auto-Evict explica o unload observado no primeiro experimento.
+
+## Decision
+Criar um papel explícito `reranker_model`, separado de `embedding_model` e `llm_model`.
+
+Default configurável:
+`google/gemma-4-12b-qat`
+
+Primeiro modo aprovado: `switch`.
+
+Fluxo:
+1. embedding gera query vector;
+2. pgvector retorna candidate pool maior;
+3. lock global do runtime é adquirido;
+4. embedding model é descarregado;
+5. reranker é carregado;
+6. candidatos são reranqueados;
+7. reranker é descarregado;
+8. embedding model é restaurado em `finally`;
+9. lock é liberado.
+
+O vector `score` é preservado e um `rerank_score` separado é adicionado.
+
+Reranker é **fail-open** por default: erro no segundo estágio devolve ranking vetorial original.
+
+## Alternatives considered
+
+### Segundo embedding model
+Rejeitado. Embedding e reranking resolvem problemas diferentes.
+
+### Manter modelos sempre residentes
+É tecnicamente possível em combinações testadas, mas não é default para preservar VRAM/headroom.
+
+### Gemma 4 26B-A4B como default
+Viável e rápido, mas 12B foi mais rápido e não mostrou perda de qualidade no benchmark inicial.
+
+## Consequences
+- precisão pode melhorar sem reindexar corpus;
+- busca base continua disponível em falhas do reranker;
+- switch adiciona latência de load/unload;
+- lock global impede corrida com worker de ingestão;
+- resident mode pode ser habilitado no futuro se medições justificarem.
+
+
+---
+
+## 22. Current operational state
+
+**Atualizado:** 2026-11-21
+
+RAG MCP está operacional:
+- API local: `http://127.0.0.1:8000`
+- API LAN: `http://192.168.1.142:8000`
+- LM Studio: `http://192.168.1.10:1234`
+- PostgreSQL + pgvector
+- worker ativo
+- MCP habilitado
+
+### Models
+
+- embedding: `text-embedding-qwen3-embedding-8b`
+- reranker default: `google/gemma-4-12b-qat`
+- rerank optimized: multiplier 2, max 8 candidates, 800 chars/candidate
+- UI supports switch/resident mode
+
+### Corpus additions/classification
+
+- Code Complete -> `software-engineering`
+- Designing Data-Intensive Applications -> `distributed-systems-infra`
+- Release It! -> `distributed-systems-infra`
+- Designing Distributed Systems -> `distributed-systems-infra`
+- Building Microservices -> `distributed-systems-infra`
+- API Design Patterns -> `backend-python-node-typescript`
+- Patterns for API Design -> `backend-python-node-typescript`
+- Docs for Developers -> `software-engineering`
+- Design and Build Great Web APIs -> `backend-python-node-typescript`
+- Windows PowerShell in Action -> `distributed-systems-infra`
+- Windows Server 2019 Automation with PowerShell Cookbook -> `distributed-systems-infra`
+- Windows Server 2019 Administration Fundamentals -> `distributed-systems-infra`
+- Patterns of Distributed Systems -> `distributed-systems-infra`
+
+Patterns of Distributed Systems smoke retrieved Write-Ahead Log, Leader/Follower, HeartBeat, Paxos, Replicated Log and Quorum.
+
+### Future idea — automatic collection classification
+
+Upload should support **collection: automatic**.
+
+Proposed classifier:
+1. read authoritative document metadata first (EPUB OPF/DC metadata such as title, author, subject, publisher, language, identifiers);
+2. match metadata against existing collection descriptions/taxonomy;
+3. if ambiguous, semantically classify from extracted sample chunks using the RAG;
+4. if no existing collection clears a confidence threshold, suggest a new collection/category rather than creating it silently;
+5. always allow manual override.
+
+```mermaid
+flowchart LR
+    U[Upload] --> M[Native Metadata]
+    M --> C{Confident existing collection?}
+    C -->|yes| A[Assign Collection]
+    C -->|no| S[Semantic Sample]
+    S --> R[RAG Classification]
+    R --> E{Existing collection fits?}
+    E -->|yes| A
+    E -->|no| N[Suggest New Collection]
+    N --> H[Human / Policy Approval]
+```
+
+
+This is metadata-first with semantic fallback, not filename-only classification.
+
+### Known corpus issue
+
+Older infrastructure documents can compete with current canonical documents (e.g. legacy DEV `-01` naming). This remains a corpus canonicality/versioning problem. Private operational credentials remain valid searchable knowledge.
+
+### Next retrieval work
+
+- rerank observability/latency metrics;
+- automatic retrieval evaluation;
+- corpus canonicality/versioning;
+- then remaining roadmap items.
+
+---
+
+## 23. Development and validation environment
+
+
+## Source layout
+
+```text
+/rag-mcp/
+  rag-mcp/        product source
+  temp/           temporary project material
+```
+
+GitLab:
+
+```text
+rag
+├── rag-mcp
+└── rag-private
+```
+
+## Runtime stack
+
+- Python / FastAPI
+- PostgreSQL + pgvector
+- LM Studio
+- vanilla Web UI
+- MCP server
+- Docker Compose
+
+## Reference endpoints
+
+- RAG local: `http://127.0.0.1:8000`
+- RAG LAN: `http://192.168.1.142:8000`
+- LM Studio: `http://192.168.1.10:1234`
+
+## Validation
+
+Unit/regression:
+
+```sh
+cd /rag-mcp/rag-mcp
+PYTHONPATH=. pytest -q tests/unit tests/regression
+```
+
+Integration:
+
+```sh
+cd /rag-mcp/rag-mcp
+set -a
+. ./.env
+set +a
+PYTHONPATH=. pytest -q tests/integration/test_postgres_pgvector.py
+```
+
+Recent evidence:
+- 56 unit+regression passed before reranker integration;
+- 20 PostgreSQL/pgvector integration passed before reranker integration;
+- 6 reranker/lifecycle focused tests passed;
+- 15 search/rerank/LM Studio focused tests passed.
+
+## Workflow
+
+- Use o próprio RAG para apoiar decisões de arquitetura quando houver material relevante.
+- Retrieved text é evidência, não autoridade automática.
+- Preferir TDD.
+- Não declarar teste como PASS sem executá-lo.
+- EPUB é preferido a PDF OCR quando disponível.
+
+---
+
+## 24. Configuration reference
+
+
+## Configuration authority
+
+Processing defaults live in `config/defaults.yaml`. Runtime overrides are persisted in PostgreSQL and edited through UI/API.
+
+No processing/model default should be hardcoded in consuming modules when it belongs to configuration.
+
+## LM Studio
+
+Current LAN instance: `http://192.168.1.10:1234`
+
+Model roles:
+
+- `embedding_model`
+- `llm_model`
+- `reranker_model`
+
+Current embedding model: `text-embedding-qwen3-embedding-8b`
+
+Current default reranker: `google/gemma-4-12b-qat`
+
+The UI exposes all three choices under **Configurações → LM Studio**.
+
+## Search
+
+Base settings: `top_k`, `max_top_k`, `min_score`, `hnsw_ef_search`.
+
+## Rerank
+
+The `rerank` section owns:
+
+- enabled;
+- model;
+- mode;
+- candidate multiplier;
+- max candidates;
+- context length;
+- temperature;
+- reasoning effort;
+- max tokens;
+- timeout;
+- max chars per candidate;
+- fail-open behavior.
+
+## Ingestion
+
+Ingestion settings include chunk size, overlap, minimum chunk size, strategy, embedding batch size, timeouts, retries, backoff, file-size limit and whitespace normalization.
+
+## Network
+
+The API is currently published on host port 8000. LAN clients can use `http://192.168.1.142:8000`.
+
+Private deployment addresses are runtime facts, not architectural requirements.
+
+---
+
+## 26. Reranker lock bug — diagnosis and fix
+
+### Symptom
+
+A client could abandon or time out during a resident rerank request, after which unrelated semantic searches appeared to hang even with reranking disabled.
+
+### Root cause
+
+Resident mode held the global `model_runtime_lock` for the entire Gemma rerank inference. Query embedding and ingestion embedding use the same lock. If the client disconnected while the server-side rerank continued, the lock remained held until inference completed or timed out, blocking later vector-only searches before query embedding.
+
+### Evidence
+
+Controlled reproduction before the fix:
+
+1. start a resident rerank search;
+2. client aborts after 1 second;
+3. disable reranking;
+4. immediately run vector-only search;
+5. vector-only search blocks instead of completing normally.
+
+Independent component timings were healthy:
+
+- API health: ~0.04–0.12 s;
+- direct Qwen embedding: ~0.19 s;
+- direct Gemma tiny completion: ~0.51 s;
+- vector-only after application restart: ~1.48 s.
+
+This isolated the bottleneck to lock ownership rather than PostgreSQL, pgvector, LM Studio connectivity or raw Gemma inference speed.
+
+### Fix
+
+In resident mode, `model_runtime_lock` now protects only `ensure_model_loaded()`. The lock is released before `rerank_results()` starts inference.
+
+Switch mode still holds the runtime lock across the model swap and rerank because the embedding model is intentionally unavailable during that operation.
+
+The default rerank timeout was reduced from 120 seconds to 20 seconds, remaining configuration-driven.
+
+### Validation
+
+TDD regression test added: resident inference must execute with `model_runtime_lock` released.
+
+Results:
+
+- regression test before fix: FAIL as expected;
+- same test after fix: PASS;
+- fail-open + rerank + LM Studio focused suite: 10/10 PASS;
+- controlled client-abort test after fix: vector-only search completed in ~1.22 s instead of blocking;
+- normal resident rerank after fix: ~6.83 s total, ~5.44 s rerank stage, with useful reranking preserved.
+
+
+## 27. Model-aware reranking strategies
+
+Reranking is no longer assumed to have one output protocol for every model.
+
+The design follows Strategy for interchangeable ranking behavior and Adapter for translating model-specific protocols into the common internal contract chunk_id -> rerank_score.
+
+### Generic JSON strategy
+
+General-purpose chat models such as the current Gemma control keep the original batch JSON protocol.
+
+### Qwen3-Reranker strategy
+
+Models whose identifier contains qwen3-reranker use the binary cross-encoder protocol recommended for that family:
+
+- one Query + Document judgment per candidate;
+- instruction-aware prompt;
+- semantic yes/no classification;
+- one generated token;
+- LM Studio logprobs requested;
+- yes/no case variants aggregated;
+- binary probability adapted to the common 0..1 rerank score;
+- candidate judgments may run concurrently under configurable qwen_parallelism.
+
+Configuration remains in config/defaults.yaml: qwen_instruction, qwen_parallelism and qwen_top_logprobs.
+
+### Failure behavior
+
+A model response that cannot yield a usable relevance probability raises RerankError. The existing configurable fail_open behavior preserves vector ordering rather than fabricating rerank scores.
+
+### Local validation
+
+With text-embedding-qwen3-embedding-8b resident alongside one reranker at a time:
+
+- qwen3-reranker-0.6b: rerank applied successfully; about 302 ms rerank stage in the first end-to-end probe;
+- qwen3-reranker-4b: rerank applied successfully; about 401 ms rerank stage in the first end-to-end probe;
+- qwen3-reranker-8b: the local GGUF/runtime returned non-binary punctuation tokens even with the official raw prompt; fail-open preserved vector ranking;
+- google/gemma-4-12b-qat: existing JSON strategy remained compatible; about 7.79 s rerank stage in the regression probe.
+
+These timings are diagnostic probes, not benchmark conclusions.

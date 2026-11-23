@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Server</title>
+<link rel="icon" href="/favicon.ico" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.6"/>
+      <circle cx="12" cy="12" r="3.2" fill="currentColor"/>
+      <path d="M12 2v6.8M12 15.2V22M2 12h6.8M15.2 12H22" stroke="currentColor" stroke-width="1.6"/>
+    </svg>
+    <h1>RAG Server</h1>
+  </div>
+  <nav id="nav">
+    <button data-tab="dashboard" class="active">Painel</button>
+    <button data-tab="import">Importar</button>
+    <button data-tab="documents">Documentos</button>
+    <button data-tab="search">Busca</button>
+    <button data-tab="settings">Configurações</button>
+  </nav>
+  <div class="health-pills" id="healthPills"></div>
+</header>
+
+<div id="tokenBanner" class="banner hidden">
+  Este servidor exige token de API.
+  <input type="password" id="tokenInput" placeholder="Bearer token">
+  <button onclick="saveToken()">Salvar</button>
+</div>
+
+<main>
+  <!-- ==================== PAINEL ==================== -->
+  <section id="tab-dashboard" class="tab active">
+    <div class="grid-3" id="healthCards"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Ingestão</h2>
+        <div>
+          <button id="btnPause" class="btn" onclick="pauseIngest()">Pausar</button>
+          <button id="btnResume" class="btn primary hidden" onclick="resumeIngest()">Retomar</button>
+        </div>
+      </div>
+      <div id="ingestSummary" class="muted">Carregando…</div>
+      <div class="progress-wrap"><div class="progress-bar" id="ingestBar"></div></div>
+      <div id="ingestCounts" class="chips"></div>
+      <div id="currentDoc" class="muted small"></div>
+      <div id="problems"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Coleções</h2>
+        <button class="btn" onclick="showTab('import')">+ Importar documentos</button></div>
+      <div id="collectionsGrid" class="grid-3"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Eventos recentes</h2></div>
+      <div id="eventsLog" class="events"></div>
+    </div>
+  </section>
+
+  <!-- ==================== IMPORTAR ==================== -->
+  <section id="tab-import" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <h2>1 · Destino</h2>
+      </div>
+      <div class="row">
+        <label>Coleção
+          <select id="importCollection" onchange="onImportCollectionChange()"></select>
+        </label>
+        <input type="text" id="newCollectionName" placeholder="Nova coleção (ex.: ARGUS)">
+        <button class="btn" onclick="createCollection()">Criar coleção</button>
+      </div>
+      <p class="muted small">Coleções são bases independentes (ex.: ARGUS, Documentação, Livros, Projetos, Pesquisa).
+      Uma consulta RAG pode mirar uma ou várias coleções.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>2 · Arquivos</h2></div>
+      <div id="dropzone" tabindex="0">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+          <path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <p><strong>Arraste arquivos ou pastas aqui</strong></p>
+        <p class="muted">ou</p>
+        <div class="row center">
+          <button class="btn" onclick="document.getElementById('fileInput').click()">Selecionar arquivos</button>
+          <button class="btn" onclick="document.getElementById('dirInput').click()">Selecionar pasta</button>
+        </div>
+        <p class="muted small">Markdown, PDF, EPUB, TXT, HTML, DOCX, código e outros formatos textuais.
+        Pastas são percorridas recursivamente; arquivos não suportados são ignorados com aviso.</p>
+        <input type="file" id="fileInput" multiple hidden>
+        <input type="file" id="dirInput" webkitdirectory hidden>
+      </div>
+      <div id="uploadResults"></div>
+    </div>
+
+    <div class="card" id="ingestConfigCard">
+      <div class="card-head">
+        <h2>3 · Configuração da ingestão</h2>
+        <span id="stagedCount" class="pill"></span>
+      </div>
+      <div class="tabs-mini">
+        <button id="modeManualBtn" class="active" onclick="setMode('manual')">Manual</button>
+        <button id="modeAutoBtn" onclick="setMode('auto')">Automático (LLM)</button>
+      </div>
+
+      <div id="modeManual">
+        <p class="muted small">Você determina os parâmetros. Defaults vêm de <code>config/defaults.yaml</code>
+        + ajustes da coleção.</p>
+        <div class="form-grid" id="manualForm"></div>
+      </div>
+
+      <div id="modeAuto" class="hidden">
+        <p class="muted small">Um modelo LLM do LM Studio analisa uma amostra dos documentos e recomenda
+        os parâmetros. Você revisa antes de iniciar.</p>
+        <div class="row">
+          <label>Modelo LLM <select id="autoModel"></select></label>
+          <button class="btn primary" id="btnSuggest" onclick="suggestConfig()">Analisar documentos</button>
+        </div>
+        <div id="suggestionBox"></div>
+      </div>
+
+      <div class="row between ingest-actions">
+        <label class="check"><input type="checkbox" id="saveAsDefault"> salvar como padrão da coleção</label>
+        <button class="btn primary big" id="btnStart" onclick="startIngest()">Iniciar ingestão</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== DOCUMENTOS ==================== -->
+  <section id="tab-documents" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <h2>Documentos</h2>
+        <div class="row">
+          <select id="docFilterCollection" onchange="loadDocuments()"><option value="">Todas as coleções</option></select>
+          <select id="docFilterStatus" onchange="loadDocuments()">
+            <option value="">Todos os status</option>
+            <option value="staged">Aguardando configuração</option>
+            <option value="pending">Na fila</option>
+            <option value="extracting">Extraindo</option>
+            <option value="chunking">Dividindo</option>
+            <option value="embedding">Embeddings</option>
+            <option value="waiting">Aguardando LM Studio</option>
+            <option value="ready">Indexados</option>
+            <option value="error">Com erro</option>
+          </select>
+          <input type="search" id="docSearch" placeholder="Filtrar por nome/caminho…" oninput="debouncedDocs()">
+          <button class="btn" onclick="loadDocuments()">Atualizar</button>
+        </div>
+      </div>
+      <div id="docsTable"></div>
+      <div class="row between">
+        <span id="docsTotal" class="muted small"></span>
+        <div class="row">
+          <button class="btn" id="docsPrev" onclick="docsPage(-1)">← Anterior</button>
+          <button class="btn" id="docsNext" onclick="docsPage(1)">Próxima →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== BUSCA ==================== -->
+  <section id="tab-search" class="tab">
+    <div class="card">
+      <div class="card-head"><h2>Busca semântica (teste do RAG)</h2></div>
+      <div class="row">
+        <input type="text" id="searchQuery" placeholder="Pergunte algo à base…" class="grow"
+               onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn primary" onclick="doSearch()">Buscar</button>
+      </div>
+      <div class="row wrap" id="searchCollections"></div>
+      <div class="form-grid">
+        <label>document_id <input type="text" id="searchDocumentId" placeholder="UUID opcional"></label>
+        <label>autor <input type="text" id="searchAuthor" placeholder="match parcial"></label>
+        <label>source_path <input type="text" id="searchSourcePath" placeholder="caminho exato"></label>
+        <label>capítulo <input type="text" id="searchChapter" placeholder="capítulo exato"></label>
+        <label>página <input type="number" id="searchPage" min="1" placeholder="opcional"></label>
+      </div>
+      <div class="row">
+        <label>top_k <input type="number" id="searchTopK" value="8" min="1" max="50" style="width:70px"></label>
+        <label>score mínimo <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05" style="width:80px"></label>
+        <span class="muted small">Sem filtros = busca normal em todas as fontes selecionadas.</span>
+      </div>
+    </div>
+    <div id="searchResults"></div>
+    <div class="card">
+      <div class="card-head">
+        <h2>Observabilidade de retrieval</h2>
+        <button class="btn" onclick="loadSearchMetrics()">↻ Atualizar</button>
+      </div>
+      <div id="searchMetrics" class="small muted">Sem dados ainda.</div>
+    </div>
+  </section>
+
+  <!-- ==================== CONFIGURAÇÕES ==================== -->
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <div class="card-head"><h2>LM Studio</h2></div>
+      <div class="row">
+        <input type="text" id="lmUrl" placeholder="http://192.168.1.50:1234" class="grow">
+        <button class="btn" onclick="testLM()">Testar conexão</button>
+        <button class="btn primary" onclick="saveLM()">Salvar</button>
+      </div>
+      <div id="lmTestResult" class="small"></div>
+      <div class="form-grid">
+        <label>Modelo de embedding <select id="embeddingModel"></select></label>
+        <label>Modelo LLM (modo automático) <select id="llmModel"></select></label>
+        <label>Modelo de reranker <select id="rerankerModel"></select></label>
+      </div>
+        <label class="check"><input type="checkbox" id="keepRerankerLoaded"> manter reranker carregado <span class="muted small">(carrega na primeira busca e permanece residente)</span></label>
+      <div class="row">
+        <button class="btn" onclick="loadModels(true)">↻ Atualizar modelos</button>
+        <button class="btn primary" onclick="saveModels()">Salvar modelos</button>
+        <span id="modelsInfo" class="muted small"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Defaults de processamento (avançado)</h2></div>
+      <p class="muted small">Overrides em JSON sobre <code>config/defaults.yaml</code>. Persistidos no banco.
+      Ex.: <code>{"ingest": {"chunk_size": 1200}, "search": {"top_k": 6}}</code></p>
+      <textarea id="overridesJson" rows="10" spellcheck="false"></textarea>
+      <div class="row">
+        <button class="btn primary" onclick="saveOverrides()">Salvar overrides</button>
+        <span id="overridesMsg" class="small"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Acesso</h2></div>
+      <div class="row">
+        <input type="password" id="apiTokenField" placeholder="Token de API (se RAG_API_TOKEN estiver definido)" class="grow">
+        <button class="btn" onclick="saveTokenFromField()">Salvar token</button>
+      </div>
+      <p class="muted small">O token fica apenas neste navegador (localStorage) e é enviado como
+      <code>Authorization: Bearer …</code>.</p>
+      <div id="mcpInfo" class="small"></div>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="card-head"><h2 id="modalTitle"></h2><button class="btn" onclick="closeModal()">✕</button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

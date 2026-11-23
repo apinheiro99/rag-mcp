@@ -1,0 +1,166 @@
+import pytest
+
+from app.extraction import (
+    ExtractionError,
+    ExtractedDoc,
+    Segment,
+    extract,
+    markdown_to_segments,
+    normalize_ws,
+)
+
+
+def test_extracted_doc_round_trip():
+    original = ExtractedDoc([Segment("abc", {"page": 2})], {"kind": "x"})
+    restored = ExtractedDoc.from_json(original.to_json())
+    assert restored == original
+    assert restored.full_text() == "abc"
+
+
+def test_normalize_ws():
+    assert normalize_ws("a  \r\n\r\n\r\n b\t \n") == "a\n\n b"
+
+
+def test_normalize_ws_removes_nul_without_losing_text():
+    assert normalize_ws("before\x00after\n") == "beforeafter"
+
+
+def test_extracted_doc_from_json_sanitizes_legacy_cached_nul():
+    restored = ExtractedDoc.from_json({
+        "segments": [{"text": "before\x00after", "loc": {"page": 1}}],
+        "meta": {"kind": "pdf"},
+    })
+
+    assert restored.segments[0].text == "beforeafter"
+    assert restored.segments[0].loc == {"page": 1}
+
+
+def test_markdown_preserves_heading_hierarchy():
+    segs = markdown_to_segments("# Top\nIntro\n## Child\nBody")
+    assert segs[0].loc["heading"] == "Top"
+    assert segs[1].loc["heading"] == "Top > Child"
+    assert "Child" in segs[1].text
+
+
+def test_extract_text_file(tmp_path):
+    p = tmp_path / "a.txt"
+    p.write_text("hello\n\nworld", encoding="utf-8")
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "text"
+    assert doc.meta["segments"] == 1
+    assert "hello" in doc.full_text()
+
+
+def test_extract_empty_text_rejected(tmp_path):
+    p = tmp_path / "empty.txt"
+    p.write_text("   \n", encoding="utf-8")
+    with pytest.raises(ExtractionError, match="arquivo vazio"):
+        extract(p, p.name)
+
+
+def test_extract_unknown_extension_rejected(tmp_path):
+    p = tmp_path / "x.xyz"
+    p.write_text("hello", encoding="utf-8")
+    with pytest.raises(ExtractionError, match="formato não suportado"):
+        extract(p, p.name)
+
+
+def test_extract_generic_json_structures_records_without_raw_json_noise(tmp_path):
+    p = tmp_path / "records.json"
+    p.write_text(
+        '[{"name":"alpha","enabled":true,"count":3},{"name":"beta","enabled":false,"count":4}]',
+        encoding="utf-8",
+    )
+
+    doc = extract(p, p.name)
+
+    assert doc.meta["kind"] == "json"
+    assert doc.meta["parser"] == "generic-json"
+    assert len(doc.segments) == 2
+    assert "name: alpha" in doc.segments[0].text
+    assert "enabled: true" in doc.segments[0].text.lower()
+    assert not doc.segments[0].text.lstrip().startswith("{")
+
+
+def test_extract_jsonl_creates_one_segment_per_record(tmp_path):
+    p = tmp_path / "records.jsonl"
+    p.write_text('{"name":"alpha"}\n{"name":"beta"}\n', encoding="utf-8")
+
+    doc = extract(p, p.name)
+
+    assert doc.meta["kind"] == "jsonl"
+    assert doc.meta["parser"] == "generic-jsonl"
+    assert [s.loc["record"] for s in doc.segments] == [1, 2]
+    assert "name: alpha" in doc.segments[0].text
+    assert "name: beta" in doc.segments[1].text
+
+
+def test_extract_chatgpt_conversations_json_keeps_semantic_messages_only(tmp_path):
+    p = tmp_path / "conversations.json"
+    payload = [{
+        "title": "RAG parser design",
+        "create_time": 123.0,
+        "mapping": {
+            "root": {"id": "root", "message": None, "parent": None, "children": ["u"]},
+            "u": {
+                "id": "u",
+                "parent": "root",
+                "children": ["a"],
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"content_type": "text", "parts": ["Como desenho o parser?"]},
+                    "metadata": {},
+                },
+            },
+            "a": {
+                "id": "a",
+                "parent": "u",
+                "children": [],
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {"content_type": "text", "parts": ["Use detectores especializados com fallback."]},
+                    "metadata": {},
+                },
+            },
+            "sys": {
+                "id": "sys",
+                "parent": "root",
+                "children": [],
+                "message": {
+                    "author": {"role": "system"},
+                    "content": {"content_type": "text", "parts": ["hidden system prompt"]},
+                    "metadata": {},
+                },
+            },
+        },
+    }]
+    import json
+    p.write_text(json.dumps(payload), encoding="utf-8")
+
+    doc = extract(p, p.name)
+
+    assert doc.meta["kind"] == "chatgpt-export"
+    assert doc.meta["parser"] == "chatgpt-export"
+    assert doc.meta["conversations"] == 1
+    assert len(doc.segments) == 2
+    assert doc.segments[0].loc["conversation_title"] == "RAG parser design"
+    assert doc.segments[0].loc["role"] == "user"
+    assert "Como desenho o parser?" in doc.segments[0].text
+    assert "hidden system prompt" not in doc.full_text()
+    assert '"mapping"' not in doc.full_text()
+
+
+def test_extract_chatgpt_html_uses_embedded_json_instead_of_generic_html(tmp_path):
+    p = tmp_path / "chat.html"
+    p.write_text(
+        """<!doctype html><html><head><title>ChatGPT Data Export</title></head>
+        <body><script>var jsonData = [{"title":"Teste","mapping":{"u":{"id":"u","parent":null,"children":[],"message":{"author":{"role":"user"},"content":{"content_type":"text","parts":["mensagem útil"]},"metadata":{}}}}}];</script></body></html>""",
+        encoding="utf-8",
+    )
+
+    doc = extract(p, p.name)
+
+    assert doc.meta["kind"] == "chatgpt-export"
+    assert doc.meta["parser"] == "chatgpt-export"
+    assert "mensagem útil" in doc.full_text()
+    assert "var jsonData" not in doc.full_text()
