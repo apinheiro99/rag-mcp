@@ -1183,3 +1183,91 @@ async def test_directory_source_sync_tracks_new_changed_and_deleted_files(live_d
             "SELECT count(*) AS n FROM documents WHERE source_id=%s", (source_id,)
         )).fetchone()
     assert count["n"] == 0
+
+@pytest.mark.asyncio
+async def test_auto_classification_inbox_is_default_search_off(live_db, monkeypatch):
+    import app.api as api_module
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "classification": {
+                    "staging_collection_name": "Test Unclassified",
+                    "confidence_threshold": 0.92,
+                    "auto_apply_existing": True,
+                },
+                "ingest": {"chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120, "strategy": "recursive", "embed_batch_size": 16},
+                "limits": {"chunk_size_range": [200,8000], "chunk_overlap_range": [0,1000], "min_chunk_size_range": [0,2000], "embed_batch_size_range": [1,128]},
+            }
+
+    monkeypatch.setattr(api_module, "db", live_db)
+    monkeypatch.setattr(api_module, "settings", FakeSettings())
+    inbox = await api_module._ensure_auto_inbox()
+    assert inbox["name"] == "Test Unclassified"
+    assert inbox["default_search"] is False
+
+
+@pytest.mark.asyncio
+async def test_auto_route_applies_only_above_configured_confidence(live_db, monkeypatch):
+    import app.api as api_module
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "classification": {
+                    "staging_collection_name": "Unclassified Test",
+                    "confidence_threshold": 0.92,
+                    "auto_apply_existing": True,
+                },
+                "workflow": {"auto_start_configured_uploads": False},
+            }
+
+        async def get(self, key, default=None):
+            return default
+
+    monkeypatch.setattr(api_module, "db", live_db)
+    monkeypatch.setattr(api_module, "settings", FakeSettings())
+
+    inbox_id, target_id = uuid.uuid4(), uuid.uuid4()
+    high_id, low_id = uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO collections(id,name,ingest_config,default_search) VALUES (%s,%s,'{}'::jsonb,false)",
+            (inbox_id, f"Inbox-{inbox_id}"),
+        )
+        await conn.execute(
+            "INSERT INTO collections(id,name,ingest_config,default_search) VALUES (%s,%s,'{}'::jsonb,true)",
+            (target_id, f"Python-{target_id}"),
+        )
+        for doc_id, digest in ((high_id, "a" * 64), (low_id, "b" * 64)):
+            await conn.execute(
+                """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
+                   VALUES (%s,%s,%s,%s,%s,%s,10,'staged')""",
+                (doc_id, inbox_id, f"{doc_id}.txt", f"{doc_id}.txt", f"blobs/{doc_id}", digest),
+            )
+
+    target_name = f"Python-{target_id}"
+    high = await api_module._route_classified_staged_document(str(high_id), {
+        "existing_collection": target_name,
+        "confidence": 0.95,
+        "proposed_collection": None,
+        "rationale": "clear Python content",
+    })
+    low = await api_module._route_classified_staged_document(str(low_id), {
+        "existing_collection": target_name,
+        "confidence": 0.70,
+        "proposed_collection": None,
+        "rationale": "uncertain",
+    })
+    assert high["auto_applied"] is True
+    assert high["routed_to"] == target_name
+    assert low["auto_applied"] is False
+    assert low["auto_apply_eligible"] is False
+
+    async with live_db.pool.connection() as conn:
+        high_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (high_id,))).fetchone()
+        low_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (low_id,))).fetchone()
+    assert high_row["collection_id"] == target_id
+    assert high_row["status"] == "staged"
+    assert low_row["collection_id"] == inbox_id
+    assert low_row["status"] == "staged"

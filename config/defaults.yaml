@@ -50,6 +50,11 @@ auto:
   max_tokens: 1500
   request_timeout: 240      # timeout (s) da chamada ao LLM
 
+classification:
+  staging_collection_name: Unclassified
+  confidence_threshold: 0.92
+  auto_apply_existing: true
+
 limits:
   chunk_size_range: [200, 8000]
   chunk_overlap_range: [0, 1000]

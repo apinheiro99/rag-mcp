@@ -762,7 +762,7 @@ The library uses specific topic shelves rather than broad implementation buckets
 
 ### LLM-assisted collection classification
 
-Implemented as an assistive workflow: the model receives the existing taxonomy plus a document sample and returns an exact existing collection with confidence or proposes a new collection with rationale. The classifier never moves or creates content by itself; the UI exposes an explicit Apply action. Automatic high-confidence routing remains a future trust-policy step.
+Implemented in two modes. Manual classification returns an exact existing collection with confidence or proposes a new collection with rationale, then exposes an explicit Apply action. Import also offers **Automatic classification**: documents enter a configurable `Unclassified` inbox with Default search OFF, classification runs after upload, and existing-collection matches at or above the configured confidence threshold are routed automatically. Low-confidence matches and proposed new collections remain staged for review; new collections are never created automatically.
 
 
 ### Known corpus issue

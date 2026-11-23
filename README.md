@@ -28,7 +28,7 @@ The architecture, model roles, ingestion lifecycle, retrieval/reranking pipeline
 - configurable Qwen3 reranking with fail-open behavior;
 - collection-wide default search with explicit collection override;
 - source-traceable REST and read-only MCP search;
-- LLM-assisted collection classification with human apply;
+- LLM-assisted collection classification with configurable high-confidence auto-routing and review inbox;
 - incremental directory sources: new/changed/deleted file synchronization;
 - text encoding recovery before quality gating;
 - GitLab CI validation, version tags, GitHub publication and production deployment.

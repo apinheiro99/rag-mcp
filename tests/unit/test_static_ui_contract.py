@@ -29,3 +29,9 @@ def test_import_keeps_live_ingestion_progress_in_import_tab():
 def test_primary_navigation_is_english():
     for label in ("Dashboard", "Import", "Documents", "Search", "Settings"):
         assert f">{label}</button>" in HTML
+
+
+def test_import_exposes_automatic_classification_when_llm_is_configured():
+    assert 'Automatic classification' in JS
+    assert '__auto__' in JS
+    assert 'staging_collection_name' in JS

@@ -41,7 +41,7 @@ function toast(msg, isErr = false) {
   toastTimer = setTimeout(() => t.classList.add("hidden"), isErr ? 8000 : 4000);
 }
 function saveToken() { localStorage.setItem("rag_token", $("tokenInput").value.trim()); $("tokenBanner").classList.add("hidden"); location.reload(); }
-function saveTokenFromField() { localStorage.setItem("rag_token", $("apiTokenField").value.trim()); toast("Token salvo neste navegador"); }
+function saveTokenFromField() { localStorage.setItem("rag_token", $("apiTokenField").value.trim()); toast("Token saved in this browser"); }
 const fmtBytes = (n) => { if (!n && n !== 0) return "—"; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; };
 const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
@@ -68,8 +68,12 @@ function fillCollectionSelects() {
   const opts = state.collections.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
   const imp = $("importCollection");
   const prev = imp.value;
-  imp.innerHTML = opts || `<option value="">— create a collection —</option>`;
-  if (prev && state.collections.some((c) => c.id === prev)) imp.value = prev;
+  const autoOption = state.settings.llm_model
+    ? `<option value="__auto__">✨ Automatic classification</option>`
+    : "";
+  imp.innerHTML = autoOption + (opts || `<option value="">— create a collection —</option>`);
+  if (prev === "__auto__" && state.settings.llm_model) imp.value = prev;
+  else if (prev && state.collections.some((c) => c.id === prev)) imp.value = prev;
   const filt = $("docFilterCollection");
   const prevF = filt.value;
   filt.innerHTML = `<option value="">All collections</option>` + opts;
@@ -82,9 +86,9 @@ function renderCollections() {
       <div class="desc">${esc(c.description || "")}</div>
       <div class="col-stats">
         <span><b>${c.doc_count}</b> docs</span>
-        <span><b>${c.ready_count}</b> indexados</span>
+        <span><b>${c.ready_count}</b> indexed</span>
         <span><b>${c.chunk_count}</b> chunks</span>
-        ${Number(c.error_count) ? `<span style="color:var(--red)"><b>${c.error_count}</b> erros</span>` : ""}
+        ${Number(c.error_count) ? `<span style="color:var(--red)"><b>${c.error_count}</b> errors</span>` : ""}
         ${Number(c.staged_count) ? `<span style="color:var(--yellow)"><b>${c.staged_count}</b> waiting</span>` : ""}
       </div>
       <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "no embeddings yet"}</div>
@@ -227,7 +231,8 @@ function uploadFiles(items) {
     await refreshStaged(); await loadCollections();
     const parts = [];
     if (data.queued) parts.push(`${data.queued} queued automatically`);
-    if (data.staged) parts.push(`${data.staged} awaiting configuration`);
+    if (data.auto_classifying) parts.push(`${data.auto_classifying} queued for automatic classification`);
+    else if (data.staged) parts.push(`${data.staged} awaiting configuration`);
     if (data.duplicates) parts.push(`${data.duplicates} duplicate(s) skipped`);
     if (data.ignored_empty) parts.push(`${data.ignored_empty} empty file(s) skipped`);
     toast(parts.join(", ") || "Upload complete");
@@ -247,14 +252,25 @@ function renderUploadResults(data) {
 }
 
 /* ---------------- ingest config ---------------- */
-function onImportCollectionChange() { buildManualForm(); refreshStaged(); }
+function onImportCollectionChange() {
+  const automatic = $("importCollection").value === "__auto__";
+  $("ingestConfigCard").classList.toggle("hidden", automatic);
+  buildManualForm();
+  refreshStaged();
+}
 async function refreshStaged() {
-  const colId = $("importCollection").value;
+  let colId = $("importCollection").value;
   if (!colId) { $("stagedCount").textContent = ""; return; }
+  if (colId === "__auto__") {
+    const inboxName = state.effective?.classification?.staging_collection_name;
+    const inbox = state.collections.find((c) => c.name === inboxName);
+    if (!inbox) return;
+    colId = inbox.id;
+  }
   try {
     const data = await api(`/api/documents?collection_id=${colId}&status=staged&limit=1`);
     $("stagedCount").textContent = `${data.total} document(s) awaiting configuration`;
-    $("btnStart").disabled = data.total === 0;
+    $("btnStart").disabled = data.total === 0 || $("importCollection").value === "__auto__";
   } catch { /* ignore */ }
 }
 function buildManualForm() {
@@ -563,7 +579,7 @@ async function loadDocuments() {
         <td class="small muted">${fmtBytes(d.size_bytes)}</td>
         <td class="small muted">${fmtDate(d.updated_at)}</td>
         <td><div class="row" style="margin:0;flex-wrap:nowrap">
-          <button class="btn mini" onclick="docDetails('${d.id}')">Detalhes</button>
+          <button class="btn mini" onclick="docDetails('${d.id}')">Details</button>
           ${["error", "waiting"].includes(d.status) ? `<button class="btn mini" onclick="retryDoc('${d.id}')">Retry</button>` : ""}
           ${["pending", "extracting", "chunking", "embedding", "waiting", "cancelling"].includes(d.status) ? `<button class="btn mini danger" onclick="cancelDoc(&quot;${d.id}&quot;)">Cancel</button>` : ""}
           <button class="btn mini" onclick="classifyDoc('${d.id}', '${esc(d.filename)}')">Classify</button>
@@ -608,7 +624,7 @@ async function moveDoc(id) {
       body: { target_collection_id: target },
     });
     closeModal();
-    toast(`Movido para ${r.to_collection}`);
+    toast(`Moved to ${r.to_collection}`);
     await loadCollections();
     await loadDocuments();
   } catch (e) { toast(e.message, true); }
@@ -671,11 +687,11 @@ async function docDetails(id) {
     openModal(esc(d.filename), `
       <p class="small muted">${esc(d.source_path)} · collection <b>${esc(d.collection)}</b> · ${fmtBytes(d.size_bytes)} · sha256 <code>${esc(d.content_sha256.slice(0, 16))}…</code></p>
       <p>${badge(d.status)} ${d.chunks_embedded}/${d.chunks_total} chunks · ${d.attempts} attempt(s)</p>
-      ${d.error ? `<div class="problem"><b>Erro:</b><div class="err-msg" style="max-height:none">${esc(d.error)}</div></div>` : ""}
+      ${d.error ? `<div class="problem"><b>Error:</b><div class="err-msg" style="max-height:none">${esc(d.error)}</div></div>` : ""}
       <h3 class="small">Ingestion parameters</h3><pre>${esc(JSON.stringify(d.ingest_config || {}, null, 2))}</pre>
       ${d.auto_suggestion ? `<h3 class="small">Accepted automatic suggestion</h3><pre>${esc(JSON.stringify(d.auto_suggestion, null, 2))}</pre>` : ""}
-      <h3 class="small">Metadados</h3><pre>${esc(JSON.stringify(d.meta || {}, null, 2))}</pre>
-      <h3 class="small">Primeiros chunks</h3>
+      <h3 class="small">Metadata</h3><pre>${esc(JSON.stringify(d.meta || {}, null, 2))}</pre>
+      <h3 class="small">First chunks</h3>
       ${(d.chunk_preview || []).map((c) => `<div class="result-card"><div class="result-loc">#${c.seq} · ${esc(JSON.stringify(c.loc))} · ${c.embedded ? "✓ embedded" : "pending"}</div><div class="result-content">${esc(c.preview)}…</div></div>`).join("") || `<p class="muted small">No chunks yet.</p>`}`);
   } catch (e) { toast(e.message, true); }
 }
@@ -739,8 +755,8 @@ async function loadSearchMetrics() {
     const recent = data.recent || [];
     const parts = [
       `<span><b>${s.queries || 0}</b> queries/24h</span>`,
-      `<span><b>${s.zero_results || 0}</b> sem resultado</span>`,
-      `<span><b>${s.errors || 0}</b> erros</span>`,
+      `<span><b>${s.zero_results || 0}</b> zero results</span>`,
+      `<span><b>${s.errors || 0}</b> errors</span>`,
       `<span>average <b>${s.avg_total_ms ?? "—"} ms</b></span>`,
       `<span>p95 <b>${s.p95_total_ms ?? "—"} ms</b></span>`,
       `<span>embedding <b>${s.avg_embedding_ms ?? "—"} ms</b></span>`,
@@ -775,9 +791,9 @@ async function loadSettingsTab() {
   $("keepRerankerLoaded").checked = (state.effective?.rerank?.mode === "resident");
   $("overridesJson").value = JSON.stringify(state.settings.overrides || {}, null, 2);
   $("apiTokenField").value = token();
-  $("mcpInfo").innerHTML = `<p>Endpoint MCP para clientes (Claude Code etc.):</p>
+  $("mcpInfo").innerHTML = `<p>MCP endpoint for clients (Claude Code, etc.):</p>
     <pre>claude mcp add --transport http rag ${location.origin}/mcp</pre>
-    <p class="muted small">Ferramentas expostas: rag_search (com filtros), rag_search_metrics, list_collections, get_document.</p>`;
+    <p class="muted small">Exposed tools: rag_search (com filtros), rag_search_metrics, list_collections, get_document.</p>`;
   await loadModels(false);
 }
 async function loadModels(verbose) {
@@ -796,7 +812,7 @@ async function loadModels(verbose) {
     $("autoModel").innerHTML = opts((m) => m.type !== "embedding", llm) || `<option value="">no model</option>`;
     $("modelsInfo").textContent = `${state.models.length} modelo(s) em ${data.url}`;
     buildManualForm();
-    if (verbose) toast("Lista de modelos atualizada");
+    if (verbose) toast("Model list refreshed");
   } catch (e) {
     $("modelsInfo").textContent = "";
     if (verbose) toast(e.message, true);
@@ -815,7 +831,7 @@ async function testLM() {
 async function saveLM() {
   try {
     await api("/api/settings", { method: "PUT", body: { lmstudio_url: $("lmUrl").value.trim() } });
-    toast("URL do LM Studio salva");
+    toast("LM Studio URL saved");
     await loadSettings(); await loadModels(true);
   } catch (e) { toast(e.message, true); }
 }
@@ -823,7 +839,7 @@ async function saveModels() {
   try {
     await api("/api/settings", { method: "PUT", body: { embedding_model: $("embeddingModel").value || null, llm_model: $("llmModel").value || null, reranker_model: $("rerankerModel").value || null, overrides: { rerank: { mode: $("keepRerankerLoaded").checked ? "resident" : "switch" } } } });
     await loadSettings(); buildManualForm();
-    toast("Modelos salvos");
+    toast("Models saved");
   } catch (e) { toast(e.message, true); }
 }
 async function saveOverrides() {
