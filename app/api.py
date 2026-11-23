@@ -10,18 +10,18 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from . import autoconfig
 from .chunking import ConfigError, validate_ingest_config
-from .collection_classifier import classify_document
+from .classification_runtime import classify_document_runtime
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
 from .ingest import ACTIVE_STATUSES, extraction_cache_path, resolve_ingest_config, worker
 from .ingest_policy import should_auto_start_upload, should_ignore_empty_upload
-from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable, model_runtime_lock
+from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable
 from .retrieval_observability import retrieval_metrics
 from .search import SearchError, semantic_search
 from .search_filters import SearchFilters
@@ -411,188 +411,28 @@ async def _ensure_auto_inbox() -> dict[str, Any]:
     async with db.pool.connection() as conn:
         cur = await conn.execute("SELECT * FROM collections WHERE name=%s", (name,))
         row = await cur.fetchone()
+        default_model = await settings.get("embedding_model")
         if row:
-            if row["default_search"]:
-                await conn.execute("UPDATE collections SET default_search=false, updated_at=now() WHERE id=%s", (row["id"],))
+            if row["default_search"] or (default_model and not row["embedding_model"]):
+                await conn.execute(
+                    """UPDATE collections SET default_search=false,
+                           embedding_model=coalesce(embedding_model,%s),updated_at=now() WHERE id=%s""",
+                    (default_model, row["id"]),
+                )
                 row["default_search"] = False
+                row["embedding_model"] = row["embedding_model"] or default_model
             return row
         ingest_cfg = validate_ingest_config(eff["ingest"], eff["limits"])
+        if default_model:
+            ingest_cfg["embedding_model"] = default_model
         cur = await conn.execute(
-            """INSERT INTO collections(id,name,description,ingest_config,default_search)
-               VALUES (%s,%s,%s,%s::jsonb,false) RETURNING *""",
-            (str(uuid.uuid4()), name, "Automatic classification inbox", json.dumps(ingest_cfg)),
+            """INSERT INTO collections(id,name,description,ingest_config,default_search,embedding_model)
+               VALUES (%s,%s,%s,%s::jsonb,false,%s) RETURNING *""",
+            (str(uuid.uuid4()), name, "Automatic classification inbox", json.dumps(ingest_cfg), default_model),
         )
         row = await cur.fetchone()
     await db.event(f"Automatic classification inbox created: {name}", collection_id=row["id"])
     return row
-
-
-async def _classify_document_core(doc_id: str, model: str | None = None) -> dict[str, Any]:
-    model = model or await settings.get("llm_model")
-    if not model:
-        raise ValueError("select an LLM model before classifying")
-    eff = await settings.effective()
-    async with db.pool.connection() as conn:
-        cur = await conn.execute(
-            """SELECT d.*, c.name AS collection FROM documents d
-               JOIN collections c ON c.id=d.collection_id WHERE d.id=%s""",
-            (doc_id,),
-        )
-        doc = await cur.fetchone()
-        if not doc:
-            raise ValueError("document not found")
-        cur = await conn.execute(
-            """SELECT c.id, c.name, c.description,
-                      (SELECT count(*) FROM documents x WHERE x.collection_id=c.id) AS doc_count
-               FROM collections c WHERE c.id<>%s ORDER BY c.name""",
-            (doc["collection_id"],),
-        )
-        collections = await cur.fetchall()
-    extracted = await _sample_extract(doc)
-    client = await settings.lmstudio_client(timeout=eff["auto"]["request_timeout"], retries=1)
-    classification_cfg = eff["classification"]
-    reranker_model = await settings.get("reranker_model", eff.get("rerank", {}).get("model"))
-    async with model_runtime_lock:
-        reranker_was_loaded = False
-        llm_instance: str | None = None
-        try:
-            loaded_models = await client.list_models()
-            reranker_was_loaded = bool(
-                reranker_model
-                and reranker_model != model
-                and any(
-                    item.get("id") == reranker_model and item.get("state") == "loaded"
-                    for item in loaded_models
-                )
-            )
-            if classification_cfg["temporarily_unload_reranker"] and reranker_was_loaded:
-                try:
-                    await client.unload_model(reranker_model)
-                except Exception as exc:
-                    log.warning("could not unload reranker before classification: %s", exc)
-            loaded = await client.ensure_model_loaded(
-                model, context_length=int(classification_cfg["context_length"])
-            )
-            llm_instance = str(loaded.get("instance_id") or model)
-            result = await classify_document(
-                client, model, filename=doc["filename"], source_path=doc["source_path"],
-                text=extracted.full_text(), collections=collections,
-                sample_chars=eff["auto"]["sample_chars"],
-                timeout=eff["auto"]["request_timeout"],
-            )
-        finally:
-            if classification_cfg["unload_after_use"] and llm_instance and model != reranker_model:
-                try:
-                    await client.unload_model(llm_instance)
-                except Exception:
-                    log.exception("failed to unload classification LLM %s", llm_instance)
-            if classification_cfg["temporarily_unload_reranker"] and reranker_was_loaded:
-                try:
-                    await client.ensure_model_loaded(
-                        reranker_model, context_length=int(eff.get("rerank", {}).get("context_length", 8192))
-                    )
-                except Exception:
-                    log.exception("failed to restore reranker %s after classification", reranker_model)
-    result.update({
-        "document_id": doc_id,
-        "filename": doc["filename"],
-        "current_collection": doc["collection"],
-    })
-    result["auto_apply_threshold"] = float(eff["classification"]["confidence_threshold"])
-    result["auto_apply_eligible"] = bool(
-        eff["classification"]["auto_apply_existing"]
-        and result.get("existing_collection")
-        and float(result["confidence"]) >= float(eff["classification"]["confidence_threshold"])
-    )
-    return result
-
-
-async def _route_classified_staged_document(doc_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    eff = await settings.effective()
-    cfg = eff["classification"]
-    threshold = float(cfg["confidence_threshold"])
-    existing_name = result.get("existing_collection")
-    eligible = bool(cfg["auto_apply_existing"] and existing_name and float(result["confidence"]) >= threshold)
-    result["auto_apply_threshold"] = threshold
-    result["auto_apply_eligible"] = eligible
-    result["auto_applied"] = False
-    if not eligible:
-        return result
-
-    default_model = await settings.get("embedding_model")
-    async with db.pool.connection() as conn:
-        cur = await conn.execute(
-            """SELECT d.id,d.filename,d.status,d.content_sha256,d.collection_id,src.name AS source_collection
-               FROM documents d JOIN collections src ON src.id=d.collection_id WHERE d.id=%s FOR UPDATE""",
-            (doc_id,),
-        )
-        doc = await cur.fetchone()
-        if not doc or doc["status"] != "staged":
-            result["auto_apply_reason"] = "document is no longer staged"
-            return result
-        cur = await conn.execute(
-            "SELECT * FROM collections WHERE name=%s", (existing_name,)
-        )
-        target = await cur.fetchone()
-        if not target:
-            result["auto_apply_reason"] = "target collection no longer exists"
-            return result
-        cur = await conn.execute(
-            "SELECT id FROM documents WHERE collection_id=%s AND content_sha256=%s AND id<>%s",
-            (target["id"], doc["content_sha256"], doc_id),
-        )
-        if await cur.fetchone():
-            result["auto_apply_reason"] = "identical content already exists in target collection"
-            return result
-        auto_start = should_auto_start_upload(
-            enabled=bool(eff["workflow"]["auto_start_configured_uploads"]),
-            collection_config=target["ingest_config"],
-            collection_model=target["embedding_model"],
-            default_model=default_model,
-        )
-        ingest_cfg = None
-        next_status = "staged"
-        if auto_start:
-            ingest_cfg = await resolve_ingest_config(target["ingest_config"], None)
-            ingest_cfg["embedding_model"] = target["embedding_model"] or default_model
-            next_status = "pending"
-        await conn.execute(
-            """UPDATE documents SET collection_id=%s,status=%s,ingest_config=%s::jsonb,
-                   auto_suggestion=%s::jsonb,updated_at=now() WHERE id=%s""",
-            (target["id"], next_status, json.dumps(ingest_cfg) if ingest_cfg else None, json.dumps(result), doc_id),
-        )
-    result["auto_applied"] = True
-    result["routed_to"] = existing_name
-    result["status"] = next_status
-    await db.event(
-        f"Automatically classified: {doc['filename']} → {existing_name} ({float(result['confidence']):.2f})",
-        collection_id=target["id"], document_id=doc_id,
-    )
-    return result
-
-
-async def _auto_classify_uploaded_document(doc_id: str) -> None:
-    try:
-        result = await _classify_document_core(doc_id)
-        result = await _route_classified_staged_document(doc_id, result)
-        if not result.get("auto_applied"):
-            async with db.pool.connection() as conn:
-                await conn.execute(
-                    "UPDATE documents SET auto_suggestion=%s::jsonb, updated_at=now() WHERE id=%s",
-                    (json.dumps(result), doc_id),
-                )
-            await db.event(
-                f"Classification review required: {result['filename']} ({float(result['confidence']):.2f})",
-                document_id=doc_id,
-            )
-    except Exception as e:
-        log.exception("automatic classification failed for %s", doc_id)
-        async with db.pool.connection() as conn:
-            await conn.execute(
-                "UPDATE documents SET error=%s, updated_at=now() WHERE id=%s",
-                (f"automatic classification failed: {e}", doc_id),
-            )
-        await db.event(f"Automatic classification failed: {e}", level="error", document_id=doc_id)
 
 
 # ----------------------------------------------------------------- documents
@@ -661,14 +501,16 @@ async def get_document(doc_id: str):
 
 
 @router.post("/documents/upload", status_code=201)
-async def upload_documents(background_tasks: BackgroundTasks,
-                           collection_id: str = Form(...),
+async def upload_documents(collection_id: str = Form(...),
                            files: list[UploadFile] = File(...),
                            paths: list[str] = Form(default=[])):
     auto_classify = collection_id == AUTO_COLLECTION_SENTINEL
     if auto_classify:
         if not await settings.get("llm_model"):
             raise HTTPException(400, "automatic classification requires a configured LLM model")
+        default_model = await settings.get("embedding_model")
+        if not default_model:
+            raise HTTPException(400, "automatic classification requires a configured embedding model")
         collection = await _ensure_auto_inbox()
         collection_id = str(collection["id"])
     else:
@@ -683,8 +525,8 @@ async def upload_documents(background_tasks: BackgroundTasks,
                 raise HTTPException(404, "collection not found")
 
     eff = await settings.effective()
-    default_model = await settings.get("embedding_model")
-    auto_start = (not auto_classify) and should_auto_start_upload(
+    default_model = locals().get("default_model") or await settings.get("embedding_model")
+    auto_start = auto_classify or should_auto_start_upload(
         enabled=bool(eff.get("workflow", {}).get("auto_start_configured_uploads", False)),
         collection_config=collection["ingest_config"],
         collection_model=collection["embedding_model"],
@@ -735,21 +577,20 @@ async def upload_documents(background_tasks: BackgroundTasks,
                 initial_status = "pending" if auto_start else "staged"
                 cur = await conn.execute(
                     """INSERT INTO documents(id, collection_id, filename, source_path,
-                           stored_path, content_sha256, size_bytes, status, ingest_config)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                           stored_path, content_sha256, size_bytes, status, ingest_config, meta)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
                        ON CONFLICT (collection_id, content_sha256) DO NOTHING RETURNING id""",
                     (
                         doc_id, collection_id, filename, rel, blob_rel, digest, size,
                         initial_status,
                         json.dumps(auto_config) if auto_config else None,
+                        json.dumps({"auto_classify": True}) if auto_classify else "{}",
                     ))
                 row = await cur.fetchone()
                 if row:
                     results.append({"filename": filename, "source_path": rel,
                                     "status": initial_status, "document_id": doc_id,
                                     "size_bytes": size, "auto_classify": auto_classify})
-                    if auto_classify:
-                        background_tasks.add_task(_auto_classify_uploaded_document, doc_id)
                 else:
                     cur = await conn.execute(
                         """SELECT id, status FROM documents
@@ -780,7 +621,7 @@ async def upload_documents(background_tasks: BackgroundTasks,
         )
     if staged:
         message = (
-            f"{staged} document(s) queued for automatic classification"
+            f"{staged} document(s) awaiting ingestion configuration"
             if auto_classify else
             f"{staged} document(s) imported, awaiting ingestion configuration"
         )
@@ -893,7 +734,7 @@ async def classify_document_route(doc_id: str, body: ClassifyDocumentRequest):
     if not model:
         raise HTTPException(400, "select an LLM model before classifying")
     try:
-        result = await _classify_document_core(doc_id, model)
+        result = await classify_document_runtime(doc_id, model)
     except ExtractionError as e:
         raise HTTPException(422, f"could not extract document sample: {e}") from e
     except LMStudioError as e:

@@ -806,6 +806,57 @@ rag
 - MCP server
 - Docker Compose
 
+## GitLab → GitHub publication contract
+
+The public `rag-mcp` repository is mirrored from GitLab to GitHub only after the default-branch validation pipeline is green. GitLab remains the CI/CD authority; GitHub is the public mirror.
+
+Canonical remotes:
+
+```text
+GitLab: git@gitlab-prod-01.lab:rag/rag-mcp.git
+GitHub: git@github.com:apinheiro99/rag-mcp.git
+```
+
+Publication uses a **GitHub SSH Deploy Key with write access**, not a GitHub API token and not `CI_JOB_TOKEN`. The private key/config are operator-owned host material and are read by the production runner from `RAG_PUBLICATION_PATH`.
+
+Expected host layout:
+
+```text
+$RAG_PUBLICATION_PATH/
+├── credentials/
+│   └── github/
+│       ├── rag-mcp
+│       └── rag-mcp.pub
+└── config/
+    └── github.env
+```
+
+`config/github.env` defines the public target, e.g.:
+
+```text
+RAG_GITHUB_OWNER=apinheiro99
+RAG_GITHUB_REPO=rag-mcp
+```
+
+`Publish GitHub` runs on the production runner only after `Public Surface`, `Unit + Regression`, `Integration` and `ci-tag-green` succeed. The publication script sets `GIT_SSH_COMMAND` to the private Deploy Key, adds the GitHub remote and pushes the validated commit to `main` plus the green version tag.
+
+```text
+GitLab main
+  → validate
+  → green tag
+  → production runner
+  → GitHub SSH Deploy Key
+  → GitHub main + tag
+```
+
+Internal GitLab repository/tag operations may use `CI_JOB_TOKEN`; GitHub publication must not depend on `CI_JOB_TOKEN`. The publication job also **must not clone or replace `rag-private`**. Host publication material already exists persistently and is only read by the job.
+
+This separation is intentional:
+- `rag-mcp`: public product source;
+- `rag-private`: recovery/configuration material;
+- `RAG_PRIVATE_PATH`: live production state;
+- `RAG_PUBLICATION_PATH`: host-side GitHub publication credentials/config.
+
 ## Reference endpoints
 
 - RAG local: `http://127.0.0.1:8000`

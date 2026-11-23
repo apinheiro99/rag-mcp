@@ -24,7 +24,8 @@ from .chunking import chunk_segments, validate_ingest_config
 from .config import env
 from .db import db, vector_literal
 from .extraction import ExtractedDoc, ExtractionError, extract
-from .lmstudio import LMStudioError, LMStudioUnavailable, model_runtime_lock, model_runtime_lock
+from .lmstudio import LMStudioError, LMStudioUnavailable
+from .model_runtime import ModelRequirement, runtime_scheduler
 from .quality import QualityGateError, analyze_document_quality
 from .settings import settings
 
@@ -497,11 +498,12 @@ class DocumentIngestor:
                 await self._mark_ready(doc, model, effective)
                 return
 
-            async with model_runtime_lock:
-                vectors = await client.embed(
-                    [chunk["content"] for chunk in batch],
-                    model,
-                )
+            vectors = await runtime_scheduler.run(
+                f"ingest-embedding:{doc_id}",
+                client,
+                [ModelRequirement(model)],
+                lambda: client.embed([chunk["content"] for chunk in batch], model),
+            )
             await self._cancel_if_requested(doc)
             dim = len(vectors[0])
             table, coltype = await self._vector_table(dim)
