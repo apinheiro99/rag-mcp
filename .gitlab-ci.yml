@@ -83,7 +83,7 @@ ci-tag-red:
 
 "Publish GitHub":
   stage: publish
-  image: debian:13-slim
+  tags: [rag-prod]
   before_script: []
   needs:
     - "Public Surface"
@@ -95,7 +95,6 @@ ci-tag-red:
       when: never
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates curl
     - bash scripts/publish-github.sh
 
 "Deploy Production":
