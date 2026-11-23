@@ -21,7 +21,7 @@ from .db import db
 from .extraction import ExtractionError, extract
 from .ingest import ACTIVE_STATUSES, extraction_cache_path, resolve_ingest_config, worker
 from .ingest_policy import should_auto_start_upload, should_ignore_empty_upload
-from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable
+from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable, model_runtime_lock
 from .retrieval_observability import retrieval_metrics
 from .search import SearchError, semantic_search
 from .search_filters import SearchFilters
@@ -450,13 +450,54 @@ async def _classify_document_core(doc_id: str, model: str | None = None) -> dict
         collections = await cur.fetchall()
     extracted = await _sample_extract(doc)
     client = await settings.lmstudio_client(timeout=eff["auto"]["request_timeout"], retries=1)
-    result = await classify_document(
-        client, model, filename=doc["filename"], source_path=doc["source_path"],
-        text=extracted.full_text(), collections=collections,
-        sample_chars=eff["auto"]["sample_chars"],
-        timeout=eff["auto"]["request_timeout"],
-    )
-    eff = await settings.effective()
+    classification_cfg = eff["classification"]
+    reranker_model = await settings.get("reranker_model", eff.get("rerank", {}).get("model"))
+    async with model_runtime_lock:
+        reranker_was_loaded = False
+        llm_instance: str | None = None
+        try:
+            loaded_models = await client.list_models()
+            reranker_was_loaded = bool(
+                reranker_model
+                and reranker_model != model
+                and any(
+                    item.get("id") == reranker_model and item.get("state") == "loaded"
+                    for item in loaded_models
+                )
+            )
+            if classification_cfg["temporarily_unload_reranker"] and reranker_was_loaded:
+                try:
+                    await client.unload_model(reranker_model)
+                except Exception as exc:
+                    log.warning("could not unload reranker before classification: %s", exc)
+            loaded = await client.ensure_model_loaded(
+                model, context_length=int(classification_cfg["context_length"])
+            )
+            llm_instance = str(loaded.get("instance_id") or model)
+            result = await classify_document(
+                client, model, filename=doc["filename"], source_path=doc["source_path"],
+                text=extracted.full_text(), collections=collections,
+                sample_chars=eff["auto"]["sample_chars"],
+                timeout=eff["auto"]["request_timeout"],
+            )
+        finally:
+            if classification_cfg["unload_after_use"] and llm_instance and model != reranker_model:
+                try:
+                    await client.unload_model(llm_instance)
+                except Exception:
+                    log.exception("failed to unload classification LLM %s", llm_instance)
+            if classification_cfg["temporarily_unload_reranker"] and reranker_was_loaded:
+                try:
+                    await client.ensure_model_loaded(
+                        reranker_model, context_length=int(eff.get("rerank", {}).get("context_length", 8192))
+                    )
+                except Exception:
+                    log.exception("failed to restore reranker %s after classification", reranker_model)
+    result.update({
+        "document_id": doc_id,
+        "filename": doc["filename"],
+        "current_collection": doc["collection"],
+    })
     result["auto_apply_threshold"] = float(eff["classification"]["confidence_threshold"])
     result["auto_apply_eligible"] = bool(
         eff["classification"]["auto_apply_existing"]

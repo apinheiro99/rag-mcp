@@ -1271,3 +1271,95 @@ async def test_auto_route_applies_only_above_configured_confidence(live_db, monk
     assert high_row["status"] == "staged"
     assert low_row["collection_id"] == inbox_id
     assert low_row["status"] == "staged"
+
+@pytest.mark.asyncio
+async def test_classification_runtime_temporarily_swaps_reranker_for_llm(live_db, monkeypatch):
+    import app.api as api_module
+
+    collection_id = uuid.uuid4()
+    doc_id = uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO collections(id,name,description,ingest_config) VALUES (%s,%s,'test','{}'::jsonb)",
+            (collection_id, f"Runtime-{collection_id}"),
+        )
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
+               VALUES (%s,%s,'book.txt','book.txt','blobs/book',%s,10,'staged')""",
+            (doc_id, collection_id, "c" * 64),
+        )
+
+    calls = []
+
+    class FakeClient:
+        async def list_models(self):
+            calls.append(("list", None))
+            return [
+                {"id": "text-embedding-qwen3-embedding-8b", "state": "loaded"},
+                {"id": "qwen3-reranker-4b", "state": "loaded"},
+                {"id": "google/gemma-4-12b-qat", "state": "not-loaded"},
+            ]
+
+        async def unload_model(self, model):
+            calls.append(("unload", model))
+            return {"status": "ok"}
+
+        async def ensure_model_loaded(self, model, *, context_length=None):
+            calls.append(("load", model, context_length))
+            return {"instance_id": model}
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "auto": {"sample_chars": 3500, "request_timeout": 240},
+                "classification": {
+                    "unload_after_use": True,
+                    "temporarily_unload_reranker": True,
+                    "context_length": 8192,
+                    "confidence_threshold": 0.92,
+                    "auto_apply_existing": True,
+                },
+                "rerank": {"model": "qwen3-reranker-4b", "context_length": 8192},
+            }
+
+        async def get(self, key, default=None):
+            if key == "reranker_model":
+                return "qwen3-reranker-4b"
+            if key == "llm_model":
+                return "google/gemma-4-12b-qat"
+            return default
+
+        async def lmstudio_client(self, **kwargs):
+            return FakeClient()
+
+    class FakeExtracted:
+        def full_text(self):
+            return "sample text"
+
+    async def fake_sample_extract(doc):
+        return FakeExtracted()
+
+    async def fake_classify(client, model, **kwargs):
+        calls.append(("classify", model))
+        return {
+            "existing_collection": None,
+            "confidence": 0.5,
+            "proposed_collection": {"name": "Other", "description": "test"},
+            "rationale": "test",
+        }
+
+    monkeypatch.setattr(api_module, "db", live_db)
+    monkeypatch.setattr(api_module, "settings", FakeSettings())
+    monkeypatch.setattr(api_module, "_sample_extract", fake_sample_extract)
+    monkeypatch.setattr(api_module, "classify_document", fake_classify)
+
+    result = await api_module._classify_document_core(str(doc_id), "google/gemma-4-12b-qat")
+    assert result["filename"] == "book.txt"
+    assert calls == [
+        ("list", None),
+        ("unload", "qwen3-reranker-4b"),
+        ("load", "google/gemma-4-12b-qat", 8192),
+        ("classify", "google/gemma-4-12b-qat"),
+        ("unload", "google/gemma-4-12b-qat"),
+        ("load", "qwen3-reranker-4b", 8192),
+    ]
