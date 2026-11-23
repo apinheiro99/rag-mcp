@@ -15,6 +15,7 @@ import app.retrieval_observability as observability_module
 import app.search as search_module
 from app.db import Database, vector_literal
 from app.ingest import DocumentIngestor, IngestStore
+from app.model_runtime import runtime_scheduler
 
 
 pytestmark = pytest.mark.integration
@@ -90,6 +91,7 @@ async def live_db(test_database_name):
     try:
         yield db
     finally:
+        await runtime_scheduler.stop()
         await db.stop()
 
 

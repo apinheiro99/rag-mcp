@@ -48,6 +48,7 @@ class ModelRuntimeScheduler:
         self._maxsize = maxsize
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.current_job: str | None = None
         self.current_models: tuple[str, ...] = ()
 
@@ -61,6 +62,19 @@ class ModelRuntimeScheduler:
             self._maxsize = maxsize
 
     async def start(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._loop is not None and self._loop is not loop:
+            # Test runners and embedding hosts may create multiple event loops over
+            # this process lifetime. Runtime jobs never migrate between loops. An
+            # actually running old loop is a programming error; a stopped/retired
+            # loop is safe to discard and rebuild around the current loop.
+            if self._loop.is_running():
+                raise RuntimeError("model runtime scheduler is active on another event loop")
+            self._queue = asyncio.Queue(maxsize=self._maxsize)
+            self._stop = asyncio.Event()
+            self._task = None
+            self.current_job = None
+        self._loop = loop
         if self._task and not self._task.done():
             return
         self._stop.clear()
@@ -76,6 +90,9 @@ class ModelRuntimeScheduler:
                 pass
         self._task = None
         self.current_job = None
+        self._loop = None
+        self._queue = asyncio.Queue(maxsize=self._maxsize)
+        self._stop = asyncio.Event()
 
     async def run(
         self,
