@@ -17,7 +17,7 @@ def test_deploy_persists_last_good_and_rolls_back_on_post_deploy_failure():
 
 def test_deploy_migrates_explicitly_then_waits_for_quiescence_and_warms_up():
     script = Path("scripts/deploy-prod.sh").read_text()
-    migration = script.index("migrate_library_taxonomy.py")
+    migration = script.index("python -m app.migrate_library_taxonomy")
     quiescent = script.index("wait_system_quiescent ||")
     evaluation = script.index('exec -T app "${EVAL_ARGS[@]}"')
     assert migration < quiescent < evaluation
@@ -35,3 +35,9 @@ def test_application_startup_does_not_run_destructive_taxonomy_migration():
 def test_repository_bootstrap_does_not_force_resync_on_every_restart():
     source = Path("app/source_sync.py").read_text()
     assert "next_sync_at=coalesce(collection_sources.next_sync_at, now())" in source
+
+
+def test_taxonomy_migration_runs_as_package_module_not_loose_script():
+    script = Path("scripts/deploy-prod.sh").read_text()
+    assert "python -m app.migrate_library_taxonomy" in script
+    assert "python /srv/rag/scripts/migrate_library_taxonomy.py" not in script

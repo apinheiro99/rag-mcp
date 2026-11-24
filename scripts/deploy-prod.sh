@@ -176,7 +176,7 @@ docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
 wait_app_ready "$CI_COMMIT_SHA" || { echo "application readiness failed: $HEALTH_URL did not report commit $CI_COMMIT_SHA" >&2; exit 1; }
 
 # Data migrations are explicit deploy steps, never application-startup side effects.
-docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app   python /srv/rag/scripts/migrate_library_taxonomy.py
+docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app   python -m app.migrate_library_taxonomy
 
 if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   TUNNEL_READY=false
