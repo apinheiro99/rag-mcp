@@ -471,7 +471,18 @@ async function pollHealth() {
       ${h.lmstudio?.error ? `<div class="small" style="color:var(--yellow)">${esc(h.lmstudio.error)}</div>` : ""}</div>
     <div class="card"><div class="stat-label">Ingestion worker</div>
       <div class="stat" style="color:${h.worker?.paused ? "var(--yellow)" : "var(--green)"}">${h.worker?.paused ? "paused" : h.worker?.running ? "active" : "stopped"}</div>
-      <div class="muted small">automatically resumes after restart</div></div>` : "";
+      <div class="muted small">${h.worker?.current_document ? "doc " + esc(h.worker.current_document) : "idle"}</div></div>
+    <div class="card"><div class="stat-label">Classification worker</div>
+      <div class="stat" style="color:${h.classification_worker?.running ? "var(--green)" : "var(--red)"}">${h.classification_worker?.running ? "active" : "stopped"}</div>
+      <div class="muted small">${h.classification_worker?.current_document ? "doc " + esc(h.classification_worker.current_document) : "idle"}</div></div>
+    <div class="card"><div class="stat-label">Source sync worker</div>
+      <div class="stat" style="color:${h.source_worker?.running ? "var(--green)" : "var(--red)"}">${h.source_worker?.running ? "active" : "stopped"}</div></div>
+    <div class="card"><div class="stat-label">Graph worker</div>
+      <div class="stat" style="color:${h.graph_worker?.last_error ? "var(--red)" : h.graph_worker?.running ? "var(--green)" : "var(--red)"}">${h.graph_worker?.last_error ? "error" : h.graph_worker?.running ? "active" : "stopped"}</div>
+      <div class="muted small">${h.graph_worker?.current_document ? "doc " + esc(h.graph_worker.current_document) : (h.graph_worker?.indexed_documents || 0) + " indexed this run"}${h.graph_worker?.last_error ? " · " + esc(h.graph_worker.last_error) : ""}</div></div>
+    <div class="card"><div class="stat-label">Model runtime</div>
+      <div class="stat">${h.model_runtime?.queued || 0} queued</div>
+      <div class="muted small">${h.model_runtime?.current_job ? "job " + esc(h.model_runtime.current_job) : "idle"} · ${(h.model_runtime?.current_models || []).map(esc).join(", ") || "no resident models"}</div></div>` : "";
 }
 function renderEvents() {
   const all = state.events || [];
@@ -771,7 +782,7 @@ async function loadDocuments(){
         <td><input type="checkbox" class="doc-select" ${selected} onchange="toggleDocSelection('${d.id}', this.checked)"></td>
         <td><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></td>
         <td>${esc(d.collection)}</td>
-        <td>${badge(d.status)}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
+        <td>${badge(d.status)}${d.superseded_by ? `<div class="docpath" style="color:var(--yellow)">superseded → ${esc(d.superseded_by)}</div>` : ""}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
         <td>${classificationSummary(d)}</td>
         <td>${d.chunks_total ? `<span class="mini-progress"><div style="width:${pct}%"></div></span> <span class="small muted">${d.chunks_embedded}/${d.chunks_total}</span>` : "—"}</td>
         <td class="small muted">${fmtBytes(d.size_bytes)}</td>
@@ -783,6 +794,7 @@ async function loadDocuments(){
           <button class="btn mini" onclick="classifyDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Classify</button>
           <button class="btn mini" onclick="openMoveDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, '${d.collection_id}')">Move</button>
           <button class="btn mini" onclick="reindexDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Reindex</button>
+          <button class="btn mini" onclick="openSupersedeDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, ${d.superseded_by ? esc(JSON.stringify(d.superseded_by)) : "null"})">${d.superseded_by ? "Restore" : "Supersede"}</button>
           <button class="btn mini danger" onclick="deleteDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Delete</button>
         </div></td>
       </tr>`;
@@ -875,6 +887,29 @@ async function applyClassification(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+async function openSupersedeDoc(id, name, supersededBy) {
+  if (supersededBy) {
+    if (!(await askAction("Restore document", `Restore '${name}' to normal retrieval?`, "Restore"))) return;
+    try {
+      await api(`/api/documents/${id}/supersede`, { method: "POST", body: { replacement_document_id: null } });
+      toast("Document restored to normal retrieval");
+      loadDocuments();
+    } catch (e) { toast(e.message, true); }
+    return;
+  }
+  const target = await askAction(
+    "Supersede document",
+    `Enter the replacement document UUID. '${name}' will remain stored but disappear from normal retrieval.`,
+    "Supersede", false, ""
+  );
+  if (!target) return;
+  try {
+    await api(`/api/documents/${id}/supersede`, { method: "POST", body: { replacement_document_id: target.trim() } });
+    toast("Document marked as superseded");
+    loadDocuments();
+  } catch (e) { toast(e.message, true); }
+}
+
 async function deleteDoc(id, name) {
   if (!(await askAction("Delete document", `Delete '${name}' and its vectors?`, "Delete", true))) return;
   try { await api(`/api/documents/${id}`, { method: "DELETE" }); toast("Document deleted"); loadDocuments(); loadCollections(); }
@@ -926,8 +961,29 @@ async function doSearch() {
         pages: page ? [page] : null,
         top_k: +$("searchTopK").value || null,
         min_score: +$("searchMinScore").value || 0,
+        include_graph: true,
       },
     });
+    const timings = r.retrieval?.timings_ms || {};
+    const graph = r.graph || {};
+    $("searchDiagnostics").classList.remove("hidden");
+    $("searchDiagnostics").innerHTML = `
+      <div class="card-head"><h2>Query trace</h2><span class="muted small">trace <code>${esc(r.trace_id ?? "—")}</code></span></div>
+      <div class="row wrap">
+        <span>embedding <b>${Math.round(Number(timings.embedding || 0))} ms</b></span>
+        <span>dense <b>${Math.round(Number(timings.dense || 0))} ms</b></span>
+        <span>lexical <b>${Math.round(Number(timings.lexical || 0))} ms</b></span>
+        <span>rerank <b>${Math.round(Number(r.rerank?.duration_ms || 0))} ms</b></span>
+        <span>hybrid <b>${r.retrieval?.hybrid ? "yes" : "no"}</b></span>
+        <span>lexical fallback <b>${esc(r.retrieval?.lexical_skipped_reason || (r.retrieval?.hybrid ? "used" : "—"))}</b></span>
+      </div>`;
+    $("evidenceGraph").classList.remove("hidden");
+    const edges = graph.edges || [];
+    $("evidenceGraph").innerHTML = `
+      <div class="card-head"><h2>Evidence Graph</h2><span class="muted small">${graph.available === false ? "not materialized yet" : ((graph.nodes || []).length + " nodes · " + edges.length + " edges")}</span></div>
+      ${graph.available === false ? `<p class="muted">${esc(graph.reason || "Graph unavailable.")}</p>` :
+        edges.length ? `<div class="upload-list">${edges.map(e => `<div class="upload-item"><span><b>${esc(e.concept)}</b></span><span class="muted"><code>${esc(e.source)}</code> → <code>${esc(e.target)}</code>${e.query_match ? " · query match" : ""}</span></div>`).join("")}</div>` :
+        `<p class="muted">No cross-document evidence edges for this result set.</p>`}`;
     if (!r.results.length) {
       $("searchResults").innerHTML = `<div class="card"><p class="muted">${esc(r.message || "No results.")}</p></div>`;
       await loadSearchMetrics();
