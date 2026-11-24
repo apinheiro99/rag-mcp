@@ -10,8 +10,9 @@ from .lmstudio import LMStudioClient
 
 
 TITLE_NOISE = {
-    "a", "an", "and", "as", "at", "by", "edition", "for", "from", "in", "of",
-    "on", "or", "the", "to", "with", "welib", "org", "gl",
+    "a", "an", "and", "art", "as", "at", "automating", "building", "by",
+    "edition", "for", "from", "guide", "handbook", "in", "introduction", "of",
+    "on", "or", "practical", "revisited", "the", "to", "with", "welib", "org", "gl",
 }
 
 
@@ -28,7 +29,7 @@ def suggest_category(filename: str, source_path: str) -> dict[str, str]:
             continue
         if clean.casefold() not in {w.casefold() for w in meaningful}:
             meaningful.append(clean)
-        if len(meaningful) >= 4:
+        if len(meaningful) >= 2:
             break
     name = " ".join(meaningful).strip() or "New Category"
     return {
