@@ -457,14 +457,24 @@ async function pollHealth() {
       <div class="muted small">automatically resumes after restart</div></div>` : "";
 }
 function renderEvents() {
+  const all = state.events || [];
   const level = $("eventLevel")?.value || "";
-  const events = (state.events || []).filter((e) => !level || e.level === level);
+  const query = ($("eventSearch")?.value || "").trim().toLowerCase();
+  const count = (name) => all.filter((e) => (e.level || "info") === name).length;
+  if ($("eventStats")) {
+    $("eventStats").innerHTML = `
+      <div><b>${all.length}</b><span>Total</span></div>
+      <div><b>${count("info")}</b><span>Info</span></div>
+      <div class="warn"><b>${count("warning")}</b><span>Warnings</span></div>
+      <div class="bad"><b>${count("error")}</b><span>Errors</span></div>`;
+  }
+  const events = all.filter((e) => (!level || e.level === level) && (!query || String(e.message || "").toLowerCase().includes(query)));
   $("eventsLog").innerHTML = events.map((e) => `
     <div class="event ${esc(e.level)}">
-      <span class="ts">${fmtTime(e.ts)}</span>
+      <span class="ts">${fmtDate(e.ts)}</span>
       <span class="event-level">${esc((e.level || "info").toUpperCase())}</span>
       <span class="msg">${esc(e.message)}</span>
-    </div>`).join("") || `<p class="muted small">No events for this filter.</p>`;
+    </div>`).join("") || `<p class="muted small event-empty">No events match these filters.</p>`;
 }
 async function pollEvents() {
   try {

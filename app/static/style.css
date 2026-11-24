@@ -132,11 +132,23 @@ tr:hover td { background: rgba(110,168,254,.04); }
 .mini-progress { width: 90px; height: 7px; background: var(--bg); border-radius: 6px; overflow: hidden; display: inline-block; vertical-align: middle; }
 .mini-progress > div { height: 100%; background: var(--accent2); }
 
-.events { max-height: 320px; overflow-y: auto; font-size: .84rem; font-family: ui-monospace, Consolas, monospace; }
-.event { padding: 5px 8px; border-bottom: 1px solid rgba(42,53,80,.4); display: flex; gap: 10px; }
-.event .ts { color: var(--muted); white-space: nowrap; }
-.event.error .msg { color: var(--red); }
-.event.warning .msg { color: var(--yellow); }
+.event-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:4px 0 14px; }
+.event-stats>div { padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:rgba(4,10,17,.38); display:flex; align-items:baseline; gap:8px; }
+.event-stats b { font-size:1.25rem; }
+.event-stats span { color:var(--muted); font-size:.78rem; }
+.event-stats .warn b { color:var(--yellow); }
+.event-stats .bad b { color:var(--red); }
+.event-toolbar { display:flex; gap:10px; margin-bottom:10px; }
+.event-toolbar input { flex:1; min-width:220px; }
+.events { max-height:360px; overflow-y:auto; font-size:.84rem; font-family:ui-monospace,Consolas,monospace; border:1px solid var(--border); border-radius:10px; background:rgba(4,10,17,.32); }
+.event { padding:8px 10px; border-bottom:1px solid rgba(111,194,255,.12); display:grid; grid-template-columns:150px 72px minmax(0,1fr); gap:10px; align-items:start; }
+.event:last-child { border-bottom:0; }
+.event .ts { color:var(--muted); white-space:nowrap; }
+.event-level { font-weight:700; letter-spacing:.04em; }
+.event.error .event-level,.event.error .msg { color:var(--red); }
+.event.warning .event-level,.event.warning .msg { color:var(--yellow); }
+.event-empty { padding:16px; margin:0; }
+@media (max-width:820px){.event-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.event-toolbar{flex-direction:column}.event{grid-template-columns:1fr}.event .ts{white-space:normal}}
 
 .tabs-mini { display: inline-flex; background: var(--bg); border-radius: 9px; padding: 3px; border: 1px solid var(--border); margin-bottom: 12px; }
 .tabs-mini button { background: none; border: none; color: var(--muted); padding: 7px 16px; border-radius: 7px; cursor: pointer; font-size: .9rem; }

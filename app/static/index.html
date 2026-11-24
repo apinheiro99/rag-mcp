@@ -73,16 +73,18 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Recent events</h2>
-        <div class="row compact">
-          <select id="eventLevel" onchange="renderEvents()">
-            <option value="">All levels</option>
-            <option value="info">Info</option>
-            <option value="warning">Warning</option>
-            <option value="error">Error</option>
-          </select>
-          <button class="btn mini" onclick="pollEvents()">↻ Refresh</button>
-        </div>
+      <div class="card-head"><div><h2>Recent events</h2><p class="muted small">Operational events recorded by the RAG server.</p></div>
+        <button class="btn mini" onclick="pollEvents()">↻ Refresh</button>
+      </div>
+      <div id="eventStats" class="event-stats"></div>
+      <div class="event-toolbar">
+        <input type="search" id="eventSearch" placeholder="Search event messages…" oninput="renderEvents()">
+        <select id="eventLevel" onchange="renderEvents()">
+          <option value="">All levels</option>
+          <option value="info">Info</option>
+          <option value="warning">Warning</option>
+          <option value="error">Error</option>
+        </select>
       </div>
       <div id="eventsLog" class="events"></div>
     </div>
