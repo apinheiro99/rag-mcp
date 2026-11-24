@@ -41,3 +41,11 @@ def test_taxonomy_migration_runs_as_package_module_not_loose_script():
     script = Path("scripts/deploy-prod.sh").read_text()
     assert "python -m app.migrate_library_taxonomy" in script
     assert "python /srv/rag/scripts/migrate_library_taxonomy.py" not in script
+
+
+def test_taxonomy_migration_refreshes_postgres_planner_statistics():
+    migration = Path("app/migrate_library_taxonomy.py").read_text()
+    assert "refresh_planner_statistics" in migration
+    assert '("collections", "documents", "chunks")' in migration
+    assert "ANALYZE {table}" in migration
+    assert "await refresh_planner_statistics(db)" in migration
