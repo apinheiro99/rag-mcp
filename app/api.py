@@ -96,7 +96,6 @@ async def health():
         "build": {
             "version": env.build_version,
             "commit": env.build_commit,
-            "environment": env.runtime_environment,
         },
     }
 
@@ -472,12 +471,24 @@ async def _gc_blobs(stored_paths: list[str]) -> None:
 
 
 @router.get("/documents")
-async def list_documents(collection_id: str | None = None, status: str | None = None,
-                         q: str | None = None, limit: int = Query(100, le=500),
-                         offset: int = 0):
+async def list_documents(collection_id: str | None = None,
+                         collection_ids: list[str] = Query(default=[]),
+                         exclude_collection_ids: list[str] = Query(default=[]),
+                         status: str | None = None, q: str | None = None,
+                         limit: int = Query(100, le=500), offset: int = 0):
     where, params = [], []
+    include_ids = [_uuid(x) for x in collection_ids]
+    exclude_ids = [_uuid(x) for x in exclude_collection_ids]
     if collection_id:
-        where.append("d.collection_id=%s"); params.append(_uuid(collection_id))
+        include_ids.append(_uuid(collection_id))
+    if include_ids:
+        placeholders = ",".join(["%s"] * len(include_ids))
+        where.append(f"d.collection_id IN ({placeholders})")
+        params.extend(include_ids)
+    if exclude_ids:
+        placeholders = ",".join(["%s"] * len(exclude_ids))
+        where.append(f"d.collection_id NOT IN ({placeholders})")
+        params.extend(exclude_ids)
     if status:
         where.append("d.status=%s"); params.append(status)
     if q:

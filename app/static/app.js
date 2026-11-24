@@ -16,6 +16,7 @@ let state = {
   mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
   pollTick: 0, lastActive: 0, uploading: false,
   selectedDocs: new Set(), currentDocIds: [], docsHasPendingAI: false, activeTab: "dashboard",
+  docCollectionFilters: new Map(),
 };
 
 /* ---------------- infra ---------------- */
@@ -90,10 +91,7 @@ function fillCollectionSelects() {
   imp.innerHTML = autoOption + (opts || `<option value="">— create a collection —</option>`);
   if (prev === "__auto__" && state.settings.llm_model) imp.value = prev;
   else if (prev && state.collections.some((c) => c.id === prev)) imp.value = prev;
-  const filt = $("docFilterCollection");
-  const prevF = filt.value;
-  filt.innerHTML = `<option value="">All collections</option>` + opts;
-  filt.value = prevF;
+  renderDocCollectionFilter();
 }
 function renderCollections() {
   $("collectionsGrid").innerHTML = state.collections.map((c) => `
@@ -440,8 +438,7 @@ async function pollHealth() {
   let h = null;
   try { h = await api("/api/health"); } catch { /* offline */ }
   const version = h?.build?.version || "dev";
-  const envName = h?.build?.environment || "dev";
-  if ($("versionText")) $("versionText").textContent = `${version} · ${envName.toUpperCase()}`;
+  if ($("versionText")) $("versionText").textContent = version;
   if ($("sidebarVersion")) $("sidebarVersion").classList.toggle("offline", !h);
   const status = document.querySelector(".app-header-status");
   if (status) status.classList.toggle("offline", !h || h.status !== "ok");
@@ -587,6 +584,44 @@ async function deleteSource(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+function toggleDocCollectionFilter() {
+  const panel = $("docCollectionFilterPanel");
+  if (panel) panel.classList.toggle("hidden");
+}
+function cycleDocCollectionFilter(id) {
+  const current = state.docCollectionFilters.get(id) || "neutral";
+  const next = current === "neutral" ? "include" : current === "include" ? "exclude" : "neutral";
+  if (next === "neutral") state.docCollectionFilters.delete(id);
+  else state.docCollectionFilters.set(id, next);
+  state.docsOffset = 0;
+  state.selectedDocs.clear();
+  renderDocCollectionFilter();
+  loadDocuments();
+}
+function clearDocCollectionFilters() {
+  state.docCollectionFilters.clear();
+  state.docsOffset = 0;
+  state.selectedDocs.clear();
+  renderDocCollectionFilter();
+  loadDocuments();
+}
+function renderDocCollectionFilter() {
+  const panel = $("docCollectionFilterPanel");
+  const btn = $("docCollectionFilterBtn");
+  if (!panel || !btn) return;
+  const active = [...state.docCollectionFilters.values()].filter((v) => v !== "neutral").length;
+  btn.textContent = active ? `Collections · ${active}` : "Collections";
+  panel.innerHTML = `<div class="collection-filter-head"><span>Click to cycle: include → exclude → neutral</span><button class="btn mini" type="button" onclick="clearDocCollectionFilters()">Clear</button></div>` +
+    state.collections.map((c) => {
+      const mode = state.docCollectionFilters.get(c.id) || "neutral";
+      const mark = mode === "include" ? "+" : mode === "exclude" ? "−" : "•";
+      return `<button type="button" class="collection-filter-chip ${mode}" onclick="cycleDocCollectionFilter('${c.id}')"><span>${mark}</span>${esc(c.name)}</button>`;
+    }).join("");
+}
+function selectedDocCollectionFilterIds(mode) {
+  return [...state.docCollectionFilters.entries()].filter(([, value]) => value === mode).map(([id]) => id);
+}
+
 /* ---------------- documents ---------------- */
 let docsDebounce = null;
 function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout(loadDocuments, 350); }
@@ -640,15 +675,10 @@ async function bulkClassifySelected() {
   if (!ids.length) return;
   await queueBulkClassification({ document_ids: ids }, "the selection");
 }
-async function bulkClassifyFiltered() {
-  const collectionId = $("docFilterCollection").value || null;
-  const q = $("docSearch").value.trim() || null;
-  const scope = collectionId || q ? "the current filters" : "the entire indexed library";
-  await queueBulkClassification({ all_filtered: true, collection_id: collectionId, q }, scope);
-}
 async function loadDocuments() {
   const params = new URLSearchParams({ limit: state.docsLimit, offset: state.docsOffset });
-  if ($("docFilterCollection").value) params.set("collection_id", $("docFilterCollection").value);
+  for (const id of selectedDocCollectionFilterIds("include")) params.append("collection_ids", id);
+  for (const id of selectedDocCollectionFilterIds("exclude")) params.append("exclude_collection_ids", id);
   if ($("docFilterStatus").value) params.set("status", $("docFilterStatus").value);
   if ($("docSearch").value) params.set("q", $("docSearch").value);
   try {

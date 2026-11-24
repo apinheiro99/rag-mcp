@@ -53,7 +53,6 @@ class Env:
         self.log_level = _env("LOG_LEVEL", "INFO").upper()
         self.build_version = _env("RAG_BUILD_VERSION", "dev")
         self.build_commit = _env("RAG_BUILD_COMMIT", "")
-        self.runtime_environment = _env("RAG_ENVIRONMENT", "dev")
         self.lmstudio_url_default = _env("LMSTUDIO_URL", "http://127.0.0.1:1234").rstrip("/")
 
     @property

@@ -10,8 +10,7 @@
 <body>
 <aside class="sidebar">
   <div class="brand">
-    <img src="/static/rag-logo.png" alt="RAG Server">
-    <div class="brand-title"><strong>RAG</strong><span>Server</span></div>
+    <img src="/static/rag-logo.png" alt="RAG MCP">
   </div>
   <nav id="nav">
     <button data-tab="dashboard" class="active">Dashboard</button>
@@ -177,7 +176,8 @@
       <div class="card-head">
         <h2>Documents</h2>
         <div class="row">
-          <select id="docFilterCollection" onchange="loadDocuments()"><option value="">All collections</option></select>
+          <button class="btn" id="docCollectionFilterBtn" type="button" onclick="toggleDocCollectionFilter()">Collections</button>
+          <div id="docCollectionFilterPanel" class="collection-filter-panel hidden"></div>
           <select id="docFilterStatus" onchange="loadDocuments()">
             <option value="">All statuses</option>
             <option value="staged">Awaiting configuration</option>
@@ -198,7 +198,6 @@
         <div class="row">
           <span id="docsSelectedCount" class="muted small">0 selected</span>
           <button class="btn" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>Reclassify selected</button>
-          <button class="btn" onclick="bulkClassifyFiltered()">Reclassify all filtered</button>
         </div>
       </div>
       <div id="docsTable"></div>
@@ -213,30 +212,33 @@
   </section>
 
   <!-- ==================== SEARCH ==================== -->
-  <section id="tab-search" class="tab">
-    <div class="card">
-      <div class="card-head"><h2>Semantic search</h2></div>
-      <div class="row">
+  <section id="tab-search" class="tab search-tab">
+    <div class="card search-panel">
+      <div class="search-panel-head">
+        <div><span class="eyebrow">SEMANTIC RETRIEVAL</span><h2>Search the knowledge base</h2></div>
+      </div>
+      <div class="search-query-row">
         <input type="text" id="searchQuery" placeholder="Ask the knowledge base…" class="grow"
                onkeydown="if(event.key==='Enter')doSearch()">
-        <button class="btn primary" onclick="doSearch()">Search</button>
+        <button class="btn primary search-submit" onclick="doSearch()">Search</button>
       </div>
-      <div class="row wrap" id="searchCollections"></div>
-      <div class="form-grid">
+      <div class="search-collections" id="searchCollections"></div>
+      <div class="search-advanced-label">Advanced filters</div>
+      <div class="form-grid search-filter-grid">
         <label>document_id <input type="text" id="searchDocumentId" placeholder="optional UUID"></label>
         <label>author <input type="text" id="searchAuthor" placeholder="partial match"></label>
         <label>source_path <input type="text" id="searchSourcePath" placeholder="exact path"></label>
         <label>chapter <input type="text" id="searchChapter" placeholder="exact chapter"></label>
         <label>page <input type="number" id="searchPage" min="1" placeholder="optional"></label>
       </div>
-      <div class="row">
-        <label>top_k <input type="number" id="searchTopK" value="8" min="1" max="50" style="width:70px"></label>
-        <label>minimum score <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05" style="width:80px"></label>
+      <div class="search-tuning-row">
+        <label>top_k <input type="number" id="searchTopK" value="8" min="1" max="50"></label>
+        <label>minimum score <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05"></label>
         <span class="muted small">No collection filter = search every collection with Default search ON.</span>
       </div>
     </div>
-    <div id="searchResults"></div>
-    <div class="card">
+    <div id="searchResults" class="search-results"></div>
+    <div class="card search-observability">
       <div class="card-head">
         <h2>Retrieval observability</h2>
         <button class="btn" onclick="loadSearchMetrics()">↻ Refresh</button>
