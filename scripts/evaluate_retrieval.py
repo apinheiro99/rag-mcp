@@ -33,6 +33,21 @@ async def main(args):
     async with streamablehttp_client(args.url, headers=({"Authorization": f"Bearer {args.bearer_token}"} if args.bearer_token else None)) as (r,w,_):
         async with ClientSession(r,w) as session:
             await session.initialize()
+            for warmup_round in range(args.warmup_rounds):
+                warmup_started = time.perf_counter()
+                for case in cases:
+                    response = await session.call_tool(
+                        "rag_search", {"query": case["query"], "top_k": args.k}
+                    )
+                    if response.isError:
+                        data = response.structuredContent or json.loads(response.content[0].text)
+                        raise RuntimeError(str(data))
+                print(json.dumps({
+                    "warmup_round": warmup_round + 1,
+                    "cases": len(cases),
+                    "ms": round((time.perf_counter() - warmup_started) * 1000, 2),
+                }), flush=True)
+
             for case in cases:
                 started = time.perf_counter()
                 response = await session.call_tool("rag_search", {"query":case["query"], "top_k":args.k})
@@ -76,5 +91,6 @@ if __name__ == "__main__":
     parser.add_argument("--min-recall",type=float,default=0.80)
     parser.add_argument("--min-mrr",type=float,default=0.60)
     parser.add_argument("--max-avg-ms",type=float,default=1500.0)
+    parser.add_argument("--warmup-rounds",type=int,default=0)
     parser.add_argument("--bearer-token",default=None)
     asyncio.run(main(parser.parse_args()))

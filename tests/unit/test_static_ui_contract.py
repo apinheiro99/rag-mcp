@@ -34,7 +34,7 @@ def test_primary_navigation_is_english():
 def test_import_exposes_automatic_book_classification_without_staging_collection():
     assert 'Automatic classification' in JS
     assert '__auto__' in JS
-    assert 'Computer Books' in JS
+    assert 'Informática' in JS
     assert 'staging_collection_name' not in JS
 
 

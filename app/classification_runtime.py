@@ -49,7 +49,7 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         if not doc:
             raise ValueError("document not found")
         if doc["collection"] != COMPUTER_BOOKS:
-            raise ValueError("automatic category classification applies only to Computer Books")
+            raise ValueError("automatic category classification applies only to Informática")
         cur = await conn.execute(
             """SELECT cat.id, cat.name, cat.description,
                       (SELECT count(*) FROM documents x WHERE x.category_id=cat.id) AS doc_count,
@@ -149,7 +149,7 @@ async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dic
                 result["auto_apply_reason"] = "document is not ready"
                 return result
             if doc["collection"] != COMPUTER_BOOKS:
-                result["auto_apply_reason"] = "document is not in Computer Books"
+                result["auto_apply_reason"] = "document is not in Informática"
                 return result
 
             target = await (

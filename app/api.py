@@ -67,6 +67,7 @@ async def health():
         },
         "source_worker": {
             "running": source_worker._task is not None and not source_worker._task.done(),
+            "current_source": source_worker.current_source,
         },
         "graph_worker": {
             "running": graph_worker._task is not None and not graph_worker._task.done(),
@@ -214,7 +215,7 @@ async def create_category(col_id: str, body: CategoryCreate):
         if not col:
             raise HTTPException(404, "collection not found")
         if col["name"] != COMPUTER_BOOKS:
-            raise HTTPException(409, "categories are supported only inside Computer Books")
+            raise HTTPException(409, "categories are supported only inside Informática")
         cur = await conn.execute(
             """INSERT INTO categories(id,collection_id,name,description)
                VALUES (%s,%s,%s,%s)
@@ -266,7 +267,7 @@ async def delete_category(category_id: str):
 async def create_collection(body: CollectionCreate):
     raise HTTPException(
         409,
-        "top-level collection topology is fixed; create a category inside Computer Books instead",
+        "top-level collection topology is fixed; create a category inside Informática instead",
     )
 
 
@@ -498,7 +499,7 @@ AUTO_COLLECTION_SENTINEL = "__auto__"
 
 
 async def _ensure_auto_inbox() -> dict[str, Any]:
-    # Automatic book imports are indexed directly into Computer Books.
+    # Automatic book imports are indexed directly into Informática.
     # Category remains NULL until the post-ingest classifier assigns one.
     return await computer_books_collection(db, settings)
 
@@ -862,7 +863,7 @@ async def classification_decision(doc_id: str, body: ClassificationDecision):
             if not doc:
                 raise HTTPException(404, "document not found")
             if doc["collection"] != COMPUTER_BOOKS:
-                raise HTTPException(409, "category decisions apply only to Computer Books")
+                raise HTTPException(409, "category decisions apply only to Informática")
             suggestion = doc.get("auto_suggestion") or {}
             proposed = suggestion.get("proposed_collection") or suggestion.get("proposed_category")
             if not proposed:

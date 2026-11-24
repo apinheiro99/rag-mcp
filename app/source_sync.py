@@ -122,7 +122,7 @@ async def ensure_repository_corpus() -> dict[str, Any] | None:
                  interval_seconds=EXCLUDED.interval_seconds,
                  exclude_patterns=EXCLUDED.exclude_patterns,
                  source_type='repository',
-                 next_sync_at=now(),
+                 next_sync_at=coalesce(collection_sources.next_sync_at, now()),
                  updated_at=now()
                RETURNING *""",
             (str(uuid.uuid4()), collection["id"], str(root), interval, json.dumps(patterns)),
@@ -283,6 +283,7 @@ class SourceSyncWorker:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self.current_source: str | None = None
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -299,6 +300,7 @@ class SourceSyncWorker:
             except asyncio.CancelledError:
                 pass
         self._task = None
+        self.current_source = None
 
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -315,6 +317,7 @@ class SourceSyncWorker:
                     row = await cur.fetchone()
                 if row:
                     sid = str(row["id"])
+                    self.current_source = sid
                     try:
                         await sync_collection_source(sid)
                     except Exception as e:
@@ -326,6 +329,8 @@ class SourceSyncWorker:
                                        updated_at=now() WHERE id=%s""",
                                 (str(e), sid),
                             )
+                    finally:
+                        self.current_source = None
                     continue
                 await asyncio.sleep(poll)
             except asyncio.CancelledError:
