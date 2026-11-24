@@ -3,7 +3,7 @@ services:
     container_name: ${RAG_TUNNEL_CONTAINER_NAME:-rag-mcp-tunnel}
     image: ${RAG_TUNNEL_BASE_IMAGE:-node:24-bookworm-slim}
     restart: unless-stopped
-    user: "${RAG_TUNNEL_UID:-1000}:${RAG_TUNNEL_GID:-1000}"
+    user: "1000:1000"
     depends_on:
       app:
         condition: service_started
