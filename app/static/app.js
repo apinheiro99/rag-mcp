@@ -47,11 +47,22 @@ const fmtBytes = (n) => { if (!n && n !== 0) return "—"; const u = ["B", "KB",
 const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
 
+const TAB_META = {
+  dashboard: ["Dashboard", "RAG Server overview, system health, and retrieval pipeline at a glance."],
+  import: ["Import", "Add documents and route them into the knowledge base."],
+  documents: ["Documents", "Inspect, filter, classify, and manage indexed documents."],
+  search: ["Search", "Run semantic retrieval across the selected knowledge collections."],
+  settings: ["Settings", "Configure models, ingestion defaults, and runtime behavior."],
+};
+
 function showTab(name, { persist = true } = {}) {
   const valid = ["dashboard", "import", "documents", "search", "settings"];
   if (!valid.includes(name)) name = "dashboard";
   state.activeTab = name;
   if (persist) localStorage.setItem("rag_active_tab", name);
+  const meta = TAB_META[name] || TAB_META.dashboard;
+  if ($("pageTitle")) $("pageTitle").textContent = meta[0];
+  if ($("pageSubtitle")) $("pageSubtitle").textContent = meta[1];
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   if (name === "documents") loadDocuments();
