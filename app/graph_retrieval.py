@@ -180,6 +180,9 @@ class GraphWorker:
     async def _run(self) -> None:
         while not self._stop.is_set():
             try:
+                if await settings.workers_paused():
+                    await asyncio.sleep(await self._poll_interval())
+                    continue
                 document_id = await self._next_stale_document()
                 if not document_id:
                     await asyncio.sleep(await self._poll_interval())

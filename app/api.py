@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import autoconfig
 from .chunking import ConfigError, validate_ingest_config
-from .classification_runtime import apply_ready_classification, classification_worker, classify_document_runtime
+from .classification_runtime import classification_worker, classify_ready_document
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
@@ -933,66 +933,15 @@ async def classify_document_route(doc_id: str, body: ClassifyDocumentRequest):
     if not model:
         raise HTTPException(400, "select an embedding model before classifying")
     try:
-        result = await classify_document_runtime(doc_id, model)
+        return await classify_ready_document(doc_id, model)
     except ExtractionError as e:
         raise HTTPException(422, f"could not extract document sample: {e}") from e
     except LMStudioError as e:
-        raise HTTPException(503, f"embedding model unavailable: {e}") from e
+        raise HTTPException(503, f"classification models unavailable: {e}") from e
     except ValueError as e:
         raise HTTPException(502, f"invalid classifier response: {e}") from e
-    result = await apply_ready_classification(doc_id, result)
-    if not result.get("auto_applied"):
-        async with db.pool.connection() as conn:
-            await conn.execute(
-                """UPDATE documents SET auto_suggestion=%s::jsonb,updated_at=now()
-                   WHERE id=%s""",
-                (json.dumps(result), doc_id),
-            )
-    return result
 
 
-
-class ClassificationDecision(BaseModel):
-    accept: bool
-
-
-@router.post("/documents/{doc_id}/classification-decision")
-async def classification_decision(doc_id: str, body: ClassificationDecision):
-    doc_id = _uuid(doc_id)
-    async with db.pool.connection() as conn:
-        async with conn.transaction():
-            doc = await (
-                await conn.execute(
-                    """SELECT d.id,d.filename,d.auto_suggestion,d.collection_id,c.name AS collection
-                       FROM documents d JOIN collections c ON c.id=d.collection_id
-                       WHERE d.id=%s FOR UPDATE""",
-                    (doc_id,),
-                )
-            ).fetchone()
-            if not doc:
-                raise HTTPException(404, "document not found")
-            if doc["collection"] != COMPUTER_BOOKS:
-                raise HTTPException(409, "category decisions apply only to Computer Books")
-            suggestion = doc.get("auto_suggestion") or {}
-            proposed = suggestion.get("proposed_collection") or suggestion.get("proposed_category")
-            if not proposed:
-                raise HTTPException(409, "document has no pending category proposal")
-
-            if body.accept:
-                raise HTTPException(
-                    409,
-                    "automatic category creation is disabled; create categories manually in Settings",
-                )
-
-            suggestion["decision"] = "rejected"
-            suggestion["auto_applied"] = False
-            await conn.execute(
-                """UPDATE documents SET category_id=NULL,auto_suggestion=%s::jsonb,
-                       meta=(coalesce(meta,'{}'::jsonb)-'auto_classify'),updated_at=now()
-                   WHERE id=%s""",
-                (json.dumps(suggestion), doc_id),
-            )
-            return {"decision": "rejected", "category": None}
 
 
 class BulkClassifyRequest(BaseModel):
@@ -1054,44 +1003,6 @@ async def classify_documents_bulk(body: BulkClassifyRequest):
 
 
 
-class DocSupersede(BaseModel):
-    replacement_document_id: str | None = None
-
-
-@router.post("/documents/{doc_id}/supersede")
-async def supersede_document(doc_id: str, body: DocSupersede):
-    doc_id = _uuid(doc_id)
-    replacement = _uuid(body.replacement_document_id) if body.replacement_document_id else None
-    if replacement == doc_id:
-        raise HTTPException(400, "document cannot supersede itself")
-    async with db.pool.connection() as conn:
-        cur = await conn.execute("SELECT id, filename FROM documents WHERE id=%s", (doc_id,))
-        doc = await cur.fetchone()
-        if not doc:
-            raise HTTPException(404, "document not found")
-        replacement_doc = None
-        if replacement:
-            cur = await conn.execute(
-                "SELECT id, filename, status FROM documents WHERE id=%s", (replacement,)
-            )
-            replacement_doc = await cur.fetchone()
-            if not replacement_doc:
-                raise HTTPException(404, "replacement document not found")
-            if replacement_doc["status"] != "ready":
-                raise HTTPException(400, "replacement document must be ready")
-        await conn.execute(
-            "UPDATE documents SET superseded_by=%s, updated_at=now() WHERE id=%s",
-            (replacement, doc_id),
-        )
-    await db.event(
-        f"Canonicality: {doc['filename']} "
-        + (f"superseded by {replacement_doc['filename']}" if replacement_doc else "restored as active")
-    )
-    return {
-        "document_id": doc_id,
-        "superseded_by": replacement,
-        "replacement_filename": replacement_doc["filename"] if replacement_doc else None,
-    }
 
 class DocMove(BaseModel):
     target_collection_id: str
@@ -1361,6 +1272,20 @@ async def resume_ingest():
     await settings.set_paused(False)
     await db.event("Ingestão retomada pelo usuário")
     return {"paused": False}
+
+
+@router.post("/runtime/deploy-pause")
+async def pause_for_deploy():
+    await settings.set_deployment_paused(True)
+    await db.event("Background workers paused for deploy validation", "warning")
+    return {"deployment_paused": True}
+
+
+@router.post("/runtime/deploy-resume")
+async def resume_after_deploy():
+    await settings.set_deployment_paused(False)
+    await db.event("Background workers resumed after deploy validation")
+    return {"deployment_paused": False}
 
 
 @router.get("/ingest/status")

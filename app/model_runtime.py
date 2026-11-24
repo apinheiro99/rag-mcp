@@ -101,8 +101,10 @@ class ModelRuntimeScheduler:
         self,
         client: Any,
         requirements: list[ModelRequirement] | tuple[ModelRequirement, ...],
+        *,
+        exact: bool = False,
     ) -> None:
-        """Ensure required models are loaded without serializing caller work."""
+        """Ensure required models are loaded; optionally evict models outside the profile."""
         async with self._residency_lock:
             loaded = await client.list_models()
             loaded_ids = {
@@ -110,6 +112,11 @@ class ModelRuntimeScheduler:
                 for item in loaded
                 if item.get("state") == "loaded" and item.get("id")
             }
+            desired = {req.model for req in requirements if req.model}
+            if exact:
+                for model in sorted(loaded_ids - desired):
+                    await client.unload_model(model)
+                    loaded_ids.discard(model)
             for req in requirements:
                 if req.model and req.model not in loaded_ids:
                     await client.ensure_model_loaded(req.model, context_length=req.context_length)

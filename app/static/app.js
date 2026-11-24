@@ -843,7 +843,7 @@ async function loadDocuments(){
         <td><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></td>
         <td>${esc(d.collection)}</td>
         <td>${esc(d.category || "Uncategorized")}</td>
-        <td>${badge(d.status)}${d.superseded_by ? `<div class="docpath" style="color:var(--yellow)">superseded → ${esc(d.superseded_by)}</div>` : ""}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
+        <td>${badge(d.status)}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
         <td>${classificationSummary(d)}</td>
         <td>${d.chunks_total ? `<span class="mini-progress"><div style="width:${pct}%"></div></span> <span class="small muted">${d.chunks_embedded}/${d.chunks_total}</span>` : "—"}</td>
         <td class="small muted">${fmtBytes(d.size_bytes)}</td>
@@ -855,7 +855,6 @@ async function loadDocuments(){
           <button class="btn mini" onclick="classifyDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Classify</button>
           <button class="btn mini" onclick="openMoveDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, '${d.collection_id}')">Move</button>
           <button class="btn mini" onclick="reindexDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Reindex</button>
-          <button class="btn mini" onclick="openSupersedeDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, ${d.superseded_by ? esc(JSON.stringify(d.superseded_by)) : "null"})">${d.superseded_by ? "Restore" : "Supersede"}</button>
           <button class="btn mini danger" onclick="deleteDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Delete</button>
         </div></td>
       </tr>`;
@@ -910,35 +909,14 @@ async function classifyDoc(id, name) {
   try {
     toast(`Classifying '${name}'…`);
     const r = await api(`/api/documents/${id}/classify`, { method: "POST", body: {} });
-    const confidence = Math.round((r.confidence || 0) * 100);
     const existing = r.existing_category || r.existing_collection;
-    openModal(`Categorize '${esc(name)}'`, existing
-      ? `<p>Best existing category: <b>${esc(existing)}</b></p><p><b>Confidence:</b> ${confidence}%</p><p class="muted">${esc(r.rationale || "")}</p>`
-      : `<p><b>No existing category matched.</b></p><p class="muted">Create or rename categories in Settings, then run classification again.</p>`);
+    if (existing && r.auto_applied) {
+      toast(`Categorized as ${existing}`);
+      await loadDocuments();
+      return;
+    }
     await loadDocuments();
-  } catch (e) { toast(e.message, true); }
-}
-
-async function openSupersedeDoc(id, name, supersededBy) {
-  if (supersededBy) {
-    if (!(await askAction("Restore document", `Restore '${name}' to normal retrieval?`, "Restore"))) return;
-    try {
-      await api(`/api/documents/${id}/supersede`, { method: "POST", body: { replacement_document_id: null } });
-      toast("Document restored to normal retrieval");
-      loadDocuments();
-    } catch (e) { toast(e.message, true); }
-    return;
-  }
-  const target = await askAction(
-    "Supersede document",
-    `Enter the replacement document UUID. '${name}' will remain stored but disappear from normal retrieval.`,
-    "Supersede", false, ""
-  );
-  if (!target) return;
-  try {
-    await api(`/api/documents/${id}/supersede`, { method: "POST", body: { replacement_document_id: target.trim() } });
-    toast("Document marked as superseded");
-    loadDocuments();
+    openModal("Category not found", `<p>No existing category matched <b>${esc(name)}</b>.</p><p class="muted">Create a category in Settings, then classify again.</p>`);
   } catch (e) { toast(e.message, true); }
 }
 

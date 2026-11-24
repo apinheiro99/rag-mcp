@@ -309,6 +309,9 @@ class SourceSyncWorker:
                 eff = await settings.effective()
                 source_cfg = eff["sources"]
                 poll = max(1, int(source_cfg["poll_interval_seconds"]))
+                if await settings.workers_paused():
+                    await asyncio.sleep(poll)
+                    continue
                 async with db.pool.connection() as conn:
                     cur = await conn.execute(
                         """SELECT id FROM collection_sources

@@ -6,13 +6,14 @@ import json
 import logging
 from typing import Any
 
-from .collection_classifier import classify_document, classify_existing_category_with_llm
+from .collection_classifier import classify_document, collection_profile, representative_sample
 from .config import env
 from .db import db
 from .extraction import ExtractedDoc, ExtractionError, extract
 from .ingest import extraction_cache_path
 from .library_taxonomy import COMPUTER_BOOKS
 from .lmstudio import LMStudioError
+from .rerank_runtime import rerank_with_runtime
 from .settings import settings
 
 log = logging.getLogger("rag.classification_runtime")
@@ -83,31 +84,56 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
     if (
         collections
         and not result.get("existing_collection")
-        and cfg.get("llm_fallback_enabled", True)
+        and cfg.get("rerank_fallback_enabled", True)
     ):
-        llm_model = await settings.get("llm_model")
-        if llm_model:
-            try:
-                choice = await classify_existing_category_with_llm(
-                    client,
-                    llm_model,
-                    filename=doc["filename"],
-                    text=extracted.full_text(),
-                    categories=collections,
-                    sample_chars=eff["auto"]["sample_chars"],
-                    timeout=eff["auto"]["request_timeout"],
+        score_map = {
+            str(item.get("collection")): float(item.get("score", 0.0))
+            for item in result.get("candidates", [])
+        }
+        candidates = [
+            {
+                "chunk_id": str(category["id"]),
+                "score": score_map.get(str(category["name"]), 0.0),
+                "content": collection_profile(category),
+                "category_name": str(category["name"]),
+            }
+            for category in collections
+        ]
+        query = (
+            f"Filename: {doc['filename']}\n\n"
+            + representative_sample(extracted.full_text(), eff["auto"]["sample_chars"])
+        )
+        rerank_cfg = {
+            **eff["rerank"],
+            "qwen_instruction": (
+                "Given a document and a candidate category description, determine whether "
+                "the document belongs to that category."
+            ),
+        }
+        ranked, _, rerank_error = await rerank_with_runtime(
+            query, candidates, rerank_cfg, client, [model]
+        )
+        if ranked and not rerank_error:
+            best = ranked[0]
+            second = ranked[1]["rerank_score"] if len(ranked) > 1 else 0.0
+            best_score = float(best.get("rerank_score", 0.0))
+            margin = best_score - float(second)
+            matched = (
+                best_score >= float(cfg.get("rerank_match_threshold", 0.55))
+                and (
+                    len(ranked) == 1
+                    or margin >= float(cfg.get("rerank_margin_threshold", 0.05))
                 )
-                if choice.get("category"):
-                    result["existing_collection"] = choice["category"]
-                    result["confidence"] = choice["confidence"]
-                    result["rationale"] = (
-                        f"LLM fallback selected existing category: {choice['category']}. "
-                        + choice.get("rationale", "")
-                    ).strip()
-                    result["source"] = "llm_fallback"
-                    result["fallback_model"] = llm_model
-            except Exception as exc:
-                log.warning("existing-category LLM fallback failed: %s", exc)
+            )
+            if matched:
+                result["existing_collection"] = best["category_name"]
+                result["confidence"] = round(best_score, 4)
+                result["rationale"] = (
+                    f"Reranker selected existing category: {best['category_name']} "
+                    f"(score={best_score:.4f}, margin={margin:.4f})."
+                )
+                result["source"] = "reranker_fallback"
+                result["fallback_model"] = await settings.get("reranker_model")
 
     if not result.get("existing_collection"):
         result["proposed_collection"] = None
@@ -197,8 +223,8 @@ async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dic
     return result
 
 
-async def classify_ready_document(doc_id: str) -> dict[str, Any]:
-    result = await classify_document_runtime(doc_id)
+async def classify_ready_document(doc_id: str, model: str | None = None) -> dict[str, Any]:
+    result = await classify_document_runtime(doc_id, model)
     result = await apply_ready_classification(doc_id, result)
     if not result.get("auto_applied"):
         async with db.pool.connection() as conn:
@@ -300,7 +326,7 @@ class ClassificationWorker:
             eff = await settings.effective()
             cfg = eff["classification"]
             poll = max(1, float(cfg["poll_interval_seconds"]))
-            if not cfg.get("enabled", True):
+            if await settings.workers_paused() or not cfg.get("enabled", True):
                 await asyncio.sleep(poll)
                 continue
             doc = await self._next_document()

@@ -520,7 +520,7 @@ class DocumentIngestor:
         log.info("doc %s: pausado no meio dos embeddings (progresso salvo)", doc_id)
 
     async def _should_pause(self) -> bool:
-        return self.stop_event.is_set() or await settings.paused()
+        return self.stop_event.is_set() or await settings.workers_paused()
 
     async def _vector_table(self, dim: int) -> tuple[str, str]:
         if dim not in self._vector_tables:
@@ -594,7 +594,7 @@ class IngestWorker:
 
         while not self._stop.is_set():
             try:
-                if await settings.paused():
+                if await settings.workers_paused():
                     await asyncio.sleep(poll_interval)
                     continue
 

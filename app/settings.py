@@ -17,6 +17,7 @@ log = logging.getLogger("rag.settings")
 
 SETTINGS_KEY = "runtime"
 PAUSE_KEY = "worker_paused"
+DEPLOY_PAUSE_KEY = "deploy_worker_paused"
 
 
 class SettingsService:
@@ -83,6 +84,15 @@ class SettingsService:
 
     async def set_paused(self, paused: bool) -> None:
         await db.set_setting(PAUSE_KEY, bool(paused))
+
+    async def deployment_paused(self) -> bool:
+        return bool(await db.get_setting(DEPLOY_PAUSE_KEY, False))
+
+    async def set_deployment_paused(self, paused: bool) -> None:
+        await db.set_setting(DEPLOY_PAUSE_KEY, bool(paused))
+
+    async def workers_paused(self) -> bool:
+        return await self.paused() or await self.deployment_paused()
 
 
 settings = SettingsService()

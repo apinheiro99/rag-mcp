@@ -1307,11 +1307,14 @@ async def test_auto_category_applies_only_above_configured_confidence(live_db, m
 
 
 @pytest.mark.asyncio
-async def test_classification_runtime_uses_embedding_model_and_categories(live_db, monkeypatch):
+async def test_classification_runtime_uses_embedding_then_reranker_for_existing_categories(
+    live_db, monkeypatch
+):
     import app.classification_runtime as classification_module
 
     books_id = uuid.uuid4()
     doc_id = uuid.uuid4()
+    category_id = uuid.uuid4()
     async with live_db.pool.connection() as conn:
         await conn.execute(
             """INSERT INTO collections(
@@ -1327,17 +1330,26 @@ async def test_classification_runtime_uses_embedding_model_and_categories(live_d
         books_id = books["id"]
         await conn.execute(
             """INSERT INTO categories(id,collection_id,name,description)
-               VALUES (%s,%s,'Software Testing','Testing books')
-               ON CONFLICT (collection_id,name) DO NOTHING""",
-            (uuid.uuid4(), books_id),
+               VALUES (%s,%s,'Computing','Broad computer science and software books')
+               ON CONFLICT (collection_id,name) DO UPDATE SET description=EXCLUDED.description""",
+            (category_id, books_id),
         )
+        category = await (
+            await conn.execute(
+                "SELECT id FROM categories WHERE collection_id=%s AND name='Computing'",
+                (books_id,),
+            )
+        ).fetchone()
+        category_id = category["id"]
         await conn.execute(
             """INSERT INTO documents(
                    id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
-               VALUES (%s,%s,'book.txt','book.txt','blobs/book',%s,10,'ready')""",
-            (doc_id, books_id, "c" * 64),
+               VALUES (%s,%s,'Designing Web Interfaces.epub','Designing Web Interfaces.epub',
+                       'blobs/designing-web',%s,10,'ready')""",
+            (doc_id, books_id, uuid.uuid4().hex),
         )
 
+    requested_settings = []
     captured = {}
 
     class FakeClient:
@@ -1347,50 +1359,88 @@ async def test_classification_runtime_uses_embedding_model_and_categories(live_d
         async def effective(self):
             return {
                 "auto": {"sample_chars": 3500, "request_timeout": 240},
+                "rerank": {
+                    "enabled": True,
+                    "context_length": 8192,
+                    "fail_open": False,
+                },
                 "classification": {
                     "confidence_threshold": 0.55,
                     "auto_apply_existing": True,
                     "embedding_match_threshold": 0.55,
                     "embedding_margin_threshold": 0.03,
+                    "rerank_fallback_enabled": True,
+                    "rerank_match_threshold": 0.55,
+                    "rerank_margin_threshold": 0.05,
                 },
             }
         async def get(self, key, default=None):
-            return "text-embedding-qwen3-embedding-8b" if key == "embedding_model" else default
+            requested_settings.append(key)
+            if key == "embedding_model":
+                return "text-embedding-qwen3-embedding-8b"
+            if key == "reranker_model":
+                return "qwen3-reranker-4b"
+            if key == "llm_model":
+                raise AssertionError("classification must not request llm_model")
+            return default
         async def lmstudio_client(self, **kwargs):
             return FakeClient()
 
     class FakeExtracted:
         def full_text(self):
-            return "sample text"
+            return (
+                "Designing rich web interfaces with interaction patterns, "
+                "software behavior, user interface design, and web applications."
+            )
 
     async def fake_sample_extract(doc):
         return FakeExtracted()
 
     async def fake_classify(client, model, **kwargs):
         captured["model"] = model
-        captured["kwargs"] = kwargs
+        captured["categories"] = kwargs["collections"]
         return {
             "existing_collection": None,
-            "confidence": 0.5,
-            "proposed_collection": {"name": "New Topic", "description": "new"},
-            "new_collection_suggested": True,
-            "rationale": "test",
+            "confidence": 0.2771,
+            "proposed_collection": None,
+            "new_collection_suggested": False,
+            "rationale": "Embedding score below threshold.",
             "source": "embedding",
+            "candidates": [{"collection": "Computing", "score": 0.2771}],
         }
+
+    async def fake_rerank(query, candidates, config, client, embedding_models):
+        captured["rerank_query"] = query
+        captured["rerank_candidates"] = candidates
+        captured["embedding_models"] = embedding_models
+        ranked = [dict(candidates[0])]
+        ranked[0]["rerank_score"] = 0.94
+        return ranked, 12.0, None
 
     monkeypatch.setattr(classification_module, "db", live_db)
     monkeypatch.setattr(classification_module, "settings", FakeSettings())
     monkeypatch.setattr(classification_module, "_sample_extract", fake_sample_extract)
     monkeypatch.setattr(classification_module, "classify_document", fake_classify)
+    monkeypatch.setattr(classification_module, "rerank_with_runtime", fake_rerank)
 
-    result = await classification_module.classify_document_runtime(str(doc_id))
-    assert result["filename"] == "book.txt"
-    assert result["proposed_category"] is None
-    assert result["new_collection_suggested"] is False
+    result = await classification_module.classify_ready_document(str(doc_id))
+
+    assert result["existing_category"] == "Computing"
+    assert result["auto_applied"] is True
+    assert result["source"] == "reranker_fallback"
+    assert result["confidence"] == pytest.approx(0.94)
     assert captured["model"] == "text-embedding-qwen3-embedding-8b"
-    assert captured["kwargs"]["match_threshold"] == 0.55
-    assert captured["kwargs"]["margin_threshold"] == 0.03
-    assert "Software Testing" in [c["name"] for c in captured["kwargs"]["collections"]]
+    assert captured["embedding_models"] == ["text-embedding-qwen3-embedding-8b"]
+    assert captured["rerank_candidates"][0]["category_name"] == "Computing"
+    assert "llm_model" not in requested_settings
+
+    async with live_db.pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT category_id FROM documents WHERE id=%s", (doc_id,)
+            )
+        ).fetchone()
+    assert row["category_id"] == category_id
 
 
 @pytest.mark.asyncio
@@ -1783,60 +1833,6 @@ async def test_bad_v1_computer_books_name_is_repaired_not_kept_as_category(live_
     assert bad_category is None
 
 
-@pytest.mark.asyncio
-async def test_classifier_cannot_create_categories_automatically(live_db, monkeypatch):
-    import app.api as api_for_categories
-    import app.library_taxonomy as taxonomy
-
-    class FakeSettings:
-        async def effective(self):
-            return {
-                "ingest": {
-                    "chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120,
-                    "strategy": "recursive", "separators": ["\n\n", "\n", ". ", " "],
-                    "embed_batch_size": 16,
-                }
-            }
-        async def get(self, key, default=None):
-            return "integration-embedding" if key == "embedding_model" else default
-
-    core = await taxonomy.ensure_core_collections(live_db, FakeSettings())
-    books = core["collections"][taxonomy.BOOK_LIBRARY]
-    doc_id = uuid.uuid4()
-    proposal = {
-        "proposed_category": {"name": "Economics", "description": "Economics books."},
-        "proposed_collection": {"name": "Economics", "description": "Economics books."},
-        "confidence": 0.42,
-        "auto_applied": False,
-    }
-    async with live_db.pool.connection() as conn:
-        await conn.execute(
-            """INSERT INTO documents(
-                   id,collection_id,filename,source_path,stored_path,content_sha256,
-                   size_bytes,status,auto_suggestion,meta)
-               VALUES (%s,%s,'econ.epub','econ.epub','blobs/econ',%s,1,'ready',%s::jsonb,'{}'::jsonb)""",
-            (doc_id, books["id"], uuid.uuid4().hex, json.dumps(proposal)),
-        )
-
-    monkeypatch.setattr(api_for_categories, "db", live_db)
-    app = FastAPI()
-    app.include_router(api_for_categories.router)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            f"/api/documents/{doc_id}/classification-decision", json={"accept": True}
-        )
-    assert response.status_code == 409
-
-    async with live_db.pool.connection() as conn:
-        created = await (
-            await conn.execute("SELECT id FROM categories WHERE name='Economics'")
-        ).fetchone()
-        doc = await (
-            await conn.execute("SELECT category_id FROM documents WHERE id=%s", (doc_id,))
-        ).fetchone()
-    assert created is None
-    assert doc["category_id"] is None
 
 
 @pytest.mark.asyncio
