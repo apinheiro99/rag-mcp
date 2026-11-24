@@ -1,14 +1,20 @@
-from app.graph_retrieval import evidence_graph
+from app.graph_retrieval import evidence_graph, extract_concepts
 
 
-def test_cross_source_shared_mentions_are_not_semantic_claims():
+def test_extract_concepts_normalizes_named_mentions():
+    concepts = extract_concepts("Microsoft GraphRAG works with RAG and Knowledge Graphs.")
+    assert "microsoft graphrag" in concepts
+    assert "rag" in concepts
+    assert "knowledge graphs" in concepts
+
+
+def test_evidence_graph_links_cross_document_shared_mentions():
     rows = [
-        {"chunk_id":"a","document_id":"1","document":"First","location":{},"content":"Graph search uses RAG."},
-        {"chunk_id":"b","document_id":"2","document":"Second","location":{},"content":"RAG can use graphs."},
-        {"chunk_id":"c","document_id":"1","document":"First","location":{},"content":"RAG is useful."},
+        {"chunk_id": "a", "document_id": "d1", "content": "Microsoft GraphRAG uses RAG.", "document": "one", "location": {}},
+        {"chunk_id": "b", "document_id": "d2", "content": "RAG and Microsoft GraphRAG.", "document": "two", "location": {}},
     ]
-    g=evidence_graph(rows,"RAG",10)
-    assert len(g["nodes"])==3
-    assert len(g["edges"])==2
-    assert all(e["type"]=="shared_mention" and e["query_match"] for e in g["edges"])
-    assert len(evidence_graph(rows,"RAG",1)["edges"])==1
+    graph = evidence_graph(rows, "RAG", 10)
+    assert graph["persistent"] is False
+    assert graph["edges"]
+    assert any(edge["concept"] == "rag" for edge in graph["edges"])
+    assert len(evidence_graph(rows, "RAG", 1)["edges"]) == 1

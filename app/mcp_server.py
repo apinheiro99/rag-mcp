@@ -17,7 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import env
-from .graph_retrieval import evidence_graph
+from .graph_retrieval import persistent_evidence_graph
 from .settings import settings
 from .db import db
 from .extraction import ExtractionError, extract
@@ -110,7 +110,7 @@ def create_mcp() -> FastMCP:
         """
         cfg = (await settings.effective())["search"]
         result = await semantic_search(query, top_k=cfg["graph_top_k"])
-        return {**result, "graph": evidence_graph(result["results"], query, cfg["graph_max_edges"])}
+        return {**result, "graph": await persistent_evidence_graph(result["results"], query, cfg["graph_max_edges"])}
 
     @mcp.tool()
     async def rag_search_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str, Any]:
