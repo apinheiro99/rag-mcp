@@ -10,12 +10,8 @@
 <body>
 <aside class="sidebar">
   <div class="brand">
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.6"/>
-      <circle cx="12" cy="12" r="3.2" fill="currentColor"/>
-      <path d="M12 2v6.8M12 15.2V22M2 12h6.8M15.2 12H22" stroke="currentColor" stroke-width="1.6"/>
-    </svg>
-    <h1>RAG Server</h1>
+    <img src="/static/rag-logo.png" alt="RAG Server">
+    <div class="brand-title"><strong>RAG</strong><span>Server</span></div>
   </div>
   <nav id="nav">
     <button data-tab="dashboard" class="active">Dashboard</button>
@@ -24,7 +20,10 @@
     <button data-tab="search">Search</button>
     <button data-tab="settings">Settings</button>
   </nav>
-  <div class="health-pills" id="healthPills"></div>
+  <div class="sidebar-version" id="sidebarVersion">
+    <span class="version-dot"></span>
+    <div><strong>RAG MCP</strong><span id="versionText">dev</span></div>
+  </div>
 </aside>
 
 <div id="tokenBanner" class="banner hidden">
@@ -34,6 +33,13 @@
 </div>
 
 <main>
+  <header class="app-header">
+    <div>
+      <h1 id="pageTitle">Dashboard</h1>
+      <p id="pageSubtitle">RAG Server overview, system health, and retrieval pipeline at a glance.</p>
+    </div>
+    <div class="app-header-status"><span class="ready-dot"></span><span>Ready</span><span class="header-sep"></span><span>admin</span></div>
+  </header>
   <!-- ==================== DASHBOARD ==================== -->
   <section id="tab-dashboard" class="tab active">
     <div class="grid-3" id="healthCards"></div>
@@ -67,16 +73,18 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Recent events</h2>
-        <div class="row compact">
-          <select id="eventLevel" onchange="renderEvents()">
-            <option value="">All levels</option>
-            <option value="info">Info</option>
-            <option value="warning">Warning</option>
-            <option value="error">Error</option>
-          </select>
-          <button class="btn mini" onclick="pollEvents()">↻ Refresh</button>
-        </div>
+      <div class="card-head"><div><h2>Recent events</h2><p class="muted small">Operational events recorded by the RAG server.</p></div>
+        <button class="btn mini" onclick="pollEvents()">↻ Refresh</button>
+      </div>
+      <div id="eventStats" class="event-stats"></div>
+      <div class="event-toolbar">
+        <input type="search" id="eventSearch" placeholder="Search event messages…" oninput="renderEvents()">
+        <select id="eventLevel" onchange="renderEvents()">
+          <option value="">All levels</option>
+          <option value="info">Info</option>
+          <option value="warning">Warning</option>
+          <option value="error">Error</option>
+        </select>
       </div>
       <div id="eventsLog" class="events"></div>
     </div>

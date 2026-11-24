@@ -105,6 +105,19 @@ allowed_extensions:
   - .rst
   - .pdf
   - .epub
+  - .mobi
+  - .azw
+  - .azw3
+  - .prc
+  - .fb2
+  - .fbz
+  - .odt
+  - .rtf
+  - .htmlz
+  - .txtz
+  - .chm
+  - .djvu
+  - .djv
   - .html
   - .htm
   - .csv

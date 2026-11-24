@@ -183,3 +183,63 @@ def test_extract_chatgpt_html_uses_embedded_json_instead_of_generic_html(tmp_pat
     assert doc.meta["parser"] == "chatgpt-export"
     assert "mensagem útil" in doc.full_text()
     assert "var jsonData" not in doc.full_text()
+
+
+def test_extract_fb2(tmp_path):
+    p = tmp_path / "book.fb2"
+    p.write_text('''<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><body><section><title><p>Chapter One</p></title><p>Hello FB2</p><p>Second paragraph</p></section></body></FictionBook>''', encoding="utf-8")
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "fb2"
+    assert "Hello FB2" in doc.full_text()
+    assert doc.segments[0].loc["section"] == "Chapter One"
+
+
+def test_extract_fbz(tmp_path):
+    import zipfile
+    p = tmp_path / "book.fbz"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("inside.fb2", '<FictionBook><body><section><p>Hello FBZ</p></section></body></FictionBook>')
+    doc = extract(p, p.name)
+    assert "Hello FBZ" in doc.full_text()
+
+
+def test_extract_odt(tmp_path):
+    import zipfile
+    p = tmp_path / "book.odt"
+    xml = '''<office:document-content xmlns:office="urn:o" xmlns:text="urn:t"><office:body><office:text><text:h>Heading</text:h><text:p>Hello ODT</text:p></office:text></office:body></office:document-content>'''
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("content.xml", xml)
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "odt"
+    assert doc.segments[0].text == "Hello ODT"
+    assert doc.segments[0].loc["heading"] == "Heading"
+
+
+def test_extract_htmlz(tmp_path):
+    import zipfile
+    p = tmp_path / "book.htmlz"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("index.html", "<html><body><h1>Title</h1><p>Hello HTMLZ</p></body></html>")
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "htmlz"
+    assert "Hello HTMLZ" in doc.full_text()
+    assert doc.segments[0].loc["member"] == "index.html"
+
+
+def test_extract_txtz(tmp_path):
+    import zipfile
+    p = tmp_path / "book.txtz"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("book.txt", "Hello TXTZ")
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "txtz"
+    assert doc.full_text() == "Hello TXTZ"
+
+
+def test_mobi_family_reports_missing_parser(tmp_path, monkeypatch):
+    p = tmp_path / "book.azw3"
+    p.write_bytes(b"not-a-real-book")
+    monkeypatch.setattr("app.extraction.shutil.which", lambda _: None)
+    with pytest.raises(ExtractionError, match="mobitool"):
+        extract(p, p.name)

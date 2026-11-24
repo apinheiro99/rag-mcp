@@ -67,6 +67,9 @@ set -a
 set +a
 
 cd "$ROOT"
+export RAG_BUILD_VERSION="${RAG_BUILD_VERSION:-v$(date -u -d "$CI_PIPELINE_CREATED_AT" +%Y.%m).$(printf "%06d" "$CI_PIPELINE_IID")}"
+export RAG_BUILD_COMMIT="${RAG_BUILD_COMMIT:-$CI_COMMIT_SHA}"
+export RAG_ENVIRONMENT="${RAG_ENVIRONMENT:-prod}"
 COMPOSE_ARGS=(-p rag-mcp -f deploy/prod/compose.yml)
 if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   : "${RAG_TUNNEL_BINARY:?RAG_TUNNEL_BINARY must be set when Secure MCP Tunnel is enabled}"

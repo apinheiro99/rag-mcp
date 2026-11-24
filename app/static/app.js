@@ -47,11 +47,22 @@ const fmtBytes = (n) => { if (!n && n !== 0) return "—"; const u = ["B", "KB",
 const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
 
+const TAB_META = {
+  dashboard: ["Dashboard", "RAG Server overview, system health, and retrieval pipeline at a glance."],
+  import: ["Import", "Add documents and route them into the knowledge base."],
+  documents: ["Documents", "Inspect, filter, classify, and manage indexed documents."],
+  search: ["Search", "Run semantic retrieval across the selected knowledge collections."],
+  settings: ["Settings", "Configure models, ingestion defaults, and runtime behavior."],
+};
+
 function showTab(name, { persist = true } = {}) {
   const valid = ["dashboard", "import", "documents", "search", "settings"];
   if (!valid.includes(name)) name = "dashboard";
   state.activeTab = name;
   if (persist) localStorage.setItem("rag_active_tab", name);
+  const meta = TAB_META[name] || TAB_META.dashboard;
+  if ($("pageTitle")) $("pageTitle").textContent = meta[0];
+  if ($("pageSubtitle")) $("pageSubtitle").textContent = meta[1];
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   if (name === "documents") loadDocuments();
@@ -249,9 +260,15 @@ function uploadFiles(items) {
 }
 function renderUploadResults(data) {
   const icon = { pending: "⚙️", staged: "📄", duplicate: "♻️", ignored_empty: "⚪", unsupported: "🚫", too_large: "🐘", error: "❌" };
-  const label = { pending: "imported and queued", staged: "imported; awaiting configuration", duplicate: "duplicate (skipped)", ignored_empty: "empty (skipped)", unsupported: "unsupported", too_large: "too large", error: "erro" };
-  $("uploadResults").innerHTML = `<div class="upload-list">` + data.results.map((r) => `
-    <div class="upload-item">
+  const label = { pending: "imported and queued", staged: "imported; awaiting configuration", duplicate: "duplicate (skipped)", ignored_empty: "empty (skipped)", unsupported: "unsupported", too_large: "too large", error: "error" };
+  const rejected = data.results.filter((r) => ["unsupported", "too_large", "error"].includes(r.status));
+  const unsupported = rejected.filter((r) => r.status === "unsupported").length;
+  const warning = rejected.length ? `<div class="upload-warning" role="alert">
+    <strong>${rejected.length} file(s) not imported.</strong>
+    ${unsupported ? `${unsupported} unsupported extension(s). ` : ""}See the rejected file(s) below.
+  </div>` : "";
+  $("uploadResults").innerHTML = warning + `<div class="upload-list">` + data.results.map((r) => `
+    <div class="upload-item ${rejected.includes(r) ? "upload-item-rejected" : ""}">
       <span>${icon[r.status] || ""} <span class="docpath">${esc(r.source_path)}</span></span>
       <span class="muted">${label[r.status] || r.status}${r.error ? " — " + esc(r.error) : ""}</span>
     </div>`).join("") + `</div>`;
@@ -392,7 +409,7 @@ async function pollStatus() {
   } catch { /* health polling reports server availability */ }
 }
 function renderIngest(s) {
-  const pct = s.chunks_total > 0 ? Math.round((s.chunks_embedded / s.chunks_total) * 100) : (s.active_documents ? 0 : 100);
+  const pct = s.active_documents > 0 && s.chunks_total > 0 ? Math.round((s.chunks_embedded / s.chunks_total) * 100) : 0;
   ["ingestBar", "importIngestBar"].forEach((id) => { const el = $(id); if (el) el.style.width = pct + "%"; });
   ["btnPause", "importBtnPause"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", s.paused); });
   ["btnResume", "importBtnResume"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", !s.paused); });
@@ -422,11 +439,12 @@ function renderIngest(s) {
 async function pollHealth() {
   let h = null;
   try { h = await api("/api/health"); } catch { /* offline */ }
-  const pill = (label, ok, warn = false) =>
-    `<span class="pill"><span class="dot ${ok ? (warn ? "warn" : "ok") : "bad"}"></span>${label}</span>`;
-  $("healthPills").innerHTML = h
-    ? pill("DB", h.database) + pill("LM Studio", h.lmstudio?.reachable) + pill(h.worker?.paused ? "paused" : "worker", h.worker?.running, h.worker?.paused)
-    : pill("server offline", false);
+  const version = h?.build?.version || "dev";
+  const envName = h?.build?.environment || "dev";
+  if ($("versionText")) $("versionText").textContent = `${version} · ${envName.toUpperCase()}`;
+  if ($("sidebarVersion")) $("sidebarVersion").classList.toggle("offline", !h);
+  const status = document.querySelector(".app-header-status");
+  if (status) status.classList.toggle("offline", !h || h.status !== "ok");
   $("healthCards").innerHTML = h ? `
     <div class="card"><div class="stat-label">PostgreSQL + pgvector</div>
       <div class="stat" style="color:${h.database ? "var(--green)" : "var(--red)"}">${h.database ? "online" : "offline"}</div></div>
@@ -439,14 +457,24 @@ async function pollHealth() {
       <div class="muted small">automatically resumes after restart</div></div>` : "";
 }
 function renderEvents() {
+  const all = state.events || [];
   const level = $("eventLevel")?.value || "";
-  const events = (state.events || []).filter((e) => !level || e.level === level);
+  const query = ($("eventSearch")?.value || "").trim().toLowerCase();
+  const count = (name) => all.filter((e) => (e.level || "info") === name).length;
+  if ($("eventStats")) {
+    $("eventStats").innerHTML = `
+      <div><b>${all.length}</b><span>Total</span></div>
+      <div><b>${count("info")}</b><span>Info</span></div>
+      <div class="warn"><b>${count("warning")}</b><span>Warnings</span></div>
+      <div class="bad"><b>${count("error")}</b><span>Errors</span></div>`;
+  }
+  const events = all.filter((e) => (!level || e.level === level) && (!query || String(e.message || "").toLowerCase().includes(query)));
   $("eventsLog").innerHTML = events.map((e) => `
     <div class="event ${esc(e.level)}">
-      <span class="ts">${fmtTime(e.ts)}</span>
+      <span class="ts">${fmtDate(e.ts)}</span>
       <span class="event-level">${esc((e.level || "info").toUpperCase())}</span>
       <span class="msg">${esc(e.message)}</span>
-    </div>`).join("") || `<p class="muted small">No events for this filter.</p>`;
+    </div>`).join("") || `<p class="muted small event-empty">No events match these filters.</p>`;
 }
 async function pollEvents() {
   try {
