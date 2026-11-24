@@ -4,6 +4,8 @@ services:
     image: ${RAG_TUNNEL_BASE_IMAGE:-node:24-bookworm-slim}
     restart: unless-stopped
     user: "${RAG_TUNNEL_UID:-1000}:${RAG_TUNNEL_GID:-1000}"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       app:
         condition: service_started
