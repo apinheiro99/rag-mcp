@@ -72,3 +72,25 @@ def test_api_exposes_document_supersession_governance():
     api = Path("app/api.py").read_text()
     assert '"/documents/{doc_id}/supersede"' in api
     assert "superseded_by" in api
+
+
+def test_dashboard_exposes_background_runtime_state():
+    js = Path("app/static/app.js").read_text()
+    for token in ("Classification worker", "Source sync worker", "Graph worker", "Model runtime"):
+        assert token in js
+
+
+def test_search_ui_exposes_trace_and_evidence_graph():
+    html = Path("app/static/index.html").read_text()
+    js = Path("app/static/app.js").read_text()
+    assert 'id="searchDiagnostics"' in html
+    assert 'id="evidenceGraph"' in html
+    assert "include_graph: true" in js
+    assert "Evidence Graph" in js
+    assert "trace_id" in js
+
+
+def test_documents_ui_exposes_supersession_controls():
+    js = Path("app/static/app.js").read_text()
+    assert "openSupersedeDoc" in js
+    assert "/supersede" in js

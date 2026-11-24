@@ -19,7 +19,7 @@ from .classification_runtime import classification_worker, classify_document_run
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
-from .graph_retrieval import graph_worker
+from .graph_retrieval import graph_worker, persistent_evidence_graph
 from .ingest import ACTIVE_STATUSES, extraction_cache_path, resolve_ingest_config, worker
 from .ingest_policy import should_auto_start_upload, should_ignore_empty_upload
 from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable
@@ -1187,6 +1187,7 @@ class SearchRequest(BaseModel):
     pages: list[int] | None = None
     top_k: int | None = None
     min_score: float | None = None
+    include_graph: bool = False
 
     def filters(self) -> SearchFilters:
         return SearchFilters(
@@ -1201,13 +1202,19 @@ class SearchRequest(BaseModel):
 @router.post("/search")
 async def search(body: SearchRequest):
     try:
-        return await semantic_search(
+        result = await semantic_search(
             body.query,
             body.collections,
             body.top_k,
             body.min_score,
             body.filters(),
         )
+        if body.include_graph:
+            cfg = (await settings.effective())["search"]
+            result["graph"] = await persistent_evidence_graph(
+                result.get("results") or [], body.query, int(cfg["graph_max_edges"])
+            )
+        return result
     except SearchError as e:
         raise HTTPException(400, str(e))
     except LMStudioUnavailable as e:
