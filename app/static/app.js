@@ -1,4 +1,4 @@
-/* RAG Server — administrative interface (vanilla JS, no external dependencies) */
+/* RAG MCP — administrative interface (vanilla JS, no external dependencies) */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -49,7 +49,7 @@ const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit",
 const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
 
 const TAB_META = {
-  dashboard: ["Dashboard", "RAG Server overview, system health, and retrieval pipeline at a glance."],
+  dashboard: ["Dashboard", "RAG MCP overview, system health, and retrieval pipeline at a glance."],
   import: ["Import", "Add documents and route them into the knowledge base."],
   documents: ["Documents", "Inspect, filter, classify, and manage indexed documents."],
   search: ["Search", "Run semantic retrieval across the selected knowledge collections."],
