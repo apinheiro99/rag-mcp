@@ -115,3 +115,14 @@ def test_settings_exposes_manual_book_category_management_only():
     assert "Yes, add category" not in js
     assert "Uncategorized" in js
     assert "Top-level collections are fixed" in js
+
+
+def test_directory_sources_support_target_category_edit_and_clone():
+    js = Path("app/static/app.js").read_text()
+    assert "cloneSource" in js
+    assert "Clone directory source" in js
+    assert 'id="sourceEditCollection"' in js
+    assert 'id="sourceEditCategory"' in js
+    assert "renameSelectedSourceCategory" in js
+    assert "category_id:" in js
+    assert "source_type:" in js

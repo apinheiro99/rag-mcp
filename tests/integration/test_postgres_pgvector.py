@@ -1948,3 +1948,136 @@ async def test_taxonomy_migration_refreshes_real_postgres_statistics(live_db):
 
     assert [r["relname"] for r in rows] == ["chunks", "collections", "documents"]
     assert all(r["last_analyze"] is not None for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_directory_source_category_is_applied_and_can_be_retargeted(
+    live_db, tmp_path, monkeypatch
+):
+    import app.api as api_for_sources
+    import app.source_sync as source_sync_module
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "allowed_extensions": [".txt"],
+                "ingest": {"max_file_mb": 10},
+                "workflow": {"auto_start_configured_uploads": False},
+                "sources": {
+                    "default_interval_seconds": 600,
+                    "interval_options_seconds": [600],
+                    "default_exclude_patterns": [],
+                    "poll_interval_seconds": 30,
+                    "error_retry_seconds": 5,
+                },
+            }
+        async def get(self, key, default=None):
+            return default
+
+    root = tmp_path / "source-category"
+    root.mkdir()
+    (root / "book.txt").write_text("enough content for category source", encoding="utf-8")
+
+    source_collection = uuid.uuid4()
+    target_collection = uuid.uuid4()
+    category_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO collections(id,name,ingest_config) VALUES (%s,%s,'{}'::jsonb)",
+            (source_collection, f"source-{source_collection}"),
+        )
+        await conn.execute(
+            "INSERT INTO collections(id,name,ingest_config) VALUES (%s,%s,'{}'::jsonb)",
+            (target_collection, f"target-{target_collection}"),
+        )
+        await conn.execute(
+            """INSERT INTO categories(id,collection_id,name,description)
+               VALUES (%s,%s,'Economics','Economics')""",
+            (category_id, target_collection),
+        )
+        await conn.execute(
+            """INSERT INTO collection_sources(
+                   id,collection_id,path,interval_seconds,exclude_patterns,next_sync_at)
+               VALUES (%s,%s,%s,600,'[]'::jsonb,now())""",
+            (source_id, source_collection, str(root)),
+        )
+
+    monkeypatch.setattr(source_sync_module, "db", live_db)
+    monkeypatch.setattr(source_sync_module, "settings", FakeSettings())
+    monkeypatch.setattr(source_sync_module.env, "data_dir", tmp_path / "data")
+
+    first = await source_sync_module.sync_collection_source(str(source_id))
+    assert first["new"] == 1
+
+    monkeypatch.setattr(api_for_sources, "db", live_db)
+    monkeypatch.setattr(api_for_sources, "settings", FakeSettings())
+    await api_for_sources.patch_collection_source(
+        str(source_id),
+        api_for_sources.CollectionSourcePatch(
+            collection_id=str(target_collection),
+            category_id=str(category_id),
+        ),
+    )
+
+    async with live_db.pool.connection() as conn:
+        source = await (
+            await conn.execute(
+                "SELECT collection_id,category_id FROM collection_sources WHERE id=%s",
+                (source_id,),
+            )
+        ).fetchone()
+        doc = await (
+            await conn.execute(
+                "SELECT id,collection_id,category_id FROM documents WHERE source_id=%s",
+                (source_id,),
+            )
+        ).fetchone()
+
+    assert source["collection_id"] == target_collection
+    assert source["category_id"] == category_id
+    assert doc["collection_id"] == target_collection
+    assert doc["category_id"] == category_id
+
+
+@pytest.mark.asyncio
+async def test_directory_source_rejects_category_from_another_collection(live_db, monkeypatch):
+    import app.api as api_for_sources
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "sources": {
+                    "default_interval_seconds": 600,
+                    "interval_options_seconds": [600],
+                }
+            }
+
+    col_a, col_b, category_id, source_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        for cid, name in [(col_a, "source-a"), (col_b, "source-b")]:
+            await conn.execute(
+                "INSERT INTO collections(id,name,ingest_config) VALUES (%s,%s,'{}'::jsonb)",
+                (cid, f"{name}-{cid}"),
+            )
+        await conn.execute(
+            "INSERT INTO categories(id,collection_id,name) VALUES (%s,%s,'Wrong')",
+            (category_id, col_b),
+        )
+        await conn.execute(
+            """INSERT INTO collection_sources(
+                   id,collection_id,path,interval_seconds,exclude_patterns,next_sync_at)
+               VALUES (%s,%s,'/tmp',600,'[]'::jsonb,now())""",
+            (source_id, col_a),
+        )
+
+    monkeypatch.setattr(api_for_sources, "db", live_db)
+    monkeypatch.setattr(api_for_sources, "settings", FakeSettings())
+
+    with pytest.raises(api_for_sources.HTTPException) as exc:
+        await api_for_sources.patch_collection_source(
+            str(source_id),
+            api_for_sources.CollectionSourcePatch(category_id=str(category_id)),
+        )
+    assert exc.value.status_code == 400

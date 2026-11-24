@@ -230,12 +230,12 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
                         """UPDATE documents SET filename=%s, stored_path=%s, content_sha256=%s,
                                size_bytes=%s, source_mtime_ns=%s, status=%s, error=NULL,
                                attempts=0, retry_at=NULL, chunks_total=0, chunks_embedded=0,
-                               ingest_config=%s::jsonb, meta=%s::jsonb,
+                               ingest_config=%s::jsonb, meta=%s::jsonb, category_id=%s,
                                updated_at=now(), processed_at=NULL
                            WHERE id=%s""",
                         (path.name, blob_rel, digest, size, mtime_ns, initial_status,
                          json.dumps(auto_config) if auto_config else None,
-                         json.dumps(source_meta), old["id"]),
+                         json.dumps(source_meta), source.get("category_id"), old["id"]),
                     )
                     extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
                     stats["changed"] += 1
@@ -243,12 +243,13 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
                     doc_id = str(uuid.uuid4())
                     await conn.execute(
                         """INSERT INTO documents(
-                               id, collection_id, filename, source_path, stored_path,
+                               id, collection_id, category_id, filename, source_path, stored_path,
                                content_sha256, size_bytes, status, ingest_config,
                                source_id, source_mtime_ns, meta)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)""",
-                        (doc_id, source["collection_id"], path.name, rel, blob_rel, digest,
-                         size, initial_status, json.dumps(auto_config) if auto_config else None,
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)""",
+                        (doc_id, source["collection_id"], source.get("category_id"),
+                         path.name, rel, blob_rel, digest, size, initial_status,
+                         json.dumps(auto_config) if auto_config else None,
                          source_id, mtime_ns, json.dumps(source_meta)),
                     )
                     stats["new"] += 1

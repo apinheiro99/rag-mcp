@@ -378,6 +378,7 @@ class CollectionSourceCreate(BaseModel):
     enabled: bool = True
     exclude_patterns: list[str] = Field(default_factory=list)
     source_type: str = "directory"
+    category_id: str | None = None
 
 
 class CollectionSourcePatch(BaseModel):
@@ -385,6 +386,9 @@ class CollectionSourcePatch(BaseModel):
     interval_seconds: int | None = None
     enabled: bool | None = None
     exclude_patterns: list[str] | None = None
+    collection_id: str | None = None
+    category_id: str | None = None
+    source_type: str | None = None
 
 
 @router.get("/collection-sources")
@@ -395,8 +399,10 @@ async def list_collection_sources(collection_id: str | None = None):
         params.append(_uuid(collection_id))
     async with db.pool.connection() as conn:
         cur = await conn.execute(
-            f"""SELECT s.*, c.name AS collection
-                FROM collection_sources s JOIN collections c ON c.id=s.collection_id
+            f"""SELECT s.*, c.name AS collection, cat.name AS category
+                FROM collection_sources s
+                JOIN collections c ON c.id=s.collection_id
+                LEFT JOIN categories cat ON cat.id=s.category_id
                 {where} ORDER BY c.name, s.path""", params
         )
         return {"sources": await cur.fetchall()}
@@ -417,17 +423,27 @@ async def create_collection_source(col_id: str, body: CollectionSourceCreate):
     path = str(Path(body.path).expanduser().resolve())
     if not Path(path).is_dir():
         raise HTTPException(400, f"directory not found or not readable: {path}")
+    category_id = _uuid(body.category_id) if body.category_id else None
     async with db.pool.connection() as conn:
         cur = await conn.execute("SELECT id FROM collections WHERE id=%s", (col_id,))
         if not await cur.fetchone():
             raise HTTPException(404, "collection not found")
+        if category_id:
+            category = await (
+                await conn.execute(
+                    "SELECT id FROM categories WHERE id=%s AND collection_id=%s",
+                    (category_id, col_id),
+                )
+            ).fetchone()
+            if not category:
+                raise HTTPException(400, "category does not belong to target collection")
         try:
             cur = await conn.execute(
                 """INSERT INTO collection_sources(
-                       id, collection_id, path, enabled, interval_seconds, exclude_patterns,
-                       next_sync_at, source_type)
-                   VALUES (%s,%s,%s,%s,%s,%s::jsonb,now(),%s) RETURNING *""",
-                (str(uuid.uuid4()), col_id, path, body.enabled, interval,
+                       id, collection_id, category_id, path, enabled, interval_seconds,
+                       exclude_patterns, next_sync_at, source_type)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,now(),%s) RETURNING *""",
+                (str(uuid.uuid4()), col_id, category_id, path, body.enabled, interval,
                  json.dumps(body.exclude_patterns), body.source_type),
             )
             row = await cur.fetchone()
@@ -443,32 +459,125 @@ async def patch_collection_source(source_id: str, body: CollectionSourcePatch):
     source_id = _uuid(source_id)
     eff = await settings.effective()
     cfg = eff.get("sources", {})
-    sets, params = ["updated_at=now()"], []
-    if body.path is not None:
-        path = str(Path(body.path).expanduser().resolve())
-        if not Path(path).is_dir():
-            raise HTTPException(400, f"directory not found or not readable: {path}")
-        sets.extend(["path=%s", "next_sync_at=now()"]); params.append(path)
-    if body.interval_seconds is not None:
-        try:
-            interval = validate_interval(body.interval_seconds, cfg)
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
-        sets.extend(["interval_seconds=%s", "next_sync_at=now()"]); params.append(interval)
-    if body.enabled is not None:
-        sets.append("enabled=%s"); params.append(body.enabled)
-        if body.enabled:
-            sets.append("next_sync_at=now()")
-    if body.exclude_patterns is not None:
-        sets.extend(["exclude_patterns=%s::jsonb", "next_sync_at=now()"]); params.append(json.dumps(body.exclude_patterns))
-    params.append(source_id)
+
     async with db.pool.connection() as conn:
-        cur = await conn.execute(
-            f"UPDATE collection_sources SET {', '.join(sets)} WHERE id=%s RETURNING *", params
-        )
-        row = await cur.fetchone()
-    if not row:
-        raise HTTPException(404, "source not found")
+        async with conn.transaction():
+            current = await (
+                await conn.execute(
+                    "SELECT * FROM collection_sources WHERE id=%s FOR UPDATE", (source_id,)
+                )
+            ).fetchone()
+            if not current:
+                raise HTTPException(404, "source not found")
+
+            target_collection = (
+                _uuid(body.collection_id)
+                if body.collection_id is not None
+                else current["collection_id"]
+            )
+            collection = await (
+                await conn.execute("SELECT id FROM collections WHERE id=%s", (target_collection,))
+            ).fetchone()
+            if not collection:
+                raise HTTPException(404, "target collection not found")
+
+            category_was_set = "category_id" in body.model_fields_set
+            if category_was_set:
+                target_category = _uuid(body.category_id) if body.category_id else None
+            elif target_collection != current["collection_id"]:
+                target_category = None
+            else:
+                target_category = current.get("category_id")
+
+            if target_category:
+                category = await (
+                    await conn.execute(
+                        "SELECT id FROM categories WHERE id=%s AND collection_id=%s",
+                        (target_category, target_collection),
+                    )
+                ).fetchone()
+                if not category:
+                    raise HTTPException(400, "category does not belong to target collection")
+
+            if body.source_type is not None and body.source_type not in {"directory", "repository"}:
+                raise HTTPException(400, "source_type must be directory or repository")
+
+            if target_collection != current["collection_id"]:
+                duplicate = await (
+                    await conn.execute(
+                        """SELECT d.id FROM documents d
+                           WHERE d.source_id=%s AND EXISTS (
+                             SELECT 1 FROM documents x
+                             WHERE x.collection_id=%s
+                               AND x.content_sha256=d.content_sha256
+                               AND x.id<>d.id
+                           ) LIMIT 1""",
+                        (source_id, target_collection),
+                    )
+                ).fetchone()
+                if duplicate:
+                    raise HTTPException(
+                        409,
+                        "cannot move source: target collection already contains identical content",
+                    )
+
+            sets, params = ["updated_at=now()"], []
+            if body.path is not None:
+                path = str(Path(body.path).expanduser().resolve())
+                if not Path(path).is_dir():
+                    raise HTTPException(400, f"directory not found or not readable: {path}")
+                sets.extend(["path=%s", "next_sync_at=now()"]); params.append(path)
+            if body.interval_seconds is not None:
+                try:
+                    interval = validate_interval(body.interval_seconds, cfg)
+                except ValueError as e:
+                    raise HTTPException(400, str(e)) from e
+                sets.extend(["interval_seconds=%s", "next_sync_at=now()"]); params.append(interval)
+            if body.enabled is not None:
+                sets.append("enabled=%s"); params.append(body.enabled)
+                if body.enabled:
+                    sets.append("next_sync_at=now()")
+            if body.exclude_patterns is not None:
+                sets.extend(["exclude_patterns=%s::jsonb", "next_sync_at=now()"])
+                params.append(json.dumps(body.exclude_patterns))
+            if body.source_type is not None:
+                sets.extend(["source_type=%s", "next_sync_at=now()"])
+                params.append(body.source_type)
+            if target_collection != current["collection_id"]:
+                sets.extend(["collection_id=%s", "next_sync_at=now()"])
+                params.append(target_collection)
+            if category_was_set or target_collection != current["collection_id"]:
+                sets.extend(["category_id=%s", "next_sync_at=now()"])
+                params.append(target_category)
+
+            sets = list(dict.fromkeys(sets))
+            params.append(source_id)
+            row = await (
+                await conn.execute(
+                    f"UPDATE collection_sources SET {', '.join(sets)} WHERE id=%s RETURNING *",
+                    params,
+                )
+            ).fetchone()
+
+            if target_collection != current["collection_id"]:
+                await conn.execute(
+                    """UPDATE documents SET collection_id=%s,category_id=%s,updated_at=now()
+                       WHERE source_id=%s""",
+                    (target_collection, target_category, source_id),
+                )
+                await conn.execute(
+                    """UPDATE chunks SET collection_id=%s
+                       WHERE document_id IN (
+                         SELECT id FROM documents WHERE source_id=%s
+                       )""",
+                    (target_collection, source_id),
+                )
+            elif category_was_set:
+                await conn.execute(
+                    "UPDATE documents SET category_id=%s,updated_at=now() WHERE source_id=%s",
+                    (target_category, source_id),
+                )
+
     return row
 
 
