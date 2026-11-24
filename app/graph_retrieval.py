@@ -119,7 +119,7 @@ async def persistent_evidence_graph(rows: list[dict[str, Any]], query: str, limi
 async def graph_document_fingerprint(document_id: str) -> str:
     async with db.pool.connection() as conn:
         cur = await conn.execute(
-            """SELECT encode(digest(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq), 'sha256'),'hex') AS fp
+            """SELECT md5(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq)) AS fp
                FROM chunks c WHERE c.document_id=%s""",
             (document_id,),
         )
@@ -154,13 +154,13 @@ class GraphWorker:
         async with db.pool.connection() as conn:
             cur = await conn.execute(
                 """SELECT d.id::text AS id,
-                          encode(digest(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq), 'sha256'),'hex') AS fp
+                          md5(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq)) AS fp
                    FROM documents d
                    JOIN chunks c ON c.document_id=d.id
                    WHERE d.status='ready'
                    GROUP BY d.id, d.meta
                    HAVING coalesce(d.meta->>'graph_fingerprint','') <>
-                          encode(digest(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq), 'sha256'),'hex')
+                          md5(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq))
                    ORDER BY d.updated_at
                    LIMIT 1"""
             )

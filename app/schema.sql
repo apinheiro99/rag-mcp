@@ -3,7 +3,6 @@
 -- PostgreSQL + pgvector
 -- ============================================================
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
