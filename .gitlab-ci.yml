@@ -6,10 +6,21 @@ stages:
   - publish
   - deploy
 
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 default:
   tags: [scope]
+  # The pip download cache is keyed by the requirements files: jobs reuse it and install only when they change.
+  cache:
+    key:
+      files:
+        - requirements.txt
+        - requirements-dev.txt
+    paths:
+      - .pip-cache/
   before_script:
-    - python3 -m pip install --upgrade pip
     - pip install -r requirements.txt -r requirements-dev.txt
 
 .branch-push-only:
