@@ -34,6 +34,27 @@ DEFAULT_QUERIES = [
 ]
 
 
+
+PERFORMANCE_PROFILES = {
+    "smoke": {"requests": 16, "concurrency": 1, "duration_seconds": 0},
+    "load": {"requests": 64, "concurrency": 8, "duration_seconds": 0},
+    "stress": {"requests": 128, "concurrency": 32, "duration_seconds": 0},
+    "spike": {"requests": 64, "concurrency": 32, "duration_seconds": 0},
+    "endurance": {"requests": 0, "concurrency": 4, "duration_seconds": 300},
+}
+
+
+def apply_profile(args: argparse.Namespace) -> None:
+    if not args.profile:
+        return
+    profile = PERFORMANCE_PROFILES[args.profile]
+    if args.requests is None:
+        args.requests = profile["requests"]
+    if args.concurrency is None:
+        args.concurrency = profile["concurrency"]
+    if args.duration_seconds is None:
+        args.duration_seconds = profile["duration_seconds"]
+
 def percentile(values: list[float], p: float) -> float:
     if not values:
         return 0.0
@@ -178,9 +199,10 @@ async def stress(args: argparse.Namespace) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True)
-    parser.add_argument("--requests", type=int, default=64)
-    parser.add_argument("--duration-seconds", type=float, default=0, help="soak mode when > 0")
-    parser.add_argument("--concurrency", type=int, default=16)
+    parser.add_argument("--profile", choices=sorted(PERFORMANCE_PROFILES))
+    parser.add_argument("--requests", type=int)
+    parser.add_argument("--duration-seconds", type=float, help="soak/endurance mode when > 0")
+    parser.add_argument("--concurrency", type=int)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--startup-timeout", type=float, default=60)
@@ -190,7 +212,15 @@ def main() -> None:
     parser.add_argument("--max-error-rate", type=float, default=0.0)
     parser.add_argument("--max-p99-ms", type=float, default=float("inf"))
     parser.add_argument("--min-throughput-rps", type=float, default=0.0)
-    asyncio.run(stress(parser.parse_args()))
+    args = parser.parse_args()
+    apply_profile(args)
+    if args.requests is None:
+        args.requests = 64
+    if args.duration_seconds is None:
+        args.duration_seconds = 0
+    if args.concurrency is None:
+        args.concurrency = 16
+    asyncio.run(stress(args))
 
 
 if __name__ == "__main__":

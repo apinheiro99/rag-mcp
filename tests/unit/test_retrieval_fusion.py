@@ -30,3 +30,16 @@ def test_lexical_fallback_runs_when_dense_is_weak_or_short():
     cfg={"hybrid_enabled":True,"hybrid_min_dense_score":.55,"hybrid_min_dense_candidates":8}
     assert should_apply_lexical([{"score":.4} for _ in range(8)],8,cfg)==(True,None)
     assert should_apply_lexical([{"score":.9} for _ in range(3)],8,cfg)==(True,None)
+
+
+def test_lexical_fallback_threshold_boundaries():
+    cfg={"hybrid_enabled":True,"hybrid_min_dense_score":.55,"hybrid_min_dense_candidates":8}
+
+    exact=[{"score":.55}]+[{"score":.1} for _ in range(7)]
+    assert should_apply_lexical(exact,8,cfg)==(False,"dense_sufficient")
+
+    just_below=[{"score":.5499}]+[{"score":.1} for _ in range(7)]
+    assert should_apply_lexical(just_below,8,cfg)==(True,None)
+
+    one_short=[{"score":.99} for _ in range(7)]
+    assert should_apply_lexical(one_short,8,cfg)==(True,None)
