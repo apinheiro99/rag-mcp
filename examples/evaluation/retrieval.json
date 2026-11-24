@@ -1,9 +1,9 @@
 [
- {"id":"hybrid","query":"How does hybrid retrieval combine sparse and dense search with reciprocal rank fusion?","expected_sources":["Building AI-Intensive Python Applications"]},
- {"id":"metrics","query":"What retrieval metrics measure precision and recall in RAG?","expected_sources":["Building AI-Intensive Python Applications"]},
- {"id":"graph","query":"How does GraphRAG use entity relationships and knowledge graphs?","expected_sources":["Essential GraphRAG","Building+AI+Agents+with+LLMs"]},
- {"id":"jakob","query":"What does Jakob's Law say about familiar interface conventions?","expected_sources":["Laws of UX"]},
- {"id":"miller","query":"What does Miller's Law say about working memory in interface design?","expected_sources":["Laws of UX"]},
- {"id":"doherty","query":"What is the Doherty Threshold and why does feedback latency matter?","expected_sources":["Laws of UX"]},
- {"id":"rerank","query":"How does reranking improve retrieved passages in a RAG pipeline?","expected_sources":["Building AI-Intensive Python Applications","Building+AI+Agents+with+LLMs"]}
+  {"id":"strategy","query":"How does the Strategy pattern encapsulate interchangeable algorithms?","expected_sources":["Head First Design Patterns"]},
+  {"id":"postgres-isolation","query":"How do PostgreSQL transaction isolation levels handle dirty reads, nonrepeatable reads and phantom reads?","expected_sources":["Learning PostgreSQL"]},
+  {"id":"ddd-aggregate","query":"What is an Aggregate Root and how does it protect invariants in Domain-Driven Design?","expected_sources":["Domain-Driven Design"]},
+  {"id":"quality-attributes","query":"How are quality attributes and tactics used in software architecture?","expected_sources":["Software Architecture in Practice"]},
+  {"id":"microservices-resilience","query":"How does Building Microservices describe resilience and failure handling between services?","expected_sources":["Building Microservices"]},
+  {"id":"graphrag","query":"How does GraphRAG use knowledge graphs, entities and relationships for retrieval?","expected_sources":["Hands-On_RAG_for_Production"]},
+  {"id":"rerank","query":"How does reranking improve retrieved passages in a RAG pipeline?","expected_sources":["Building+AI+Agents+with+LLMs"]}
 ]
