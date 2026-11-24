@@ -94,3 +94,10 @@ def test_documents_ui_exposes_supersession_controls():
     js = Path("app/static/app.js").read_text()
     assert "openSupersedeDoc" in js
     assert "/supersede" in js
+
+def test_search_ui_exposes_usefulness_cost_topk_and_selection_reason():
+    js = Path("app/static/app.js").read_text()
+    assert "usefulness" in js
+    assert "returned_context_tokens" in js
+    assert "effective_top_k" in js
+    assert "selection?.reason" in js

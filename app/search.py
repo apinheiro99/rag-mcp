@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from .db import db, vector_literal, MAX_HNSW_HALFVEC_DIM
+from .chunking import estimate_tokens
 from .retrieval_observability import record_retrieval
 from .model_runtime import ModelRequirement, runtime_scheduler
 from .rerank import rerank_results
@@ -164,6 +165,99 @@ async def _search_group(
 
 
 
+def _score_for_utility(row: dict) -> float:
+    return float(row.get("rerank_score", row.get("score", 0.0)) or 0.0)
+
+
+def choose_adaptive_top_k(rows: list[dict], requested_top_k: int, scfg: dict, *, explicit: bool) -> tuple[int, dict]:
+    """Choose returned evidence count from relevance, never exceeding requested/configured bounds."""
+    if explicit or not scfg.get("adaptive_top_k_enabled", False) or not rows:
+        return min(requested_top_k, len(rows)), {"enabled": False, "reason": "explicit_or_disabled"}
+    lo = max(1, int(scfg.get("adaptive_top_k_min", 3)))
+    hi = max(lo, min(requested_top_k, int(scfg.get("adaptive_top_k_max", requested_top_k))))
+    threshold = float(scfg.get("adaptive_top_k_min_score", 0.55))
+    gap = float(scfg.get("adaptive_top_k_gap", 0.18))
+    scores = [_score_for_utility(row) for row in rows[:hi]]
+    chosen = min(lo, len(scores))
+    for i in range(chosen, len(scores)):
+        prev = scores[i - 1]
+        cur = scores[i]
+        if cur < threshold or prev - cur > gap + 1e-12:
+            break
+        chosen = i + 1
+    return max(1, min(chosen, len(rows))), {
+        "enabled": True,
+        "reason": "relevance_curve",
+        "min_score": threshold,
+        "gap": gap,
+        "scores": [round(x, 4) for x in scores],
+    }
+
+
+def retrieval_usefulness(rows: list[dict], scfg: dict) -> dict:
+    """Heuristic evidence usefulness, not answer correctness."""
+    if not rows:
+        return {"score": 0.0, "label": "none", "useful_results": 0, "result_count": 0}
+    threshold = float(scfg.get("usefulness_min_score", 0.55))
+    min_tokens = max(1, int(scfg.get("usefulness_min_content_tokens", 40)))
+    scores = [_score_for_utility(r) for r in rows]
+    relevance = sum(scores[: min(3, len(scores))]) / min(3, len(scores))
+    useful = sum(score >= threshold for score in scores)
+    coverage = useful / len(rows)
+    substantive = sum(estimate_tokens(str(r.get("content") or "")) >= min_tokens for r in rows) / len(rows)
+    score = max(0.0, min(1.0, 0.7 * relevance + 0.2 * coverage + 0.1 * substantive))
+    label = "high" if score >= 0.75 else "medium" if score >= 0.5 else "low"
+    return {
+        "score": round(score, 4), "label": label, "useful_results": useful,
+        "result_count": len(rows), "relevance": round(relevance, 4),
+        "coverage": round(coverage, 4), "substantive": round(substantive, 4),
+        "note": "heuristic retrieval usefulness; not answer correctness",
+    }
+
+
+def annotate_selection(rows: list[dict], *, hybrid: bool, expanded: bool) -> None:
+    for final_rank, row in enumerate(rows, 1):
+        method = "hybrid" if hybrid and "lexical_score" in row else "dense"
+        rerank = row.get("rerank_score")
+        reason = f"{method} retrieval"
+        if rerank is not None:
+            reason += f"; reranked to #{final_rank} with relevance {float(rerank):.4f}"
+        else:
+            reason += f"; selected at rank #{final_rank}"
+        if row.get("context"):
+            reason += "; adjacent heading context expanded"
+        row["selection"] = {
+            "final_rank": final_rank,
+            "retrieval_rank": row.get("retrieval_rank"),
+            "method": method,
+            "dense_score": row.get("score"),
+            "lexical_score": row.get("lexical_score"),
+            "fusion_score": row.get("fusion_score"),
+            "rerank_score": rerank,
+            "context_expanded": bool(row.get("context")),
+            "reason": reason,
+        }
+
+
+def token_cost_estimate(query: str, rerank_pool: list[dict], final_rows: list[dict], rcfg: dict) -> dict:
+    """Model-independent approximation; local inference has no API-dollar charge."""
+    max_chars = int(rcfg.get("max_chars_per_candidate", 800))
+    query_tokens = estimate_tokens(query)
+    rerank_input_tokens = sum(estimate_tokens(str(r.get("content") or "")[:max_chars]) for r in rerank_pool)
+    result_tokens = sum(estimate_tokens(str(r.get("content") or "")) for r in final_rows)
+    rerank_output_tokens = len(rerank_pool) if rcfg.get("enabled") else 0
+    return {
+        "provider": "local",
+        "currency_cost_usd": 0.0,
+        "estimated": True,
+        "query_tokens": query_tokens,
+        "rerank_input_tokens": rerank_input_tokens,
+        "rerank_output_tokens": rerank_output_tokens,
+        "returned_context_tokens": result_tokens,
+        "total_model_input_tokens": query_tokens + rerank_input_tokens,
+    }
+
+
 def should_apply_lexical(dense: list[dict], candidate_k: int, scfg: dict) -> tuple[bool, str | None]:
     """Use lexical retrieval only when dense retrieval is weak or undersupplied."""
     if not scfg.get("hybrid_enabled"):
@@ -281,6 +375,7 @@ async def semantic_search(
     eff = await settings.effective()
     scfg = eff["search"]
     rcfg = eff.get("rerank", {})
+    explicit_top_k = top_k is not None
     top_k = int(top_k or scfg["top_k"])
     top_k = max(1, min(top_k, scfg["max_top_k"]))
     min_score = float(min_score if min_score is not None else scfg["min_score"])
@@ -360,6 +455,8 @@ async def semantic_search(
                 results = fuse_rankings([dense, lexical], int(scfg["fusion_rank_constant"]))
             else:
                 results = dense
+            for retrieval_rank, item in enumerate(results, 1):
+                item["retrieval_rank"] = retrieval_rank
             if scfg.get("expand_heading_context"):
                 t = time.perf_counter()
                 await _expand_headings(results, int(scfg["heading_context_chars"]))
@@ -390,16 +487,30 @@ async def semantic_search(
             return reranked[:top_k], rerank_pool, rerank_ms, rerank_error
 
         await runtime_scheduler.ensure_resident(client, requirements)
-        final_results, rerank_pool, rerank_ms, rerank_error = await execute_search_pipeline()
+        ranked_results, rerank_pool, rerank_ms, rerank_error = await execute_search_pipeline()
+        effective_top_k, adaptive_top_k = choose_adaptive_top_k(
+            ranked_results, top_k, scfg, explicit=explicit_top_k
+        )
+        final_results = ranked_results[:effective_top_k]
+        annotate_selection(final_results, hybrid=hybrid, expanded=expanded)
+        usefulness = retrieval_usefulness(final_results, scfg)
+        cost = token_cost_estimate(query, rerank_pool, final_results, rcfg)
         response = {
             "query": query,
             "results": final_results,
             "collections_searched": [c["name"] for c in cols],
             "filters_applied": filters.to_dict(),
             "total_candidates": len(results),
-            "retrieval": {"hybrid_requested": hybrid_requested, "hybrid": hybrid, "lexical_skipped_reason": lexical_skipped_reason, "expanded": expanded,
-                          "timings_ms": {"dense": round(dense_ms, 2), "lexical": round(lexical_ms, 2),
-                                         "heading": round(heading_ms, 2), "embedding": round(embedding_ms, 2)}},
+            "retrieval": {
+                "hybrid_requested": hybrid_requested, "hybrid": hybrid,
+                "lexical_skipped_reason": lexical_skipped_reason, "expanded": expanded,
+                "requested_top_k": top_k, "effective_top_k": effective_top_k,
+                "adaptive_top_k": adaptive_top_k,
+                "usefulness": usefulness,
+                "token_cost": cost,
+                "timings_ms": {"dense": round(dense_ms, 2), "lexical": round(lexical_ms, 2),
+                               "heading": round(heading_ms, 2), "embedding": round(embedding_ms, 2)}
+            },
             "rerank": {
                 "enabled": bool(rcfg.get("enabled")),
                 "applied": bool(rcfg.get("enabled") and rerank_pool and not rerank_error),
@@ -421,6 +532,10 @@ async def semantic_search(
             "candidate_count": len(results),
             "result_count": len(final_results),
             "top_score": final_results[0]["score"] if final_results else None,
+            "usefulness_score": usefulness["score"],
+            "effective_top_k": effective_top_k,
+            "estimated_model_input_tokens": cost["total_model_input_tokens"],
+            "returned_context_tokens": cost["returned_context_tokens"],
         })
         response["trace_id"] = trace_id
         return response
