@@ -22,6 +22,7 @@ from .classification_runtime import classification_worker
 from .config import env
 from .db import db
 from .ingest import worker
+from .graph_retrieval import graph_worker
 from .mcp_server import create_mcp
 from .model_runtime import runtime_scheduler
 from .settings import settings
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
     await worker.start()
     await classification_worker.start()
     await source_worker.start()
+    await graph_worker.start()
     await db.event("Servidor RAG iniciado")
     log.info("RAG server pronto em %s:%s (MCP: %s)", env.app_host, env.app_port,
              "/mcp" if mcp else "desabilitado")
@@ -60,6 +62,7 @@ async def lifespan(app: FastAPI):
             yield
     else:
         yield
+    await graph_worker.stop()
     await source_worker.stop()
     await classification_worker.stop()
     await worker.stop()

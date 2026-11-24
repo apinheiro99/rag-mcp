@@ -3,6 +3,7 @@
 -- PostgreSQL + pgvector
 -- ============================================================
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
@@ -128,3 +129,13 @@ CREATE INDEX IF NOT EXISTS chunks_content_english_fts_idx
 ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS dense_ms DOUBLE PRECISION;
 ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS lexical_ms DOUBLE PRECISION;
 ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS heading_ms DOUBLE PRECISION;
+
+-- Persistent CPU evidence graph: deterministic named-concept mentions per chunk.
+CREATE TABLE IF NOT EXISTS graph_mentions (
+    chunk_id      UUID NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+    document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    concept       TEXT NOT NULL,
+    PRIMARY KEY (chunk_id, concept)
+);
+CREATE INDEX IF NOT EXISTS graph_mentions_concept_idx ON graph_mentions(concept);
+CREATE INDEX IF NOT EXISTS graph_mentions_document_idx ON graph_mentions(document_id);

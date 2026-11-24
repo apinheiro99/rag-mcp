@@ -1,31 +1,186 @@
-"""Experimental evidence graph: document sections and shared named concepts.
+"""Persistent CPU evidence graph over deterministic named-concept mentions.
 
-No generated facts or graph database required. Edges are co-occurrence, not
-asserted semantic relations. This experiment is deliberately opt-in.
+This intentionally avoids query-time LLM/GPU work. Mentions are materialized during
+indexing and lazily backfilled for older documents.
 """
+from __future__ import annotations
+
 from collections import defaultdict
 import re
+from typing import Any
 
-CONCEPT = re.compile(r"\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|[A-Z][A-Z0-9]{2,})\b")
+from .db import db
+
+CONCEPT = re.compile(r"\b(?:[A-Z][A-Za-z0-9]{2,}(?:\s+[A-Z][A-Za-z0-9]{2,})*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+
+
+def extract_concepts(text: str) -> set[str]:
+    return {term.casefold() for term in CONCEPT.findall(text or "")}
+
+
+def _assemble(rows: list[dict[str, Any]], mentions: dict[str, set[str]], query: str, limit: int, *, persistent: bool) -> dict[str, Any]:
+    nodes = {str(r["chunk_id"]): r for r in rows}
+    inverted: dict[str, set[str]] = defaultdict(set)
+    for chunk_id, concepts in mentions.items():
+        if chunk_id in nodes:
+            for concept in concepts:
+                inverted[concept].add(chunk_id)
+
+    query_terms = extract_concepts(query)
+    edges: list[dict[str, Any]] = []
+    for concept, ids in sorted(inverted.items()):
+        ordered = sorted(ids)
+        if len(ordered) < 2:
+            continue
+        for i, source in enumerate(ordered):
+            for target in ordered[i + 1:]:
+                if nodes[source]["document_id"] == nodes[target]["document_id"]:
+                    continue
+                edges.append({
+                    "source": source,
+                    "target": target,
+                    "concept": concept,
+                    "type": "shared_mention",
+                    "query_match": concept in query_terms,
+                })
+    edges.sort(key=lambda e: (not e["query_match"], e["concept"], e["source"], e["target"]))
+    return {
+        "experimental": True,
+        "persistent": persistent,
+        "nodes": [
+            {"chunk_id": key, "document": row["document"], "location": row["location"]}
+            for key, row in nodes.items()
+        ],
+        "edges": edges[:limit],
+    }
 
 
 def evidence_graph(rows, query, limit):
-    nodes = {r["chunk_id"]: r for r in rows}
-    inverted = defaultdict(set)
-    for key, row in nodes.items():
-        for term in set(CONCEPT.findall(row["content"])):
-            inverted[term.casefold()].add(key)
-    query_terms = {t.casefold() for t in CONCEPT.findall(query)}
-    edges = []
-    for concept, ids in sorted(inverted.items()):
-        if len(ids) < 2:
-            continue
-        for a in sorted(ids):
-            for b in sorted(ids):
-                if a >= b or nodes[a]["document_id"] == nodes[b]["document_id"]:
-                    continue
-                edges.append({"source": a, "target": b, "concept": concept,
-                              "type": "shared_mention", "query_match": concept in query_terms})
-    edges.sort(key=lambda e: (not e["query_match"], e["concept"], e["source"], e["target"]))
-    return {"experimental": True, "nodes": [{"chunk_id": k, "document": r["document"],
-            "location": r["location"]} for k,r in nodes.items()], "edges": edges[:limit]}
+    mentions = {str(r["chunk_id"]): extract_concepts(r["content"]) for r in rows}
+    return _assemble(rows, mentions, query, limit, persistent=False)
+
+
+async def rebuild_document_mentions(document_id: str) -> int:
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT id, content FROM chunks WHERE document_id=%s ORDER BY seq",
+            (document_id,),
+        )
+        chunks = await cur.fetchall()
+        rows: list[tuple[str, str, str]] = []
+        for chunk in chunks:
+            for concept in extract_concepts(chunk["content"]):
+                rows.append((str(chunk["id"]), document_id, concept))
+        async with conn.transaction():
+            await conn.execute("DELETE FROM graph_mentions WHERE document_id=%s", (document_id,))
+            if rows:
+                await conn.executemany(
+                    "INSERT INTO graph_mentions(chunk_id,document_id,concept) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                    rows,
+                )
+        return len(rows)
+
+
+async def persistent_evidence_graph(rows: list[dict[str, Any]], query: str, limit: int) -> dict[str, Any]:
+    if not rows:
+        return _assemble(rows, {}, query, limit, persistent=True)
+
+    chunk_ids = [str(r["chunk_id"]) for r in rows]
+    document_ids = sorted({str(r["document_id"]) for r in rows})
+
+    async def fetch_mentions() -> dict[str, set[str]]:
+        async with db.pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT chunk_id, concept FROM graph_mentions WHERE chunk_id=ANY(%s::uuid[])",
+                (chunk_ids,),
+            )
+            found: dict[str, set[str]] = defaultdict(set)
+            for item in await cur.fetchall():
+                found[str(item["chunk_id"])].add(item["concept"])
+            return found
+
+    mentions = await fetch_mentions()
+    if not mentions:
+        for document_id in document_ids:
+            await rebuild_document_mentions(document_id)
+        mentions = await fetch_mentions()
+
+    return _assemble(rows, mentions, query, limit, persistent=True)
+
+
+async def graph_document_fingerprint(document_id: str) -> str:
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT encode(digest(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq), 'sha256'),'hex') AS fp
+               FROM chunks c WHERE c.document_id=%s""",
+            (document_id,),
+        )
+        row = await cur.fetchone()
+        return (row or {}).get("fp") or ""
+
+
+class GraphWorker:
+    def __init__(self, poll_interval: float = 10.0) -> None:
+        self.poll_interval = poll_interval
+        self._task = None
+        self._stop = None
+
+    async def start(self) -> None:
+        import asyncio
+        if self._task and not self._task.done():
+            return
+        self._stop = asyncio.Event()
+        self._task = asyncio.create_task(self._run(), name="graph-evidence-worker")
+
+    async def stop(self) -> None:
+        import asyncio
+        if not self._task:
+            return
+        self._stop.set()
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+
+    async def _next_stale_document(self) -> tuple[str, str] | None:
+        async with db.pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT d.id::text AS id,
+                          encode(digest(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq), 'sha256'),'hex') AS fp
+                   FROM documents d
+                   JOIN chunks c ON c.document_id=d.id
+                   WHERE d.status='ready'
+                   GROUP BY d.id, d.meta
+                   HAVING coalesce(d.meta->>'graph_fingerprint','') <>
+                          encode(digest(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq), 'sha256'),'hex')
+                   ORDER BY d.updated_at
+                   LIMIT 1"""
+            )
+            row = await cur.fetchone()
+            return (str(row["id"]), row["fp"]) if row else None
+
+    async def _mark_fingerprint(self, document_id: str, fp: str) -> None:
+        async with db.pool.connection() as conn:
+            await conn.execute(
+                """UPDATE documents
+                   SET meta=coalesce(meta,'{}'::jsonb) || jsonb_build_object('graph_fingerprint',%s),
+                       updated_at=updated_at
+                   WHERE id=%s""",
+                (fp, document_id),
+            )
+
+    async def _run(self) -> None:
+        import asyncio
+        while not self._stop.is_set():
+            item = await self._next_stale_document()
+            if not item:
+                await asyncio.sleep(self.poll_interval)
+                continue
+            document_id, fp = item
+            await rebuild_document_mentions(document_id)
+            await self._mark_fingerprint(document_id, fp)
+
+
+graph_worker = GraphWorker()
