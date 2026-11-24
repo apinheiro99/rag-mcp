@@ -115,6 +115,8 @@ ci-tag-red:
   needs:
     - "Publish GitHub"
   script:
+    - export RAG_TUNNEL_BINARY="$HOME/rag-prod/bin/tunnel-client"
+    - export RAG_TUNNEL_DIR="$HOME/rag-prod/tunnel"
     - bash scripts/deploy-prod.sh
   rules:
     - if: '$CI_COMMIT_TAG'

@@ -4,6 +4,8 @@ services:
     image: ${RAG_TUNNEL_BASE_IMAGE:-node:24-bookworm-slim}
     restart: unless-stopped
     user: "1000:1000"
+    env_file:
+      - ${RAG_TUNNEL_DIR}/runtime.env
     depends_on:
       app:
         condition: service_started
