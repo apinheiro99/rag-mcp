@@ -81,26 +81,43 @@ if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
 fi
 
 docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
+
 HEALTH_URL="http://127.0.0.1:${RAG_PORT:-8000}/api/health"
+APP_READY=false
 for attempt in $(seq 1 30); do
-  if curl -fsS "$HEALTH_URL" >/dev/null; then
-    if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
-      docker exec "${RAG_TUNNEL_CONTAINER_NAME:-rag-mcp-tunnel}" /usr/local/bin/tunnel-client health --port 8080 --require-control-plane-poll >/dev/null
+  health_json="$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)"
+  if [ -n "$health_json" ]; then
+    reported_commit="$(printf '%s' "$health_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("build",{}).get("commit",""))' 2>/dev/null || true)"
+    reported_status="$(printf '%s' "$health_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+    if [ "$reported_status" = "ok" ] && [ "$reported_commit" = "$CI_COMMIT_SHA" ]; then
+      APP_READY=true
+      break
     fi
-    EVAL_ARGS=(
-      python /srv/rag/scripts/evaluate_retrieval.py
-      --url http://127.0.0.1:8000/mcp
-      --cases /srv/rag/examples/evaluation/retrieval.json
-      --output /tmp/rag-retrieval-eval.json
-      --k 5 --min-recall 0.80 --min-mrr 0.60 --max-avg-ms 1500
-    )
-    if [ -n "${RAG_API_TOKEN:-}" ]; then
-      EVAL_ARGS+=(--bearer-token "$RAG_API_TOKEN")
-    fi
-    docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app "${EVAL_ARGS[@]}"
-    exit 0
   fi
   sleep 2
 done
-echo "health check failed after startup grace period: $HEALTH_URL" >&2
-exit 1
+[ "$APP_READY" = true ] || { echo "application readiness failed: $HEALTH_URL did not report commit $CI_COMMIT_SHA" >&2; exit 1; }
+
+if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
+  TUNNEL_READY=false
+  for attempt in $(seq 1 30); do
+    if docker exec "${RAG_TUNNEL_CONTAINER_NAME:-rag-mcp-tunnel}"          /usr/local/bin/tunnel-client health --port 8080 --require-control-plane-poll >/dev/null 2>&1; then
+      TUNNEL_READY=true
+      break
+    fi
+    sleep 2
+  done
+  [ "$TUNNEL_READY" = true ] || { echo "secure MCP tunnel did not become ready" >&2; exit 1; }
+fi
+
+EVAL_ARGS=(
+  python /srv/rag/scripts/evaluate_retrieval.py
+  --url http://127.0.0.1:8000/mcp
+  --cases /srv/rag/examples/evaluation/retrieval.json
+  --output /tmp/rag-retrieval-eval.json
+  --k 5 --min-recall 0.80 --min-mrr 0.60 --max-avg-ms 1500
+)
+if [ -n "${RAG_API_TOKEN:-}" ]; then
+  EVAL_ARGS+=(--bearer-token "$RAG_API_TOKEN")
+fi
+docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app "${EVAL_ARGS[@]}"
