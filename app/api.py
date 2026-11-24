@@ -507,8 +507,6 @@ async def upload_documents(collection_id: str = Form(...),
                            paths: list[str] = Form(default=[])):
     auto_classify = collection_id == AUTO_COLLECTION_SENTINEL
     if auto_classify:
-        if not await settings.get("llm_model"):
-            raise HTTPException(400, "automatic classification requires a configured LLM model")
         default_model = await settings.get("embedding_model")
         if not default_model:
             raise HTTPException(400, "automatic classification requires a configured embedding model")
@@ -740,15 +738,15 @@ class ClassifyDocumentRequest(BaseModel):
 @router.post("/documents/{doc_id}/classify")
 async def classify_document_route(doc_id: str, body: ClassifyDocumentRequest):
     doc_id = _uuid(doc_id)
-    model = body.model or await settings.get("llm_model")
+    model = body.model or await settings.get("embedding_model")
     if not model:
-        raise HTTPException(400, "select an LLM model before classifying")
+        raise HTTPException(400, "select an embedding model before classifying")
     try:
         result = await classify_document_runtime(doc_id, model)
     except ExtractionError as e:
         raise HTTPException(422, f"could not extract document sample: {e}") from e
     except LMStudioError as e:
-        raise HTTPException(503, f"LLM unavailable: {e}") from e
+        raise HTTPException(503, f"embedding model unavailable: {e}") from e
     except ValueError as e:
         raise HTTPException(502, f"invalid classifier response: {e}") from e
     eff = await settings.effective()
@@ -771,8 +769,8 @@ class BulkClassifyRequest(BaseModel):
 
 @router.post("/documents/classify-bulk")
 async def classify_documents_bulk(body: BulkClassifyRequest):
-    if not await settings.get("llm_model"):
-        raise HTTPException(400, "select an LLM model before classifying")
+    if not await settings.get("embedding_model"):
+        raise HTTPException(400, "select an embedding model before classifying")
     if not body.document_ids and not body.all_filtered:
         raise HTTPException(400, "select document_ids or set all_filtered=true")
 

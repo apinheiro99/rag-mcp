@@ -12,7 +12,6 @@ from .db import db
 from .extraction import ExtractedDoc, ExtractionError, extract
 from .ingest import extraction_cache_path
 from .lmstudio import LMStudioError
-from .model_runtime import ModelRequirement, runtime_scheduler
 from .settings import settings
 
 log = logging.getLogger("rag.classification_runtime")
@@ -33,9 +32,9 @@ async def _sample_extract(doc: dict) -> ExtractedDoc:
 
 
 async def classify_document_runtime(doc_id: str, model: str | None = None) -> dict[str, Any]:
-    model = model or await settings.get("llm_model")
+    model = model or await settings.get("embedding_model")
     if not model:
-        raise ValueError("select an LLM model before classifying")
+        raise ValueError("select an embedding model before classifying")
 
     eff = await settings.effective()
     async with db.pool.connection() as conn:
@@ -65,22 +64,17 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
     extracted = await _sample_extract(doc)
     client = await settings.lmstudio_client(timeout=eff["auto"]["request_timeout"], retries=1)
     cfg = eff["classification"]
-    result = await runtime_scheduler.run(
-        f"classify:{doc_id}",
+    result = await classify_document(
         client,
-        [ModelRequirement(model, int(cfg["context_length"]))],
-        lambda: classify_document(
-            client,
-            model,
-            filename=doc["filename"],
-            source_path=doc["source_path"],
-            text=extracted.full_text(),
-            collections=collections,
-            sample_chars=eff["auto"]["sample_chars"],
-            timeout=eff["auto"]["request_timeout"],
-            reasoning_effort=cfg.get("reasoning_effort"),
-            seed=cfg.get("seed"),
-        ),
+        model,
+        filename=doc["filename"],
+        source_path=doc["source_path"],
+        text=extracted.full_text(),
+        collections=collections,
+        sample_chars=eff["auto"]["sample_chars"],
+        timeout=eff["auto"]["request_timeout"],
+        match_threshold=float(cfg.get("embedding_match_threshold", 0.55)),
+        margin_threshold=float(cfg.get("embedding_margin_threshold", 0.03)),
     )
     threshold = float(cfg["confidence_threshold"])
     result.update({

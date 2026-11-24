@@ -31,7 +31,7 @@ def test_primary_navigation_is_english():
         assert f">{label}</button>" in HTML
 
 
-def test_import_exposes_automatic_classification_when_llm_is_configured():
+def test_import_exposes_automatic_classification_when_embedding_is_configured():
     assert 'Automatic classification' in JS
     assert '__auto__' in JS
     assert 'staging_collection_name' in JS

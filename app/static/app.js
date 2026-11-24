@@ -105,11 +105,11 @@ function fillCollectionSelects() {
   const opts = state.collections.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
   const imp = $("importCollection");
   const prev = imp.value;
-  const autoOption = state.settings.llm_model
+  const autoOption = state.settings.embedding_model
     ? `<option value="__auto__">✨ Automatic classification</option>`
-    : `<option value="__auto__" disabled>✨ Automatic classification — configure LLM first</option>`;
+    : `<option value="__auto__" disabled>✨ Automatic classification — configure embedding model first</option>`;
   imp.innerHTML = autoOption + (opts || `<option value="">— create a collection —</option>`);
-  if (prev === "__auto__" && state.settings.llm_model) imp.value = prev;
+  if (prev === "__auto__" && state.settings.embedding_model) imp.value = prev;
   else if (prev && state.collections.some((c) => c.id === prev)) imp.value = prev;
   renderDocCollectionFilter();
 }
