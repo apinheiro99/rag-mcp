@@ -16,7 +16,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY config ./config
 COPY scripts/evaluate_retrieval.py ./scripts/evaluate_retrieval.py
-COPY scripts/migrate_library_taxonomy.py ./scripts/migrate_library_taxonomy.py
 COPY examples/evaluation/retrieval.json ./examples/evaluation/retrieval.json
 
 ENV DATA_DIR=/rag-private/data \
