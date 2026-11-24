@@ -24,6 +24,17 @@ search:
   top_k: 8                  # nº de trechos retornados por padrão
   max_top_k: 50             # teto aceito pela API/MCP
   min_score: 0.0            # score mínimo (cosseno, 0..1)
+  include_all_collections: true
+  hybrid_enabled: true
+  lexical_candidates: 24
+  fusion_rank_constant: 60
+  expand_heading_context: true
+  heading_context_chars: 1500
+  graph_top_k: 12
+  graph_max_edges: 40
+  adaptive_enabled: true
+  adaptive_min_rerank_score: 0.45
+  adaptive_candidate_limit: 24
   hnsw_ef_search: 64        # qualidade/velocidade do índice HNSW
 
 rerank:

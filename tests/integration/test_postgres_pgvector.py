@@ -1116,6 +1116,9 @@ async def test_collection_resolution_uses_default_search_unless_explicit(live_db
     assert enabled_name in default_names
     assert disabled_name not in default_names
 
+    global_rows = await search_module._resolve_collections(None, filters, include_all=True)
+    assert {enabled_name, disabled_name} <= {row['name'] for row in global_rows}
+
     explicit_rows = await search_module._resolve_collections([disabled_name], filters)
     assert [row['name'] for row in explicit_rows] == [disabled_name]
 
@@ -1419,3 +1422,24 @@ async def test_bulk_classification_queues_only_ready_documents(live_db, monkeypa
     assert ready["meta"]["auto_classify"] is True
     assert "auto_classify_attempts" not in ready["meta"]
     assert pending["meta"].get("auto_classify") is not True
+
+
+@pytest.mark.asyncio
+async def test_lexical_retrieval_uses_real_postgres_and_respects_scope(live_db, monkeypatch):
+    monkeypatch.setattr(search_module, "db", live_db)
+    col, doc, chunk = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, col, f"lexical-{col}", model="integration-test", dim=3)
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+               content_sha256,size_bytes,status)
+               VALUES (%s,%s,'lexical.txt','lexical.txt','blobs/test',%s,100,'ready')""",
+            (doc,col,uuid.uuid4().hex))
+        await conn.execute(
+            """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+               VALUES (%s,%s,%s,0,'Quizzical platypuses retrieve documents efficiently.',TRUE)""",
+            (chunk,doc,col))
+    rows = await search_module._lexical_search("How does a quizzical platypus retrieve?", [{"id":col}], search_module.SearchFilters(), 5)
+    assert rows and rows[0]["chunk_id"] == chunk
+    assert rows[0]["lexical_score"] > 0
+    assert not await search_module._lexical_search("quizzical", [{"id":uuid.uuid4()}], search_module.SearchFilters(), 5)

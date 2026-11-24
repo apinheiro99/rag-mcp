@@ -1,0 +1,9 @@
+[
+ {"id":"hybrid","query":"How does hybrid retrieval combine sparse and dense search with reciprocal rank fusion?","expected_sources":["Building AI-Intensive Python Applications"]},
+ {"id":"metrics","query":"What retrieval metrics measure precision and recall in RAG?","expected_sources":["Building AI-Intensive Python Applications"]},
+ {"id":"graph","query":"How does GraphRAG use entity relationships and knowledge graphs?","expected_sources":["Essential GraphRAG","Building+AI+Agents+with+LLMs"]},
+ {"id":"jakob","query":"What does Jakob's Law say about familiar interface conventions?","expected_sources":["Laws of UX"]},
+ {"id":"miller","query":"What does Miller's Law say about working memory in interface design?","expected_sources":["Laws of UX"]},
+ {"id":"doherty","query":"What is the Doherty Threshold and why does feedback latency matter?","expected_sources":["Laws of UX"]},
+ {"id":"rerank","query":"How does reranking improve retrieved passages in a RAG pipeline?","expected_sources":["Building AI-Intensive Python Applications","Building+AI+Agents+with+LLMs"]}
+]

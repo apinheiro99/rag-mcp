@@ -120,3 +120,7 @@ CREATE TABLE IF NOT EXISTS retrieval_events (
     error           TEXT
 );
 CREATE INDEX IF NOT EXISTS retrieval_events_ts_idx ON retrieval_events(ts DESC);
+
+-- English lexical retrieval, alongside dense vectors.
+CREATE INDEX IF NOT EXISTS chunks_content_english_fts_idx
+    ON chunks USING gin (to_tsvector('english', content));

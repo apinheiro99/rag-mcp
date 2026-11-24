@@ -17,6 +17,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import env
+from .graph_retrieval import evidence_graph
+from .settings import settings
 from .db import db
 from .extraction import ExtractionError, extract
 from .ingest import extraction_cache_path
@@ -29,7 +31,7 @@ log = logging.getLogger("rag.mcp")
 
 INSTRUCTIONS = """Servidor RAG self-hosted. Use rag_search para buscar conhecimento
 nas bases indexadas. Por padrão, NUNCA filtre por coleção: omita `collections` e
-pesquise todas as coleções marcadas para busca padrão. Só use `collections` quando
+pesquise globalmente; o escopo padrão é definido pela configuração do servidor. Só use `collections` quando
 o usuário pedir explicitamente uma coleção/base específica; esse pedido explícito
 funciona mesmo se a coleção estiver fora da busca padrão. Cada resultado traz o
 trecho (content), score de relevância, documento/caminho de origem, coleção,
@@ -74,7 +76,7 @@ def create_mcp() -> FastMCP:
         Args:
             query: pergunta ou texto a buscar (linguagem natural).
             collections: nomes/ids das coleções SOMENTE quando o usuário pedir explicitamente.
-                Omita para pesquisar todas as coleções habilitadas para busca padrão.
+                Omita para pesquisa global conforme configuração do servidor.
             document_ids: restringe a documentos específicos por UUID.
             authors: restringe por autor (match parcial, case-insensitive).
             source_paths: restringe ao caminho original exato.
@@ -99,6 +101,16 @@ def create_mcp() -> FastMCP:
             raise ValueError(str(e)) from e
         except LMStudioError as e:
             raise RuntimeError(f"LM Studio indisponível no servidor RAG: {e}") from e
+
+    @mcp.tool()
+    async def rag_evidence_graph(query: str) -> dict[str, Any]:
+        """Experimental local evidence graph over retrieved passages; shared mentions
+        are not verified semantic relationships. Use for exploratory cross-source
+        connections, not as a replacement for ordinary search.
+        """
+        cfg = (await settings.effective())["search"]
+        result = await semantic_search(query, top_k=cfg["graph_top_k"])
+        return {**result, "graph": evidence_graph(result["results"], query, cfg["graph_max_edges"])}
 
     @mcp.tool()
     async def rag_search_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str, Any]:

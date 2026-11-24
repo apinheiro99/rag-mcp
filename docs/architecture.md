@@ -1049,3 +1049,33 @@ With text-embedding-qwen3-embedding-8b resident alongside one reranker at a time
 - google/gemma-4-12b-qat: existing JSON strategy remained compatible; about 7.79 s rerank stage in the regression probe.
 
 These timings are diagnostic probes, not benchmark conclusions.
+
+## Retrieval experiments
+
+Unfiltered MCP searches now default to all indexed collections, without moving
+documents or changing collection flags. Set search.include_all_collections=false
+to restore the legacy default-search flags. Hybrid retrieval combines PostgreSQL
+English full-text ranking (not BM25) and dense vector ranking through reciprocal
+rank fusion. Positive cosine thresholds currently select dense-only retrieval.
+Adaptive retrieval expands the candidate pool once when the first rerank score is
+below its configured heuristic threshold; it does not certify answer relevance.
+Heading-only results can be expanded with an adjacent same-section passage and
+explicit provenance.
+
+The experimental rag_evidence_graph tool builds a query-local graph of shared
+named mentions across retrieved documents. This is a lightweight exploratory
+prototype, not a full entity/relation extraction or community-summary GraphRAG.
+
+Run the read-only retrieval benchmark using scripts/evaluate_retrieval.py with
+--url, --cases, --output and --k. The example cases measure known-source recall
+and reciprocal rank; they are not exhaustive passage-level relevance judgments.
+Baseline on the existing server (7 queries, k=5, no filters): known-source
+recall 0.4286, MRR 0.2619, mean latency 3249 ms, mean short passages 1.5714.
+Repeat after deployment; compare identical cases and model settings.
+
+Secure MCP Tunnel: use the existing deploy/tunnel.compose.yml sidecar. Operator
+provisions the tunnel client configuration and credentials outside the repository.
+Provide the deployment host paths through RAG_TUNNEL_BINARY and RAG_TUNNEL_DIR
+(the latter contains tunnel-client.yaml). Route only the MCP endpoint
+http://app:8000/mcp from the sidecar network. Do not commit credentials or expose
+the administrative API. Verify tools/list and a read-only rag_search after setup.

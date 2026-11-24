@@ -35,6 +35,7 @@ class SearchError(Exception):
 async def _resolve_collections(
     identifiers: list[str] | None,
     filters: SearchFilters,
+    include_all: bool = False,
 ) -> list[dict]:
     async with db.pool.connection() as conn:
         if identifiers:
@@ -60,7 +61,8 @@ async def _resolve_collections(
         else:
             cur = await conn.execute(
                 """SELECT id, name, embedding_model, embedding_dim, default_search FROM collections
-                   WHERE embedding_model IS NOT NULL AND default_search=TRUE"""
+                   WHERE embedding_model IS NOT NULL AND (default_search=TRUE OR %s)""",
+                (include_all,),
             )
             rows = await cur.fetchall()
     return [r for r in rows if r["embedding_model"] and r["embedding_dim"]]
@@ -116,7 +118,7 @@ async def _search_group(
                     JOIN chunks c ON c.id = v.chunk_id
                     JOIN documents d ON d.id = c.document_id
                     JOIN collections col ON col.id = c.collection_id
-                    WHERE c.collection_id = ANY(%s::uuid[]){where_filter}
+                    WHERE c.collection_id = ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{where_filter}
                     ORDER BY v.embedding <=> %s::{coltype}
                     LIMIT %s""",
                 (lit, col_ids, *filter_params, lit, top_k),
@@ -124,6 +126,89 @@ async def _search_group(
             rows = await cur.fetchall()
     db_ms = (time.perf_counter() - t0) * 1000
     return rows, embedding_ms, db_ms
+
+
+def fuse_rankings(rankings: list[list[dict]], rank_constant: int) -> list[dict]:
+    """Reciprocal rank fusion; never equate lexical and cosine scores."""
+    merged = {}
+    for ranking in rankings:
+        seen = set()
+        for rank, row in enumerate(ranking, 1):
+            key = str(row["chunk_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            item = merged.setdefault(key, {**row, "fusion_score": 0.0})
+            if "lexical_score" in row:
+                item["lexical_score"] = row["lexical_score"]
+            item["fusion_score"] += 1 / (rank_constant + rank)
+    return sorted(merged.values(), key=lambda x: (-x["fusion_score"], str(x["chunk_id"])))
+
+
+async def _lexical_search(query, cols, filters, limit):
+    filter_sql, params = filters.sql()
+    extra = f" AND {filter_sql}" if filter_sql else ""
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            f"""SELECT c.id AS chunk_id, c.seq, c.content, c.loc,
+                       d.id AS document_id, d.filename, d.source_path, d.meta,
+                       col.name AS collection,
+                       ts_rank_cd(to_tsvector('english', c.content), q.term) AS lexical_score
+                FROM chunks c JOIN documents d ON d.id=c.document_id
+                JOIN collections col ON col.id=c.collection_id
+                CROSS JOIN (SELECT to_tsquery('english', string_agg(quote_literal(lexeme), ' | ')) AS term
+                            FROM unnest(tsvector_to_array(to_tsvector('english', %s))) AS t(lexeme)) q
+                WHERE c.collection_id = ANY(%s::uuid[]) AND c.embedded
+                  AND d.status='ready'
+                  AND to_tsvector('english', c.content) @@ q.term {extra}
+                ORDER BY lexical_score DESC, c.id LIMIT %s""",
+            (query, [str(c["id"]) for c in cols], *params, limit),
+        )
+        return await cur.fetchall()
+
+
+def _format_result(r):
+    return {
+        "chunk_id": str(r["chunk_id"]), "document_id": str(r["document_id"]),
+        "content": r["content"], "score": round(float(r.get("score", 0)), 4),
+        "collection": r["collection"], "document": r["filename"],
+        "source_path": r["source_path"], "location": r["loc"],
+        "location_label": location_label(r["loc"]), "chunk_seq": r["seq"],
+        "metadata": r["meta"],
+        **({"lexical_score": float(r["lexical_score"])} if "lexical_score" in r else {}),
+    }
+
+
+def is_heading_only(row: dict) -> bool:
+    heading = row.get("location", {}).get("heading")
+    return bool(heading and " ".join(row["content"].split()).casefold() ==
+                " ".join(str(heading).split()).casefold())
+
+
+async def _expand_headings(rows, max_chars):
+    """Attach adjacent text from the same section, keeping both chunk references."""
+    targets = [r["chunk_id"] for r in rows if is_heading_only(r)]
+    if not targets:
+        return
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT a.id AS anchor_id, b.id AS neighbor_id, b.content, b.loc, b.seq
+               FROM chunks a JOIN chunks b
+                 ON b.document_id=a.document_id AND b.seq=a.seq+1
+               WHERE a.id=ANY(%s::uuid[]) AND b.embedded
+                 AND a.loc->>'heading'=b.loc->>'heading'
+                 AND a.loc->>'chapter_index' IS NOT DISTINCT FROM b.loc->>'chapter_index'""",
+            (targets,),
+        )
+        neighbors = {str(r["anchor_id"]): r for r in await cur.fetchall()}
+    for row in rows:
+        neighbor = neighbors.get(row["chunk_id"])
+        if neighbor:
+            row["context"] = {"chunk_id": str(neighbor["neighbor_id"]),
+                              "chunk_seq": neighbor["seq"],
+                              "location": neighbor["loc"],
+                              "content": neighbor["content"][:max_chars]}
+            row["content"] += "\n\n" + row["context"]["content"]
 
 
 async def semantic_search(
@@ -150,10 +235,10 @@ async def semantic_search(
     min_score = float(min_score if min_score is not None else scfg["min_score"])
     candidate_k = top_k
     if rcfg.get("enabled"):
-        candidate_k = min(
+        candidate_k = max(top_k, min(
             int(rcfg.get("max_candidates", 32)),
             max(top_k, top_k * int(rcfg.get("candidate_multiplier", 4))),
-        )
+        ))
 
     started = time.perf_counter()
     embedding_ms = 0.0
@@ -162,7 +247,7 @@ async def semantic_search(
     cols: list[dict] = []
 
     try:
-        cols = await _resolve_collections(collections, filters)
+        cols = await _resolve_collections(collections, filters, bool(scfg.get("include_all_collections")))
         if not cols:
             response = {
                 "query": query,
@@ -192,54 +277,55 @@ async def semantic_search(
         if reranker_model:
             requirements.append(ModelRequirement(reranker_model, context_length))
 
+        hybrid = bool(scfg.get("hybrid_enabled")) and min_score <= 0
+        adaptive = bool(scfg.get("adaptive_enabled")) and bool(rcfg.get("enabled"))
+        expanded = False
         async def execute_search_pipeline():
-            nonlocal embedding_ms, db_ms, results
+            nonlocal embedding_ms, db_ms, results, expanded
+            dense = []
+            lexical = []
+            depth = max(candidate_k, int(scfg["adaptive_candidate_limit"])) if adaptive else candidate_k
             for (model, dim), group_cols in groups.items():
                 rows, emb_elapsed, db_elapsed = await _search_group(
-                    query=query,
-                    model=model,
-                    dim=dim,
-                    group_cols=group_cols,
-                    filters=filters,
-                    top_k=candidate_k,
-                    scfg=scfg,
-                    client=client,
+                    query=query, model=model, dim=dim, group_cols=group_cols,
+                    filters=filters, top_k=depth, scfg=scfg, client=client,
                 )
                 embedding_ms += emb_elapsed
                 db_ms += db_elapsed
-                for r in rows:
-                    score = float(r["score"])
-                    if score < min_score:
-                        continue
-                    results.append({
-                        "chunk_id": str(r["chunk_id"]),
-                        "document_id": str(r["document_id"]),
-                        "content": r["content"],
-                        "score": round(score, 4),
-                        "collection": r["collection"],
-                        "document": r["filename"],
-                        "source_path": r["source_path"],
-                        "location": r["loc"],
-                        "location_label": location_label(r["loc"]),
-                        "chunk_seq": r["seq"],
-                        "metadata": r["meta"],
-                    })
-
-            results.sort(key=lambda x: x["score"], reverse=True)
+                dense.extend(_format_result(r) for r in rows if float(r["score"]) >= min_score)
+            dense.sort(key=lambda x: x["score"], reverse=True)
+            if hybrid:
+                t = time.perf_counter()
+                lexical = [_format_result(r) for r in await _lexical_search(
+                    query, cols, filters, int(scfg["lexical_candidates"]))]
+                db_ms += (time.perf_counter()-t)*1000
+                results = fuse_rankings([dense, lexical], int(scfg["fusion_rank_constant"]))
+            else:
+                results = dense
+            if scfg.get("expand_heading_context"):
+                await _expand_headings(results, int(scfg["heading_context_chars"]))
             rerank_pool = results[:candidate_k]
             rerank_started = time.perf_counter()
             rerank_error = None
             reranked = rerank_pool
             if rcfg.get("enabled") and rerank_pool:
                 try:
-                    reranked = await rerank_results(
-                        query, rerank_pool, {**rcfg, "model": reranker_model}, client
-                    )
+                    cfg = {**rcfg, "model": reranker_model}
+                    reranked = await rerank_results(query, rerank_pool, cfg, client)
+                    if (adaptive and reranked and
+                        reranked[0].get("rerank_score", 1) < float(scfg["adaptive_min_rerank_score"])):
+                        extra = results[candidate_k:depth]
+                        if extra:
+                            second = await rerank_results(query, extra, cfg, client)
+                            rerank_pool = rerank_pool + extra
+                            reranked = sorted(reranked + second,
+                                key=lambda x: (x["rerank_score"], x["score"]), reverse=True)
+                            expanded = True
                 except Exception as exc:
                     rerank_error = f"{type(exc).__name__}: {exc}"
                     if not rcfg.get("fail_open", True):
                         raise
-                    log.warning("rerank failed; using vector ranking: %s", rerank_error)
+                    log.warning("rerank failed; using retrieval ranking: %s", rerank_error)
             rerank_ms = (time.perf_counter() - rerank_started) * 1000 if rcfg.get("enabled") and rerank_pool else 0.0
             return reranked[:top_k], rerank_pool, rerank_ms, rerank_error
 
@@ -252,9 +338,10 @@ async def semantic_search(
             "collections_searched": [c["name"] for c in cols],
             "filters_applied": filters.to_dict(),
             "total_candidates": len(results),
+            "retrieval": {"hybrid": hybrid, "expanded": expanded},
             "rerank": {
                 "enabled": bool(rcfg.get("enabled")),
-                "applied": bool(rcfg.get("enabled") and rerank_pool),
+                "applied": bool(rcfg.get("enabled") and rerank_pool and not rerank_error),
                 "candidate_count": len(rerank_pool),
                 "duration_ms": round(rerank_ms, 2),
                 "error": rerank_error,
