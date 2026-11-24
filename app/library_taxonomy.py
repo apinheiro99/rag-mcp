@@ -12,19 +12,15 @@ from typing import Any
 from .db import db
 from .settings import settings
 
-BOOK_LIBRARY = "Informática"
+BOOK_LIBRARY = "Computer Books"
 # Compatibility alias for callers; value intentionally points to the new canonical name.
 COMPUTER_BOOKS = BOOK_LIBRARY
-LEGACY_BOOK_LIBRARY = "Computer Books"
+LEGACY_BOOK_LIBRARY = "Informática"
 KNOWLEDGE_BASE = "Knowledge Base"
 RAG_SOURCE_CODE = "RAG Source Code"
 CORE_COLLECTIONS = (BOOK_LIBRARY, KNOWLEDGE_BASE, RAG_SOURCE_CODE)
-TAXONOMY_VERSION = 2
-INITIAL_CATEGORIES = (
-    ("Software Engineering", "Software design, architecture, testing, APIs, patterns, and development practices."),
-    ("Data & Databases", "Databases, data engineering, storage, SQL, and data-intensive systems."),
-    ("AI & RAG", "Artificial intelligence, LLMs, RAG, agents, embeddings, and related systems."),
-)
+TAXONOMY_VERSION = 3
+INITIAL_CATEGORIES: tuple[tuple[str, str], ...] = ()
 
 
 async def _taxonomy_version(conn) -> int:
@@ -90,7 +86,7 @@ async def ensure_core_collections(
         ingest_cfg["embedding_model"] = model
 
     specs = {
-        BOOK_LIBRARY: ("Technical books about software, data, systems, and AI.", True),
+        BOOK_LIBRARY: ("Books grouped only by user-defined broad categories.", True),
         KNOWLEDGE_BASE: ("Andre private knowledge base.", False),
         RAG_SOURCE_CODE: ("Searchable source code for this RAG repository.", False),
     }
@@ -128,6 +124,7 @@ async def ensure_core_collections(
                        ON CONFLICT (name) DO UPDATE SET
                          description=EXCLUDED.description,
                          default_search=EXCLUDED.default_search,
+                         embedding_model=coalesce(collections.embedding_model, EXCLUDED.embedding_model),
                          updated_at=now()
                        RETURNING *""",
                     (
@@ -138,6 +135,25 @@ async def ensure_core_collections(
                 core[name] = await cur.fetchone()
 
             books = core[BOOK_LIBRARY]
+            if model and not books.get("embedding_dim"):
+                dim_row = await (
+                    await conn.execute(
+                        """SELECT embedding_dim FROM collections
+                           WHERE embedding_model=%s AND embedding_dim IS NOT NULL
+                           ORDER BY updated_at DESC LIMIT 1""",
+                        (model,),
+                    )
+                ).fetchone()
+                if dim_row:
+                    books = await (
+                        await conn.execute(
+                            """UPDATE collections
+                               SET embedding_model=%s,embedding_dim=%s,updated_at=now()
+                               WHERE id=%s RETURNING *""",
+                            (model, dim_row["embedding_dim"], books["id"]),
+                        )
+                    ).fetchone()
+                    core[BOOK_LIBRARY] = books
             migrated_documents = 0
             removed_duplicates = 0
 
@@ -181,12 +197,6 @@ async def ensure_core_collections(
                 await conn.execute(
                     "DELETE FROM categories WHERE collection_id=%s", (books["id"],)
                 )
-                for name, description in INITIAL_CATEGORIES:
-                    await conn.execute(
-                        """INSERT INTO categories(id,collection_id,name,description)
-                           VALUES (%s,%s,%s,%s)""",
-                        (str(uuid.uuid4()), books["id"], name, description),
-                    )
                 await conn.execute(
                     """INSERT INTO settings(key,value,updated_at)
                        VALUES ('library_taxonomy_version',%s::jsonb,now())

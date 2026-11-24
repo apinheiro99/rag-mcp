@@ -34,7 +34,7 @@ def test_primary_navigation_is_english():
 def test_import_exposes_automatic_book_classification_without_staging_collection():
     assert 'Automatic classification' in JS
     assert '__auto__' in JS
-    assert 'Informática' in JS
+    assert 'Computer Books' in JS
     assert 'staging_collection_name' not in JS
 
 
@@ -104,13 +104,14 @@ def test_search_ui_exposes_usefulness_cost_topk_and_selection_reason():
     assert "selection?.reason" in js
 
 
-def test_settings_exposes_book_categories_and_yes_no_review():
+def test_settings_exposes_manual_book_category_management_only():
     html = Path("app/static/index.html").read_text()
     js = Path("app/static/app.js").read_text()
     assert 'id="categoriesList"' in html
     assert "createBookCategory()" in html
-    assert "reviewCategoryDecision" in js
-    assert "Yes</button>" in js
-    assert "No</button>" in js
+    assert "renameBookCategory" in js
+    assert "deleteBookCategory" in js
+    assert "reviewCategoryDecision" not in js
+    assert "Yes, add category" not in js
     assert "Uncategorized" in js
     assert "Top-level collections are fixed" in js
