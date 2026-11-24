@@ -10,15 +10,16 @@ from .db import db
 log = logging.getLogger("rag.retrieval_observability")
 
 
-async def record_retrieval(event: dict[str, Any]) -> None:
+async def record_retrieval(event: dict[str, Any]) -> int | None:
     try:
         async with db.pool.connection() as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 """INSERT INTO retrieval_events(
                        query_text, collections, filters, top_k, min_score,
                        embedding_ms, db_ms, total_ms, candidate_count,
                        result_count, top_score, error, dense_ms, lexical_ms, heading_ms)
-                   VALUES (%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   RETURNING id""",
                 (
                     event["query"],
                     json.dumps(event.get("collections", [])),
@@ -35,8 +36,11 @@ async def record_retrieval(event: dict[str, Any]) -> None:
                     event.get("dense_ms"), event.get("lexical_ms"), event.get("heading_ms"),
                 ),
             )
+            row = await cur.fetchone()
+            return int(row["id"]) if row else None
     except Exception:
         log.exception("falha ao registrar observabilidade de retrieval")
+        return None
 
 
 async def retrieval_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str, Any]:

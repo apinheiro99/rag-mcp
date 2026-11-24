@@ -126,6 +126,7 @@ ci-tag-red:
     - export RAG_TUNNEL_BINARY="$HOME/rag-prod/bin/tunnel-client"
     - export RAG_TUNNEL_DIR="$HOME/rag-prod/tunnel"
     - bash scripts/deploy-prod.sh
+    - python3 scripts/evaluate_retrieval.py --url http://127.0.0.1:${RAG_PORT:-8000}/mcp --cases examples/evaluation/retrieval.json --output /tmp/rag-retrieval-eval.json --k 5 --min-recall 0.80 --min-mrr 0.60 --max-avg-ms 1500
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
