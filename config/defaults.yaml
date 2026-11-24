@@ -74,11 +74,10 @@ classification:
   enabled: true
   staging_collection_name: Unclassified
   poll_interval_seconds: 2
-  confidence_threshold: 0.90
+  confidence_threshold: 0.55
   auto_apply_existing: true
-  context_length: 8192
-  reasoning_effort: none
-  seed: 42
+  embedding_match_threshold: 0.55
+  embedding_margin_threshold: 0.03
   max_attempts: 3
   retry_backoff_seconds: [60, 300, 1800]
 
