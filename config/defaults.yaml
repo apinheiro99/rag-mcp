@@ -27,6 +27,8 @@ search:
   include_all_collections: true
   hybrid_enabled: true
   lexical_candidates: 24
+  hybrid_min_dense_score: 0.55
+  hybrid_min_dense_candidates: 8
   fusion_rank_constant: 60
   expand_heading_context: true
   heading_context_chars: 1500
