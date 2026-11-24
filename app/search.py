@@ -35,7 +35,6 @@ class SearchError(Exception):
 async def _resolve_collections(
     identifiers: list[str] | None,
     filters: SearchFilters,
-    include_all: bool = False,
 ) -> list[dict]:
     async with db.pool.connection() as conn:
         if identifiers:
@@ -61,8 +60,7 @@ async def _resolve_collections(
         else:
             cur = await conn.execute(
                 """SELECT id, name, embedding_model, embedding_dim, default_search FROM collections
-                   WHERE embedding_model IS NOT NULL AND (default_search=TRUE OR %s)""",
-                (include_all,),
+                   WHERE embedding_model IS NOT NULL AND default_search=TRUE"""
             )
             rows = await cur.fetchall()
     return [r for r in rows if r["embedding_model"] and r["embedding_dim"]]
@@ -294,7 +292,7 @@ async def semantic_search(
     cols: list[dict] = []
 
     try:
-        cols = await _resolve_collections(collections, filters, bool(scfg.get("include_all_collections")))
+        cols = await _resolve_collections(collections, filters)
         if not cols:
             response = {
                 "query": query,

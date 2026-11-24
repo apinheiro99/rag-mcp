@@ -1052,9 +1052,9 @@ These timings are diagnostic probes, not benchmark conclusions.
 
 ## Retrieval experiments
 
-Unfiltered MCP searches now default to all indexed collections, without moving
-documents or changing collection flags. Set search.include_all_collections=false
-to restore the legacy default-search flags. Hybrid retrieval combines PostgreSQL
+Unfiltered MCP searches use only collections whose `Default search` flag is ON.
+Collections with `Default search` OFF are searched only when explicitly selected.
+Hybrid retrieval combines PostgreSQL
 English full-text ranking (not BM25) and dense vector ranking through reciprocal
 rank fusion. Positive cosine thresholds currently select dense-only retrieval.
 Adaptive retrieval expands the candidate pool once when the first rerank score is
@@ -1062,7 +1062,7 @@ below its configured heuristic threshold; it does not certify answer relevance.
 Heading-only results can be expanded with an adjacent same-section passage and
 explicit provenance.
 
-The `rag_evidence_graph` tool uses a persistent CPU evidence graph of deterministic named-concept mentions. A background worker continuously backfills the existing corpus and recomputes only ready documents whose chunk fingerprint changed. Query-time graph use is fail-open: if materialization for relevant content is not ready, the graph is reported unavailable and ordinary retrieval continues without waiting or rebuilding. This remains an evidence graph, not a full Microsoft GraphRAG implementation with LLM-based entity extraction or community summaries.
+The `rag_evidence_graph` tool uses a persistent CPU evidence graph of deterministic named-concept mentions. A background worker continuously backfills the existing corpus and recomputes only ready documents whose `processed_at` is newer than `graph_indexed_at`. Query-time graph use is fail-open: if materialization for relevant content is not ready, the graph is reported unavailable and ordinary retrieval continues without waiting or rebuilding. This remains an evidence graph, not a full Microsoft GraphRAG implementation with LLM-based entity extraction or community summaries.
 
 Run the read-only retrieval benchmark using scripts/evaluate_retrieval.py with
 --url, --cases, --output and --k. The example cases measure known-source recall

@@ -78,3 +78,13 @@ async def test_graph_worker_survives_iteration_failure(monkeypatch):
     worker._stop = asyncio.Event()
     await asyncio.wait_for(worker._run(), timeout=0.1)
     assert calls["n"] >= 2
+
+
+def test_extract_concepts_ignores_chat_role_artifacts_and_newline_joining():
+    concepts = extract_concepts("TOOL\nMake sure SYSTEM USER ASSISTANT Microsoft GraphRAG")
+    assert "tool" not in concepts
+    assert "system" not in concepts
+    assert "user" not in concepts
+    assert "assistant" not in concepts
+    assert "tool\nmake" not in concepts
+    assert "microsoft graphrag" in concepts

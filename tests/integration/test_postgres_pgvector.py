@@ -1116,9 +1116,6 @@ async def test_collection_resolution_uses_default_search_unless_explicit(live_db
     assert enabled_name in default_names
     assert disabled_name not in default_names
 
-    global_rows = await search_module._resolve_collections(None, filters, include_all=True)
-    assert {enabled_name, disabled_name} <= {row['name'] for row in global_rows}
-
     explicit_rows = await search_module._resolve_collections([disabled_name], filters)
     assert [row['name'] for row in explicit_rows] == [disabled_name]
 
