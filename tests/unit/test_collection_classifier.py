@@ -1,6 +1,6 @@
 import pytest
 
-from app.collection_classifier import classify_document, collection_profile, cosine_similarity, representative_sample
+from app.collection_classifier import classify_document, collection_profile, cosine_similarity, representative_sample, suggest_category
 
 COLLECTIONS = [
     {"name": "Python", "description": "Python books", "doc_count": 4, "examples": ["Fluent Python"]},
@@ -48,7 +48,10 @@ async def test_embedding_classifier_defers_ambiguous_match_without_creating_cate
         match_threshold=0.55, margin_threshold=0.03,
     )
     assert result["existing_collection"] is None
-    assert result["proposed_collection"] is None
+    assert result["proposed_collection"] == {
+        "name": "x",
+        "description": "Documents primarily about x.",
+    }
     assert result["new_collection_suggested"] is True
 
 
@@ -58,3 +61,20 @@ def test_representative_sample_spreads_across_document():
     assert "BEGIN_MARKER" in sample
     assert "MIDDLE_MARKER" in sample
     assert "END_MARKER" in sample
+
+
+def test_suggest_category_from_book_title():
+    suggestion = suggest_category(
+        "The Art of Software Testing, 3rd Edition.pdf",
+        "The Art of Software Testing, 3rd Edition.pdf",
+    )
+    assert suggestion["name"] == "Art Software Testing 3rd"
+    assert "Art Software Testing 3rd" in suggestion["description"]
+
+
+def test_suggest_category_strips_author_suffix():
+    suggestion = suggest_category(
+        "Automating DevOps with GitLab CI-CD Pipelines - Build -- Jane Doe -- ( WeLib.gl ).epub",
+        "",
+    )
+    assert suggestion["name"] == "Automating DevOps GitLab CI"
