@@ -41,30 +41,6 @@ def _uuid(value: str) -> str:
 
 
 # ----------------------------------------------------------------- health
-def _dev_reload_token() -> str:
-    roots = (env.defaults_file.parent, Path(__file__).resolve().parent)
-    latest = 0
-    for root in roots:
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
-            if path.is_file():
-                try:
-                    latest = max(latest, path.stat().st_mtime_ns)
-                except OSError:
-                    continue
-    return str(latest)
-
-
-@router.get("/dev/reload")
-async def dev_reload_state():
-    return {
-        "enabled": env.dev_reload,
-        "token": _dev_reload_token() if env.dev_reload else None,
-        "poll_ms": env.dev_reload_poll_ms,
-    }
-
-
 @router.get("/health")
 async def health():
     try:

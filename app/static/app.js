@@ -984,29 +984,8 @@ async function pollDocumentsClassification() {
   await loadDocuments();
 }
 
-/* ---------------- dev live reload ---------------- */
-let devReloadToken = null;
-async function pollDevReload() {
-  let delay = 1000;
-  try {
-    const data = await api("/api/dev/reload");
-    delay = data.poll_ms || delay;
-    if (!data.enabled) return;
-    if (devReloadToken === null) {
-      devReloadToken = data.token;
-    } else if (data.token && data.token !== devReloadToken) {
-      location.reload();
-      return;
-    }
-  } catch (_) {
-    // The backend can be briefly unavailable during reload.
-  }
-  setTimeout(pollDevReload, delay);
-}
-
 /* ---------------- boot ---------------- */
 (async function init() {
-  pollDevReload();
   try {
     await loadSettings();
     await loadCollections();

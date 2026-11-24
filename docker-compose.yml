@@ -8,7 +8,7 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - "${RAG_PRIVATE_PATH:-../rag-private}/postgres:/var/lib/postgresql/data"
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:${POSTGRES_EXPOSE_PORT:-5432}:5432"
     healthcheck:
@@ -37,8 +37,6 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       RAG_BUILD_VERSION: ${RAG_BUILD_VERSION:-dev}
       RAG_BUILD_COMMIT: ${RAG_BUILD_COMMIT:-}
-      RAG_DEV_RELOAD: ${RAG_DEV_RELOAD:-true}
-      RAG_DEV_RELOAD_POLL_MS: ${RAG_DEV_RELOAD_POLL_MS:-1000}
     ports:
       - "${RAG_PORT:-8000}:8000"
     volumes:
@@ -47,4 +45,4 @@ services:
       - "./config:/srv/rag/config:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    restart: unless-stopped
+    restart: "no"

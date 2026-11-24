@@ -248,6 +248,7 @@ http://localhost:8000
 ```
 
 The normal development stack uses the public repository plus an operator-selected private root through `RAG_PRIVATE_PATH`.
+The development stack is **on-demand**: containers do not auto-restart after host/container restarts. Run `./start.sh` only when local DEV validation is needed, and stop it afterwards with `docker compose stop`.
 
 ---
 
