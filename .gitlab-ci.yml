@@ -115,7 +115,6 @@ ci-tag-red:
   needs:
     - "Publish GitHub"
   script:
-    - set -a; . "$HOME/rag-prod/tunnel/runtime.env"; set +a
     - export RAG_TUNNEL_BINARY="$HOME/rag-prod/bin/tunnel-client"
     - export RAG_TUNNEL_DIR="$HOME/rag-prod/tunnel"
     - bash scripts/deploy-prod.sh
