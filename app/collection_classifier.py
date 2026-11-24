@@ -2,10 +2,39 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from .lmstudio import LMStudioClient
 
+
+
+TITLE_NOISE = {
+    "a", "an", "and", "as", "at", "by", "edition", "for", "from", "in", "of",
+    "on", "or", "the", "to", "with", "welib", "org", "gl",
+}
+
+
+def suggest_category(filename: str, source_path: str) -> dict[str, str]:
+    raw = (filename or source_path or "New Category").rsplit("/", 1)[-1]
+    raw = re.sub(r"\.(?:pdf|epub|azw3|mobi|txt|html?|md|docx?)$", "", raw, flags=re.I)
+    raw = re.sub(r"\([^)]*\)", " ", raw)
+    raw = re.split(r"\s+--\s+|\s+-\s+|:\s+", raw, maxsplit=1)[0]
+    words = re.findall(r"[A-Za-z0-9+#.]+", raw)
+    meaningful = []
+    for word in words:
+        clean = word.strip(".")
+        if not clean or clean.casefold() in TITLE_NOISE:
+            continue
+        if clean.casefold() not in {w.casefold() for w in meaningful}:
+            meaningful.append(clean)
+        if len(meaningful) >= 4:
+            break
+    name = " ".join(meaningful).strip() or "New Category"
+    return {
+        "name": name,
+        "description": f"Documents primarily about {name}.",
+    }
 
 def representative_sample(text: str, sample_chars: int) -> str:
     text = (text or "").strip()
@@ -64,7 +93,7 @@ async def classify_document(
         return {
             "existing_collection": None,
             "confidence": 0.0,
-            "proposed_collection": None,
+            "proposed_collection": suggest_category(filename, source_path),
             "new_collection_suggested": True,
             "rationale": "No existing user-defined categories are available.",
             "model": model,
@@ -90,7 +119,7 @@ async def classify_document(
     return {
         "existing_collection": best["name"] if matched else None,
         "confidence": round(float(best["score"]), 4),
-        "proposed_collection": None,
+        "proposed_collection": None if matched else suggest_category(filename, source_path),
         "new_collection_suggested": not matched,
         "rationale": f"Best semantic category: {best['name']} (score={best['score']:.4f}, margin={margin:.4f}).",
         "model": model,
