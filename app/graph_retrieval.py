@@ -16,11 +16,21 @@ from .settings import settings
 
 log = logging.getLogger("rag.graph_retrieval")
 
-CONCEPT = re.compile(r"\b(?:[A-Z][A-Za-z0-9]{2,}(?:\s+[A-Z][A-Za-z0-9]{2,})*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+STRUCTURAL_ARTIFACTS = {"tool", "system", "user", "assistant"}
+ROLE_TOKEN = re.compile(r"\b(?:TOOL|SYSTEM|USER|ASSISTANT)\b", re.IGNORECASE)
+WORD = r"(?:[A-Z][a-z]+|[A-Z][A-Z0-9]{2,}|[A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*)"
+CONCEPT = re.compile(
+    rf"\b(?:{WORD}(?:[ \t]+{WORD})+|[A-Z][A-Z0-9]{{2,}}|[A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*)\b"
+)
 
 
 def extract_concepts(text: str) -> set[str]:
-    return {term.casefold() for term in CONCEPT.findall(text or "")}
+    cleaned = ROLE_TOKEN.sub(" ", text or "")
+    return {
+        normalized
+        for term in CONCEPT.findall(cleaned)
+        if (normalized := term.casefold()) not in STRUCTURAL_ARTIFACTS
+    }
 
 
 def _assemble(rows: list[dict[str, Any]], mentions: dict[str, set[str]], query: str, limit: int, *, persistent: bool) -> dict[str, Any]:
