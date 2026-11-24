@@ -9,11 +9,11 @@ async def test_rerank_runtime_fails_open_to_vector_candidates(monkeypatch):
     async def fake_get(key, default=None):
         return "broken-model" if key == "reranker_model" else default
 
-    async def fake_run(name, client, requirements, operation):
+    async def fake_ensure(client, requirements):
         raise RuntimeError("reranker unavailable")
 
     monkeypatch.setattr("app.rerank_runtime.settings.get", fake_get)
-    monkeypatch.setattr("app.rerank_runtime.runtime_scheduler.run", fake_run)
+    monkeypatch.setattr("app.rerank_runtime.runtime_scheduler.ensure_resident", fake_ensure)
     candidates = [
         {"chunk_id": "a", "score": 0.9, "content": "first"},
         {"chunk_id": "b", "score": 0.8, "content": "second"},
@@ -35,16 +35,14 @@ async def test_rerank_runtime_requests_embedding_plus_selected_reranker(monkeypa
     async def fake_get(key, default=None):
         return "qwen3-reranker-4b" if key == "reranker_model" else default
 
-    async def fake_run(name, client, requirements, operation):
-        captured["name"] = name
+    async def fake_ensure(client, requirements):
         captured["requirements"] = requirements
-        return await operation()
 
     async def fake_rerank(query, candidates, config, client):
         return candidates
 
     monkeypatch.setattr("app.rerank_runtime.settings.get", fake_get)
-    monkeypatch.setattr("app.rerank_runtime.runtime_scheduler.run", fake_run)
+    monkeypatch.setattr("app.rerank_runtime.runtime_scheduler.ensure_resident", fake_ensure)
     monkeypatch.setattr("app.rerank_runtime.rerank_results", fake_rerank)
 
     candidates = [{"chunk_id": "a", "score": 0.9, "content": "first"}]
@@ -55,7 +53,6 @@ async def test_rerank_runtime_requests_embedding_plus_selected_reranker(monkeypa
     )
     assert ranked == candidates
     assert error is None
-    assert captured["name"] == "search-rerank"
     assert captured["requirements"] == [
         ModelRequirement("text-embedding-qwen3-embedding-8b", 8192),
         ModelRequirement("qwen3-reranker-4b", 8192),

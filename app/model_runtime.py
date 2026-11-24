@@ -49,6 +49,7 @@ class ModelRuntimeScheduler:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._residency_lock = asyncio.Lock()
         self.current_job: str | None = None
         self.current_models: tuple[str, ...] = ()
 
@@ -74,6 +75,7 @@ class ModelRuntimeScheduler:
             self._stop = asyncio.Event()
             self._task = None
             self.current_job = None
+            self._residency_lock = asyncio.Lock()
         self._loop = loop
         if self._task and not self._task.done():
             return
@@ -93,6 +95,26 @@ class ModelRuntimeScheduler:
         self._loop = None
         self._queue = asyncio.Queue(maxsize=self._maxsize)
         self._stop = asyncio.Event()
+
+
+    async def ensure_resident(
+        self,
+        client: Any,
+        requirements: list[ModelRequirement] | tuple[ModelRequirement, ...],
+    ) -> None:
+        """Ensure required models are loaded without serializing caller work."""
+        async with self._residency_lock:
+            loaded = await client.list_models()
+            loaded_ids = {
+                str(item.get("id") or "")
+                for item in loaded
+                if item.get("state") == "loaded" and item.get("id")
+            }
+            for req in requirements:
+                if req.model and req.model not in loaded_ids:
+                    await client.ensure_model_loaded(req.model, context_length=req.context_length)
+                    loaded_ids.add(req.model)
+            self.current_models = tuple(sorted(loaded_ids))
 
     async def run(
         self,

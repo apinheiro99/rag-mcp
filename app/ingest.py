@@ -499,12 +499,8 @@ class DocumentIngestor:
                 await self._mark_ready(doc, model, effective)
                 return
 
-            vectors = await runtime_scheduler.run(
-                f"ingest-embedding:{doc_id}",
-                client,
-                [ModelRequirement(model)],
-                lambda: client.embed([chunk["content"] for chunk in batch], model),
-            )
+            await runtime_scheduler.ensure_resident(client, [ModelRequirement(model)])
+            vectors = await client.embed([chunk["content"] for chunk in batch], model)
             await self._cancel_if_requested(doc)
             dim = len(vectors[0])
             table, coltype = await self._vector_table(dim)
