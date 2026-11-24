@@ -72,6 +72,8 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_mtime_ns BIGINT;
 CREATE UNIQUE INDEX IF NOT EXISTS documents_source_path_idx ON documents(source_id, source_path) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_status_idx ON documents(status);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS graph_indexed_at TIMESTAMPTZ;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS superseded_by UUID REFERENCES documents(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS documents_superseded_idx ON documents(superseded_by) WHERE superseded_by IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_graph_stale_idx
     ON documents(status, graph_indexed_at, processed_at);
 
