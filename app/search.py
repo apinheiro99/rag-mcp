@@ -123,8 +123,7 @@ async def _search_group(
                         SELECT v.chunk_id
                         FROM {table} v
                         JOIN chunks c ON c.id=v.chunk_id
-                        JOIN documents d ON d.id=c.document_id
-                        WHERE c.collection_id=ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{canonical}
+                        WHERE c.collection_id=ANY(%s::uuid[]) AND c.embedded
                         ORDER BY binary_quantize(v.embedding)::bit({dim})
                             <~> binary_quantize(%s::{coltype})::bit({dim})
                         LIMIT %s
@@ -137,6 +136,7 @@ async def _search_group(
                     JOIN chunks c ON c.id=v.chunk_id
                     JOIN documents d ON d.id=c.document_id
                     JOIN collections col ON col.id=c.collection_id
+                    WHERE d.status='ready'{canonical}
                     ORDER BY score DESC, c.id LIMIT %s""",
                     (col_ids, lit, pool, lit, top_k),
                 )
