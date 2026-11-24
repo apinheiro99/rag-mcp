@@ -249,9 +249,15 @@ function uploadFiles(items) {
 }
 function renderUploadResults(data) {
   const icon = { pending: "⚙️", staged: "📄", duplicate: "♻️", ignored_empty: "⚪", unsupported: "🚫", too_large: "🐘", error: "❌" };
-  const label = { pending: "imported and queued", staged: "imported; awaiting configuration", duplicate: "duplicate (skipped)", ignored_empty: "empty (skipped)", unsupported: "unsupported", too_large: "too large", error: "erro" };
-  $("uploadResults").innerHTML = `<div class="upload-list">` + data.results.map((r) => `
-    <div class="upload-item">
+  const label = { pending: "imported and queued", staged: "imported; awaiting configuration", duplicate: "duplicate (skipped)", ignored_empty: "empty (skipped)", unsupported: "unsupported", too_large: "too large", error: "error" };
+  const rejected = data.results.filter((r) => ["unsupported", "too_large", "error"].includes(r.status));
+  const unsupported = rejected.filter((r) => r.status === "unsupported").length;
+  const warning = rejected.length ? `<div class="upload-warning" role="alert">
+    <strong>${rejected.length} file(s) not imported.</strong>
+    ${unsupported ? `${unsupported} unsupported extension(s). ` : ""}See the rejected file(s) below.
+  </div>` : "";
+  $("uploadResults").innerHTML = warning + `<div class="upload-list">` + data.results.map((r) => `
+    <div class="upload-item ${rejected.includes(r) ? "upload-item-rejected" : ""}">
       <span>${icon[r.status] || ""} <span class="docpath">${esc(r.source_path)}</span></span>
       <span class="muted">${label[r.status] || r.status}${r.error ? " — " + esc(r.error) : ""}</span>
     </div>`).join("") + `</div>`;
@@ -392,7 +398,7 @@ async function pollStatus() {
   } catch { /* health polling reports server availability */ }
 }
 function renderIngest(s) {
-  const pct = s.chunks_total > 0 ? Math.round((s.chunks_embedded / s.chunks_total) * 100) : (s.active_documents ? 0 : 100);
+  const pct = s.active_documents > 0 && s.chunks_total > 0 ? Math.round((s.chunks_embedded / s.chunks_total) * 100) : 0;
   ["ingestBar", "importIngestBar"].forEach((id) => { const el = $(id); if (el) el.style.width = pct + "%"; });
   ["btnPause", "importBtnPause"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", s.paused); });
   ["btnResume", "importBtnResume"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", !s.paused); });

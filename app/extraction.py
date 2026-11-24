@@ -11,6 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
+import subprocess
+import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -636,6 +639,146 @@ def _extract_specialized(path: Path, filename: str, *, sample: bool) -> Extracte
     return None
 
 
+# ---------------------------------------------------------------- ebook/document formats
+def _run_text_tool(args: list[str], tool: str) -> str:
+    if shutil.which(tool) is None:
+        raise ExtractionError(f"parser externo não instalado: {tool}")
+    proc = subprocess.run(args, capture_output=True, check=False)
+    if proc.returncode != 0:
+        detail = decode_text_bytes(proc.stderr or proc.stdout).strip()
+        raise ExtractionError(f"falha ao extrair com {tool}: {detail or 'erro desconhecido'}")
+    return decode_text_bytes(proc.stdout)
+
+
+def extract_fb2(path: Path) -> ExtractedDoc:
+    raw = path.read_bytes()
+    if path.suffix.lower() == ".fbz":
+        with zipfile.ZipFile(path) as zf:
+            names = [n for n in zf.namelist() if n.lower().endswith(".fb2")]
+            if not names:
+                raise ExtractionError("FBZ sem arquivo FB2")
+            raw = zf.read(names[0])
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as e:
+        raise ExtractionError(f"FB2 inválido: {e}") from e
+    segments: list[Segment] = []
+    for section in [e for e in root.iter() if e.tag.rsplit('}', 1)[-1] == 'section']:
+        title = ""
+        parts: list[str] = []
+        for child in list(section):
+            tag = child.tag.rsplit('}', 1)[-1]
+            if tag == 'title':
+                title = normalize_ws(' '.join(child.itertext()))
+            elif tag in {'p', 'subtitle', 'poem', 'cite', 'epigraph'}:
+                text = normalize_ws(' '.join(child.itertext()))
+                if text:
+                    parts.append(text)
+        body = normalize_ws('\n\n'.join(parts))
+        if body:
+            segments.append(Segment(body, {"section": title} if title else {}))
+    if not segments:
+        text = normalize_ws(' '.join(root.itertext()))
+        if text:
+            segments = [Segment(text)]
+    return ExtractedDoc(segments, {"kind": "fb2"})
+
+
+def extract_odt(path: Path) -> ExtractedDoc:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            raw = zf.read('content.xml')
+    except (zipfile.BadZipFile, KeyError) as e:
+        raise ExtractionError(f"ODT inválido: {e}") from e
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as e:
+        raise ExtractionError(f"ODT inválido: {e}") from e
+    segments: list[Segment] = []
+    heading = None
+    for el in root.iter():
+        tag = el.tag.rsplit('}', 1)[-1]
+        if tag == 'h':
+            heading = normalize_ws(' '.join(el.itertext())) or heading
+        elif tag == 'p':
+            text = normalize_ws(' '.join(el.itertext()))
+            if text:
+                segments.append(Segment(text, {"heading": heading} if heading else {}))
+    return ExtractedDoc(segments, {"kind": "odt"})
+
+
+def extract_zip_text(path: Path, *, html: bool) -> ExtractedDoc:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = sorted(n for n in zf.namelist() if not n.endswith('/'))
+            wanted_ext = (HTML_EXTENSIONS | {'.htm', '.xhtml'}) if html else (TEXT_EXTENSIONS | MARKDOWN_EXTENSIONS)
+            wanted = [n for n in names if Path(n).suffix.lower() in wanted_ext]
+            segments: list[Segment] = []
+            for name in wanted:
+                raw = decode_text_bytes(zf.read(name))
+                if html:
+                    found, _ = html_to_segments(raw)
+                elif Path(name).suffix.lower() in MARKDOWN_EXTENSIONS:
+                    found = markdown_to_segments(raw)
+                else:
+                    text = normalize_ws(raw)
+                    found = [Segment(text)] if text else []
+                for seg in found:
+                    seg.loc = {**seg.loc, "member": name}
+                segments.extend(found)
+    except zipfile.BadZipFile as e:
+        raise ExtractionError(f"arquivo ZIP inválido: {e}") from e
+    return ExtractedDoc(segments, {"kind": "htmlz" if html else "txtz"})
+
+
+def extract_mobi_family(path: Path) -> ExtractedDoc:
+    if shutil.which('mobitool') is None:
+        raise ExtractionError("parser externo não instalado: mobitool")
+    with tempfile.TemporaryDirectory(prefix='rag-mobi-') as td:
+        proc = subprocess.run(['mobitool', '-d', '-o', td, str(path)], capture_output=True, check=False)
+        if proc.returncode != 0:
+            detail = decode_text_bytes(proc.stderr or proc.stdout).strip()
+            raise ExtractionError(f"falha ao extrair MOBI/Kindle: {detail or 'arquivo inválido ou protegido'}")
+        rawml = sorted(Path(td).glob('*.rawml'))
+        if not rawml:
+            raise ExtractionError("MOBI/Kindle sem conteúdo textual extraível")
+        html = read_text_file(rawml[0])
+        segments, title = html_to_segments(html)
+        return ExtractedDoc(segments, {"kind": path.suffix.lower().lstrip('.'), **({"title": title} if title else {})})
+
+
+def extract_rtf(path: Path) -> ExtractedDoc:
+    html = _run_text_tool(['unrtf', '--html', str(path)], 'unrtf')
+    segments, title = html_to_segments(html)
+    return ExtractedDoc(segments, {"kind": "rtf", **({"title": title} if title else {})})
+
+
+def extract_djvu(path: Path) -> ExtractedDoc:
+    text = normalize_ws(_run_text_tool(['djvutxt', str(path)], 'djvutxt'))
+    if not text:
+        raise ExtractionError("DJVU sem camada textual extraível")
+    return ExtractedDoc([Segment(text)], {"kind": "djvu"})
+
+
+def extract_chm(path: Path) -> ExtractedDoc:
+    if shutil.which('extract_chmLib') is None:
+        raise ExtractionError("parser externo não instalado: extract_chmLib")
+    with tempfile.TemporaryDirectory(prefix='rag-chm-') as td:
+        proc = subprocess.run(['extract_chmLib', str(path), td], capture_output=True, check=False)
+        if proc.returncode != 0:
+            detail = decode_text_bytes(proc.stderr or proc.stdout).strip()
+            raise ExtractionError(f"falha ao extrair CHM: {detail or 'arquivo inválido'}")
+        segments: list[Segment] = []
+        for member in sorted(Path(td).rglob('*')):
+            if member.is_file() and member.suffix.lower() in HTML_EXTENSIONS:
+                found, _ = html_to_segments(read_text_file(member))
+                rel = str(member.relative_to(td))
+                for seg in found:
+                    seg.loc = {**seg.loc, "member": rel}
+                segments.extend(found)
+        return ExtractedDoc(segments, {"kind": "chm"})
+
+
 # ---------------------------------------------------------------- dispatcher
 def extract(path: Path, filename: str, *, sample: bool = False,
             strip_whitespace: bool = True) -> ExtractedDoc:
@@ -660,6 +803,22 @@ def extract(path: Path, filename: str, *, sample: bool = False,
         doc = ExtractedDoc(segments, {"kind": "html", **({"title": title} if title else {})})
     elif ext == ".docx":
         doc = extract_docx(path)
+    elif ext in {".fb2", ".fbz"}:
+        doc = extract_fb2(path)
+    elif ext == ".odt":
+        doc = extract_odt(path)
+    elif ext == ".htmlz":
+        doc = extract_zip_text(path, html=True)
+    elif ext == ".txtz":
+        doc = extract_zip_text(path, html=False)
+    elif ext in {".mobi", ".azw", ".azw3", ".prc"}:
+        doc = extract_mobi_family(path)
+    elif ext == ".rtf":
+        doc = extract_rtf(path)
+    elif ext in {".djvu", ".djv"}:
+        doc = extract_djvu(path)
+    elif ext == ".chm":
+        doc = extract_chm(path)
     elif ext in TEXT_EXTENSIONS or ext == "":
         text = read_text_file(path)
         if sample:

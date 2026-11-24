@@ -157,6 +157,9 @@ tr:hover td { background: rgba(110,168,254,.04); }
 
 .upload-item { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px; border-bottom: 1px solid rgba(42,53,80,.4); font-size: .85rem; }
 .upload-list { max-height: 240px; overflow-y: auto; margin-top: 12px; }
+.upload-warning { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--yellow); border-radius: var(--radius); background: rgba(245, 184, 74, .08); color: var(--text); font-size: .86rem; }
+.upload-warning strong { color: var(--yellow); }
+.upload-item-rejected { background: rgba(245, 184, 74, .05); }
 
 .banner { background: #57492a; color: var(--yellow); padding: 10px 24px; display: flex; gap: 10px; align-items: center; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
