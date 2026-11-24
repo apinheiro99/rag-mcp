@@ -384,9 +384,8 @@ async def semantic_search(
             rerank_ms = (time.perf_counter() - rerank_started) * 1000 if rcfg.get("enabled") and rerank_pool else 0.0
             return reranked[:top_k], rerank_pool, rerank_ms, rerank_error
 
-        final_results, rerank_pool, rerank_ms, rerank_error = await runtime_scheduler.run(
-            "semantic-search", client, requirements, execute_search_pipeline
-        )
+        await runtime_scheduler.ensure_resident(client, requirements)
+        final_results, rerank_pool, rerank_ms, rerank_error = await execute_search_pipeline()
         response = {
             "query": query,
             "results": final_results,
