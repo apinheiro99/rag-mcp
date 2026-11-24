@@ -74,7 +74,9 @@ if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   : "${RAG_TUNNEL_BINARY:?RAG_TUNNEL_BINARY must be set when Secure MCP Tunnel is enabled}"
   : "${RAG_TUNNEL_DIR:?RAG_TUNNEL_DIR must be set when Secure MCP Tunnel is enabled}"
   [ -f "$RAG_TUNNEL_BINARY" ] || { echo "missing tunnel client binary: $RAG_TUNNEL_BINARY" >&2; exit 1; }
-  [ -f "$RAG_TUNNEL_DIR/tunnel-client.yaml" ] || { echo "missing tunnel config: $RAG_TUNNEL_DIR/tunnel-client.yaml" >&2; exit 1; }
+  # Mirrors REACH: the tunnel directory is operator-provisioned once and owned by the container uid (1000, mode 700), so the
+  # runner can only check the directory itself, never read inside it; the container reports a bad config through its own health.
+  [ -d "$RAG_TUNNEL_DIR" ] || { echo "missing tunnel directory: $RAG_TUNNEL_DIR" >&2; exit 1; }
   COMPOSE_ARGS+=(-f deploy/tunnel.compose.yml)
 fi
 
