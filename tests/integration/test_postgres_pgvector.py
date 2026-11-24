@@ -1468,3 +1468,71 @@ async def test_high_dim_index_migrates_existing_vectors_and_refines(live_db, mon
     exact,_,_=await search_module._search_group(**args,scfg={**cfg,"binary_hnsw_enabled":False})
     assert indexed[0]["chunk_id"] == exact[0]["chunk_id"] == near
     assert indexed[0]["score"] == pytest.approx(exact[0]["score"])
+
+
+@pytest.mark.asyncio
+async def test_injected_failure_rolls_back_transaction(live_db):
+    collection_id = uuid.uuid4()
+    try:
+        async with live_db.pool.connection() as conn:
+            async with conn.transaction():
+                await _insert_collection(conn, collection_id, f"rollback-{collection_id}")
+                raise RuntimeError("injected failure after write")
+    except RuntimeError:
+        pass
+
+    async with live_db.pool.connection() as conn:
+        row = await (
+            await conn.execute("SELECT count(*) AS n FROM collections WHERE id=%s", (collection_id,))
+        ).fetchone()
+    assert row["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_postgres_deadlock_aborts_one_transaction_and_recovers(live_db):
+    first = uuid.uuid4()
+    second = uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, first, f"deadlock-a-{first}")
+        await _insert_collection(conn, second, f"deadlock-b-{second}")
+
+    first_locked = asyncio.Event()
+    second_locked = asyncio.Event()
+
+    async def worker(conn, own_id, other_id, mine, other):
+        try:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL deadlock_timeout = '100ms'")
+                await conn.execute("UPDATE collections SET description='locked' WHERE id=%s", (own_id,))
+                mine.set()
+                await asyncio.wait_for(other.wait(), timeout=2)
+                await conn.execute("UPDATE collections SET description='completed' WHERE id=%s", (other_id,))
+            return "ok"
+        except Exception as exc:
+            return exc
+
+    async with live_db.pool.connection() as conn1, live_db.pool.connection() as conn2:
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                worker(conn1, first, second, first_locked, second_locked),
+                worker(conn2, second, first, second_locked, first_locked),
+            ),
+            timeout=5,
+        )
+
+    deadlocks = [x for x in outcomes if isinstance(x, psycopg.errors.DeadlockDetected)]
+    assert len(deadlocks) == 1
+    assert "ok" in outcomes
+
+    async with live_db.pool.connection() as conn:
+        row = await (await conn.execute("SELECT 1 AS ok")).fetchone()
+    assert row["ok"] == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_setting_writes_do_not_cross_talk(live_db):
+    prefix = uuid.uuid4().hex
+    pairs = [(f"concurrency.{prefix}.{i}", {"worker": i}) for i in range(24)]
+    await asyncio.gather(*(live_db.set_setting(key, value) for key, value in pairs))
+    values = await asyncio.gather(*(live_db.get_setting(key) for key, _ in pairs))
+    assert values == [value for _, value in pairs]

@@ -27,3 +27,25 @@ async def test_record_retrieval_returns_trace_id(monkeypatch):
     monkeypatch.setattr(ro, "db", DB())
     trace_id = await ro.record_retrieval({"query": "q", "top_k": 5, "min_score": 0})
     assert trace_id == 42
+
+
+@pytest.mark.asyncio
+async def test_record_retrieval_fault_injection_is_fail_open(monkeypatch):
+    class Conn:
+        async def execute(self, *args, **kwargs):
+            raise RuntimeError("injected telemetry database failure")
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+
+    class Pool:
+        def connection(self):
+            return Conn()
+
+    class DB:
+        pool = Pool()
+
+    monkeypatch.setattr(ro, "db", DB())
+    trace_id = await ro.record_retrieval({"query": "q", "top_k": 5, "min_score": 0})
+    assert trace_id is None
