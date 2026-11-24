@@ -17,8 +17,8 @@ async def record_retrieval(event: dict[str, Any]) -> None:
                 """INSERT INTO retrieval_events(
                        query_text, collections, filters, top_k, min_score,
                        embedding_ms, db_ms, total_ms, candidate_count,
-                       result_count, top_score, error)
-                   VALUES (%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       result_count, top_score, error, dense_ms, lexical_ms, heading_ms)
+                   VALUES (%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     event["query"],
                     json.dumps(event.get("collections", [])),
@@ -32,6 +32,7 @@ async def record_retrieval(event: dict[str, Any]) -> None:
                     event.get("result_count", 0),
                     event.get("top_score"),
                     event.get("error"),
+                    event.get("dense_ms"), event.get("lexical_ms"), event.get("heading_ms"),
                 ),
             )
     except Exception:
@@ -50,6 +51,9 @@ async def retrieval_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str
                           round(avg(total_ms)::numeric,2) AS avg_total_ms,
                           round(avg(embedding_ms)::numeric,2) AS avg_embedding_ms,
                           round(avg(db_ms)::numeric,2) AS avg_db_ms,
+                          round(avg(dense_ms)::numeric,2) AS avg_dense_ms,
+                          round(avg(lexical_ms)::numeric,2) AS avg_lexical_ms,
+                          round(avg(heading_ms)::numeric,2) AS avg_heading_ms,
                           round(avg(result_count)::numeric,2) AS avg_results,
                           round(avg(top_score)::numeric,4) AS avg_top_score,
                           round(percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms)::numeric,2) AS p95_total_ms
@@ -62,7 +66,7 @@ async def retrieval_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str
             await conn.execute(
                 """SELECT id, ts, query_text, collections, filters, top_k, min_score,
                           embedding_ms, db_ms, total_ms, candidate_count,
-                          result_count, top_score, error
+                          result_count, top_score, error, dense_ms, lexical_ms, heading_ms
                    FROM retrieval_events
                    ORDER BY id DESC LIMIT %s""",
                 (recent_limit,),

@@ -91,7 +91,7 @@ CREATE INDEX IF NOT EXISTS chunks_unembedded_idx ON chunks(document_id) WHERE em
 
 -- Tabelas de vetores por dimensão (vec_<dim>) são criadas sob demanda
 -- em db.ensure_vector_table(), com índice HNSW (vector <=2000 dims,
--- halfvec <=4000 dims; acima disso, busca exata sem índice).
+-- halfvec <=4000 dims; acima disso, HNSW binário + refinamento cosseno).
 
 CREATE TABLE IF NOT EXISTS events (
     id            BIGSERIAL PRIMARY KEY,
@@ -124,3 +124,7 @@ CREATE INDEX IF NOT EXISTS retrieval_events_ts_idx ON retrieval_events(ts DESC);
 -- English lexical retrieval, alongside dense vectors.
 CREATE INDEX IF NOT EXISTS chunks_content_english_fts_idx
     ON chunks USING gin (to_tsvector('english', content));
+
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS dense_ms DOUBLE PRECISION;
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS lexical_ms DOUBLE PRECISION;
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS heading_ms DOUBLE PRECISION;

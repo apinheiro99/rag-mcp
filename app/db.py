@@ -18,6 +18,7 @@ log = logging.getLogger("rag.db")
 
 MAX_HNSW_VECTOR_DIM = 2000
 MAX_HNSW_HALFVEC_DIM = 4000
+MAX_VECTOR_DIM = 16000
 
 
 def vector_literal(values: list[float]) -> str:
@@ -50,6 +51,16 @@ class Database:
         sql = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
         async with self.pool.connection() as conn:
             await conn.execute(sql)
+            # Existing high-dimensional tables predate binary HNSW support.
+            cur = await conn.execute("""
+                SELECT tablename FROM pg_tables
+                WHERE schemaname=current_schema() AND tablename ~ '^vec_[0-9]+$'
+            """)
+            tables = await cur.fetchall()
+        for row in tables:
+            dim = int(row["tablename"].split("_")[1])
+            if MAX_HNSW_HALFVEC_DIM < dim <= MAX_VECTOR_DIM:
+                await self.ensure_vector_table(dim)
 
     # ---------- settings ----------
     async def get_setting(self, key: str, default: Any = None) -> Any:
@@ -89,9 +100,9 @@ class Database:
         """Cria (idempotente) a tabela de vetores para `dim`.
 
         Retorna (nome_tabela, tipo_coluna). vector até 2000 dims com HNSW;
-        halfvec até 4000 dims com HNSW; acima disso vector sem índice.
+        halfvec até 4000 dims com HNSW; acima disso HNSW binário com vetor original preservado.
         """
-        if dim <= 0 or dim > 16000:
+        if dim <= 0 or dim > MAX_VECTOR_DIM:
             raise ValueError(f"dimensão de embedding inválida: {dim}")
         table = f"vec_{dim}"
         if dim <= MAX_HNSW_VECTOR_DIM:
@@ -110,6 +121,21 @@ class Database:
                 await conn.execute(
                     f"""CREATE INDEX IF NOT EXISTS {table}_hnsw
                         ON {table} USING hnsw (embedding {coltype}_cosine_ops)"""
+                )
+            else:
+                # Build concurrently on existing corpora; no re-embedding.
+                index = f"{table}_binary_hnsw"
+                cur = await conn.execute(
+                    """SELECT i.indisvalid AS valid FROM pg_index i
+                       WHERE i.indexrelid=to_regclass(%s)""", (index,)
+                )
+                state = await cur.fetchone()
+                if state and not state["valid"]:
+                    await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {index}")
+                await conn.execute(
+                    f"""CREATE INDEX CONCURRENTLY IF NOT EXISTS {index}
+                        ON {table} USING hnsw
+                        ((binary_quantize(embedding)::bit({dim})) bit_hamming_ops)"""
                 )
         return table, coltype
 

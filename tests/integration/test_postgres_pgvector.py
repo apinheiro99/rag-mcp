@@ -1443,3 +1443,36 @@ async def test_lexical_retrieval_uses_real_postgres_and_respects_scope(live_db, 
     assert rows and rows[0]["chunk_id"] == chunk
     assert rows[0]["lexical_score"] > 0
     assert not await search_module._lexical_search("quizzical", [{"id":uuid.uuid4()}], search_module.SearchFilters(), 5)
+
+@pytest.mark.asyncio
+async def test_high_dim_index_migrates_existing_vectors_and_refines(live_db, monkeypatch):
+    from app.search_filters import SearchFilters
+    dim = 4096
+    cid, did, near, far = [uuid.uuid4() for _ in range(4)]
+    q = [1.0, -1.0] * (dim // 2)
+    async with live_db.pool.connection() as conn:
+        await conn.execute("INSERT INTO collections(id,name,embedding_model,embedding_dim) VALUES (%s,%s,'fixture',%s)", (cid,str(cid),dim))
+        await conn.execute("""INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,status)
+            VALUES (%s,%s,'fixture','fixture','fixture',%s,'ready')""",(did,cid,str(did)))
+        await conn.execute("""INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+            VALUES (%s,%s,%s,0,'near',true),(%s,%s,%s,1,'far',true)""",(near,did,cid,far,did,cid))
+        await conn.execute(f"CREATE TABLE IF NOT EXISTS vec_{dim}(chunk_id uuid PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,embedding vector({dim}) NOT NULL)")
+        await conn.execute(f"INSERT INTO vec_{dim} VALUES (%s,%s::vector),(%s,%s::vector)",(near,vector_literal(q),far,vector_literal([-v for v in q])))
+    await live_db.apply_schema()
+    await live_db.apply_schema()
+    async with live_db.pool.connection() as conn:
+        row = await (await conn.execute("SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass('vec_4096_binary_hnsw')")).fetchone()
+        assert row["indisvalid"]
+        row = await (await conn.execute("SELECT vector_dims(embedding) AS dim FROM vec_4096 WHERE chunk_id=%s",(near,))).fetchone()
+        assert row["dim"] == dim
+    class FakeClient:
+        async def embed(self, texts, model):
+            return [q]
+    monkeypatch.setattr(search_module,"db",live_db)
+    args=dict(query="fixture", model="fixture", dim=dim,group_cols=[{"id":cid}],
+              filters=SearchFilters(),top_k=1,client=FakeClient())
+    cfg={"hnsw_ef_search":64,"binary_hnsw_enabled":True,"binary_candidate_multiplier":8}
+    indexed,_,_=await search_module._search_group(**args,scfg=cfg)
+    exact,_,_=await search_module._search_group(**args,scfg={**cfg,"binary_hnsw_enabled":False})
+    assert indexed[0]["chunk_id"] == exact[0]["chunk_id"] == near
+    assert indexed[0]["score"] == pytest.approx(exact[0]["score"])

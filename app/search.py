@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Any
 
-from .db import db, vector_literal
+from .db import db, vector_literal, MAX_HNSW_HALFVEC_DIM
 from .retrieval_observability import record_retrieval
 from .model_runtime import ModelRequirement, runtime_scheduler
 from .rerank import rerank_results
@@ -109,21 +109,52 @@ async def _search_group(
                 await conn.execute("SET LOCAL hnsw.iterative_scan = strict_order")
             except Exception:
                 pass
-            cur = await conn.execute(
-                f"""SELECT c.id AS chunk_id, c.seq, c.content, c.loc,
+            # Exact retrieval remains available for selective filters or explicit opt-out.
+            binary = (dim > MAX_HNSW_HALFVEC_DIM and scfg.get("binary_hnsw_enabled")
+                      and not filters.active())
+            if binary:
+                pool = max(top_k, top_k * int(scfg["binary_candidate_multiplier"]))
+                cur = await conn.execute(
+                    f"""WITH candidates AS MATERIALIZED (
+                        SELECT v.chunk_id
+                        FROM {table} v
+                        JOIN chunks c ON c.id=v.chunk_id
+                        JOIN documents d ON d.id=c.document_id
+                        WHERE c.collection_id=ANY(%s::uuid[]) AND d.status='ready' AND c.embedded
+                        ORDER BY binary_quantize(v.embedding)::bit({dim})
+                            <~> binary_quantize(%s::{coltype})::bit({dim})
+                        LIMIT %s
+                    )
+                    SELECT c.id AS chunk_id, c.seq, c.content, c.loc,
                            d.id AS document_id, d.filename, d.source_path, d.meta,
                            col.name AS collection,
                            1 - (v.embedding <=> %s::{coltype}) AS score
-                    FROM {table} v
-                    JOIN chunks c ON c.id = v.chunk_id
-                    JOIN documents d ON d.id = c.document_id
-                    JOIN collections col ON col.id = c.collection_id
-                    WHERE c.collection_id = ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{where_filter}
-                    ORDER BY v.embedding <=> %s::{coltype}
-                    LIMIT %s""",
-                (lit, col_ids, *filter_params, lit, top_k),
-            )
-            rows = await cur.fetchall()
+                    FROM candidates a JOIN {table} v ON v.chunk_id=a.chunk_id
+                    JOIN chunks c ON c.id=v.chunk_id
+                    JOIN documents d ON d.id=c.document_id
+                    JOIN collections col ON col.id=c.collection_id
+                    ORDER BY score DESC, c.id LIMIT %s""",
+                    (col_ids, lit, pool, lit, top_k),
+                )
+                rows = await cur.fetchall()
+                # HNSW post-filtering may exhaust the scan; preserve completeness.
+                binary = len(rows) >= top_k
+            if not binary:
+                cur = await conn.execute(
+                    f"""SELECT c.id AS chunk_id, c.seq, c.content, c.loc,
+                               d.id AS document_id, d.filename, d.source_path, d.meta,
+                               col.name AS collection,
+                               1 - (v.embedding <=> %s::{coltype}) AS score
+                        FROM {table} v
+                        JOIN chunks c ON c.id = v.chunk_id
+                        JOIN documents d ON d.id = c.document_id
+                        JOIN collections col ON col.id = c.collection_id
+                        WHERE c.collection_id = ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{where_filter}
+                        ORDER BY v.embedding <=> %s::{coltype}
+                        LIMIT %s""",
+                    (lit, col_ids, *filter_params, lit, top_k),
+                )
+                rows = await cur.fetchall()
     db_ms = (time.perf_counter() - t0) * 1000
     return rows, embedding_ms, db_ms
 
@@ -243,6 +274,7 @@ async def semantic_search(
     started = time.perf_counter()
     embedding_ms = 0.0
     db_ms = 0.0
+    dense_ms = lexical_ms = heading_ms = 0.0
     results: list[dict] = []
     cols: list[dict] = []
 
@@ -281,7 +313,7 @@ async def semantic_search(
         adaptive = bool(scfg.get("adaptive_enabled")) and bool(rcfg.get("enabled"))
         expanded = False
         async def execute_search_pipeline():
-            nonlocal embedding_ms, db_ms, results, expanded
+            nonlocal embedding_ms, db_ms, results, expanded, dense_ms, lexical_ms, heading_ms
             dense = []
             lexical = []
             depth = max(candidate_k, int(scfg["adaptive_candidate_limit"])) if adaptive else candidate_k
@@ -292,18 +324,22 @@ async def semantic_search(
                 )
                 embedding_ms += emb_elapsed
                 db_ms += db_elapsed
+                dense_ms += db_elapsed
                 dense.extend(_format_result(r) for r in rows if float(r["score"]) >= min_score)
             dense.sort(key=lambda x: x["score"], reverse=True)
             if hybrid:
                 t = time.perf_counter()
                 lexical = [_format_result(r) for r in await _lexical_search(
                     query, cols, filters, int(scfg["lexical_candidates"]))]
-                db_ms += (time.perf_counter()-t)*1000
+                lexical_ms += (time.perf_counter()-t)*1000
+                db_ms += lexical_ms
                 results = fuse_rankings([dense, lexical], int(scfg["fusion_rank_constant"]))
             else:
                 results = dense
             if scfg.get("expand_heading_context"):
+                t = time.perf_counter()
                 await _expand_headings(results, int(scfg["heading_context_chars"]))
+                heading_ms = (time.perf_counter()-t)*1000
             rerank_pool = results[:candidate_k]
             rerank_started = time.perf_counter()
             rerank_error = None
@@ -338,7 +374,9 @@ async def semantic_search(
             "collections_searched": [c["name"] for c in cols],
             "filters_applied": filters.to_dict(),
             "total_candidates": len(results),
-            "retrieval": {"hybrid": hybrid, "expanded": expanded},
+            "retrieval": {"hybrid": hybrid, "expanded": expanded,
+                          "timings_ms": {"dense": round(dense_ms, 2), "lexical": round(lexical_ms, 2),
+                                         "heading": round(heading_ms, 2), "embedding": round(embedding_ms, 2)}},
             "rerank": {
                 "enabled": bool(rcfg.get("enabled")),
                 "applied": bool(rcfg.get("enabled") and rerank_pool and not rerank_error),
@@ -355,6 +393,7 @@ async def semantic_search(
             "min_score": min_score,
             "embedding_ms": embedding_ms,
             "db_ms": db_ms,
+            "dense_ms": dense_ms, "lexical_ms": lexical_ms, "heading_ms": heading_ms,
             "total_ms": (time.perf_counter() - started) * 1000,
             "candidate_count": len(results),
             "result_count": len(final_results),
@@ -370,6 +409,7 @@ async def semantic_search(
             "min_score": min_score,
             "embedding_ms": embedding_ms,
             "db_ms": db_ms,
+            "dense_ms": dense_ms, "lexical_ms": lexical_ms, "heading_ms": heading_ms,
             "total_ms": (time.perf_counter() - started) * 1000,
             "candidate_count": len(results),
             "result_count": 0,

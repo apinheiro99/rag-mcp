@@ -35,6 +35,8 @@ search:
   adaptive_enabled: true
   adaptive_min_rerank_score: 0.45
   adaptive_candidate_limit: 24
+  binary_hnsw_enabled: true
+  binary_candidate_multiplier: 8
   hnsw_ef_search: 64        # qualidade/velocidade do índice HNSW
 
 rerank:
