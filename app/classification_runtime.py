@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from .collection_classifier import classify_document
+from .collection_classifier import classify_document, classify_existing_category_with_llm
 from .config import env
 from .db import db
 from .extraction import ExtractedDoc, ExtractionError, extract
@@ -80,6 +80,35 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         match_threshold=float(cfg.get("embedding_match_threshold", 0.55)),
         margin_threshold=float(cfg.get("embedding_margin_threshold", 0.03)),
     )
+    if (
+        collections
+        and not result.get("existing_collection")
+        and cfg.get("llm_fallback_enabled", True)
+    ):
+        llm_model = await settings.get("llm_model")
+        if llm_model:
+            try:
+                choice = await classify_existing_category_with_llm(
+                    client,
+                    llm_model,
+                    filename=doc["filename"],
+                    text=extracted.full_text(),
+                    categories=collections,
+                    sample_chars=eff["auto"]["sample_chars"],
+                    timeout=eff["auto"]["request_timeout"],
+                )
+                if choice.get("category"):
+                    result["existing_collection"] = choice["category"]
+                    result["confidence"] = choice["confidence"]
+                    result["rationale"] = (
+                        f"LLM fallback selected existing category: {choice['category']}. "
+                        + choice.get("rationale", "")
+                    ).strip()
+                    result["source"] = "llm_fallback"
+                    result["fallback_model"] = llm_model
+            except Exception as exc:
+                log.warning("existing-category LLM fallback failed: %s", exc)
+
     if not result.get("existing_collection"):
         result["proposed_collection"] = None
         result["new_collection_suggested"] = False
