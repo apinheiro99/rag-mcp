@@ -10,6 +10,12 @@ mkdir -p "$(dirname "$ROOT")"
 if [ ! -d "$ROOT/.git" ]; then
   git clone "$CI_REPOSITORY_URL" "$ROOT"
 fi
+PREVIOUS_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+LAST_GOOD_FILE="$PRIVATE/last-successful-deploy"
+LAST_GOOD_COMMIT="$(cat "$LAST_GOOD_FILE" 2>/dev/null || true)"
+if [ -z "$LAST_GOOD_COMMIT" ]; then
+  LAST_GOOD_COMMIT="$PREVIOUS_COMMIT"
+fi
 git -C "$ROOT" remote set-url origin "$CI_REPOSITORY_URL"
 git -C "$ROOT" fetch origin "$CI_COMMIT_SHA"
 git -C "$ROOT" checkout --detach "$CI_COMMIT_SHA"
@@ -80,23 +86,56 @@ if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   COMPOSE_ARGS+=(-f deploy/tunnel.compose.yml)
 fi
 
-docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
-
 HEALTH_URL="http://127.0.0.1:${RAG_PORT:-8000}/api/health"
-APP_READY=false
-for attempt in $(seq 1 30); do
-  health_json="$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)"
-  if [ -n "$health_json" ]; then
-    reported_commit="$(printf '%s' "$health_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("build",{}).get("commit",""))' 2>/dev/null || true)"
-    reported_status="$(printf '%s' "$health_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
-    if [ "$reported_status" = "ok" ] && [ "$reported_commit" = "$CI_COMMIT_SHA" ]; then
-      APP_READY=true
-      break
+
+wait_app_ready() {
+  expected_commit="$1"
+  for attempt in $(seq 1 30); do
+    health_json="$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)"
+    if [ -n "$health_json" ]; then
+      reported_commit="$(printf '%s' "$health_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("build",{}).get("commit",""))' 2>/dev/null || true)"
+      reported_status="$(printf '%s' "$health_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+      if [ "$reported_status" = "ok" ] && [ "$reported_commit" = "$expected_commit" ]; then
+        return 0
+      fi
     fi
+    sleep 2
+  done
+  return 1
+}
+
+ROLLBACK_ARMED=false
+rollback_on_failure() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -eq 0 ] || [ "$ROLLBACK_ARMED" != true ]; then
+    exit "$status"
   fi
-  sleep 2
-done
-[ "$APP_READY" = true ] || { echo "application readiness failed: $HEALTH_URL did not report commit $CI_COMMIT_SHA" >&2; exit 1; }
+  if [ -z "$LAST_GOOD_COMMIT" ] || [ "$LAST_GOOD_COMMIT" = "$CI_COMMIT_SHA" ]; then
+    echo "deploy failed and no earlier healthy commit is recorded for rollback" >&2
+    exit "$status"
+  fi
+  echo "deploy validation failed; rolling back to last healthy commit $LAST_GOOD_COMMIT" >&2
+  if git fetch origin "$LAST_GOOD_COMMIT" &&
+     git checkout --detach "$LAST_GOOD_COMMIT"; then
+    export RAG_BUILD_COMMIT="$LAST_GOOD_COMMIT"
+    export RAG_BUILD_VERSION="${RAG_BUILD_VERSION}-rollback"
+    if docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build &&
+       wait_app_ready "$LAST_GOOD_COMMIT"; then
+      echo "rollback recovered production at $LAST_GOOD_COMMIT" >&2
+    else
+      echo "rollback attempt failed; production requires operator attention" >&2
+    fi
+  else
+    echo "rollback checkout failed for $LAST_GOOD_COMMIT" >&2
+  fi
+  exit "$status"
+}
+trap rollback_on_failure EXIT
+ROLLBACK_ARMED=true
+
+docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
+wait_app_ready "$CI_COMMIT_SHA" || { echo "application readiness failed: $HEALTH_URL did not report commit $CI_COMMIT_SHA" >&2; exit 1; }
 
 if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   TUNNEL_READY=false
@@ -121,3 +160,6 @@ if [ -n "${RAG_API_TOKEN:-}" ]; then
   EVAL_ARGS+=(--bearer-token "$RAG_API_TOKEN")
 fi
 docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app "${EVAL_ARGS[@]}"
+printf '%s\n' "$CI_COMMIT_SHA" > "$LAST_GOOD_FILE"
+ROLLBACK_ARMED=false
+trap - EXIT
