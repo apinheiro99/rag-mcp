@@ -87,6 +87,17 @@ for attempt in $(seq 1 30); do
     if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
       docker exec "${RAG_TUNNEL_CONTAINER_NAME:-rag-mcp-tunnel}" /usr/local/bin/tunnel-client health --port 8080 --require-control-plane-poll >/dev/null
     fi
+    EVAL_ARGS=(
+      python /srv/rag/scripts/evaluate_retrieval.py
+      --url http://127.0.0.1:8000/mcp
+      --cases /srv/rag/examples/evaluation/retrieval.json
+      --output /tmp/rag-retrieval-eval.json
+      --k 5 --min-recall 0.80 --min-mrr 0.60 --max-avg-ms 1500
+    )
+    if [ -n "${RAG_API_TOKEN:-}" ]; then
+      EVAL_ARGS+=(--bearer-token "$RAG_API_TOKEN")
+    fi
+    docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app "${EVAL_ARGS[@]}"
     exit 0
   fi
   sleep 2

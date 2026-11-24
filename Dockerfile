@@ -15,6 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY config ./config
+COPY scripts/evaluate_retrieval.py ./scripts/evaluate_retrieval.py
+COPY examples/evaluation/retrieval.json ./examples/evaluation/retrieval.json
 
 ENV DATA_DIR=/rag-private/data \
     DEFAULTS_FILE=/srv/rag/config/defaults.yaml \

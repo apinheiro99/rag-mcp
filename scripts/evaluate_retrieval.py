@@ -30,7 +30,7 @@ def evaluate(results, expected, k):
 async def main(args):
     cases = json.loads(Path(args.cases).read_text())
     rows = []
-    async with streamablehttp_client(args.url) as (r,w,_):
+    async with streamablehttp_client(args.url, headers=({"Authorization": f"Bearer {args.bearer_token}"} if args.bearer_token else None)) as (r,w,_):
         async with ClientSession(r,w) as session:
             await session.initialize()
             for case in cases:
@@ -76,4 +76,5 @@ if __name__ == "__main__":
     parser.add_argument("--min-recall",type=float,default=0.80)
     parser.add_argument("--min-mrr",type=float,default=0.60)
     parser.add_argument("--max-avg-ms",type=float,default=1500.0)
+    parser.add_argument("--bearer-token",default=None)
     asyncio.run(main(parser.parse_args()))
