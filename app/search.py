@@ -404,7 +404,7 @@ async def semantic_search(
                 "error": rerank_error,
             },
         }
-        await record_retrieval({
+        trace_id = await record_retrieval({
             "query": query,
             "collections": [c["name"] for c in cols],
             "filters": filters.to_dict(),
@@ -418,6 +418,7 @@ async def semantic_search(
             "result_count": len(final_results),
             "top_score": final_results[0]["score"] if final_results else None,
         })
+        response["trace_id"] = trace_id
         return response
     except Exception as exc:
         await record_retrieval({
