@@ -16,7 +16,7 @@ let state = {
   mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
   pollTick: 0, lastActive: 0, uploading: false,
   selectedDocs: new Set(), currentDocIds: [], docsHasPendingAI: false, activeTab: "dashboard",
-  docCollectionFilters: new Map(),
+  docCollectionFilters: new Map(), bulkBusy:false, docFilterEpoch:0,
 };
 
 /* ---------------- infra ---------------- */
@@ -29,7 +29,7 @@ async function api(path, opts = {}) {
     opts.body = JSON.stringify(opts.body);
   }
   const resp = await fetch(path, { ...opts, headers });
-  if (resp.status === 401) { $("tokenBanner").classList.remove("hidden"); throw new Error("API token required"); }
+  if (resp.status === 401) { showAuthDialog(); throw new Error("API token required"); }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
   return data;
@@ -42,7 +42,27 @@ function toast(msg, isErr = false) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.add("hidden"), isErr ? 8000 : 4000);
 }
-function saveToken() { localStorage.setItem("rag_token", $("tokenInput").value.trim()); $("tokenBanner").classList.add("hidden"); location.reload(); }
+function showAuthDialog() { const d=$("authDialog"); if (!d.open) d.showModal(); }
+function saveToken() { localStorage.setItem("rag_token", $("tokenInput").value.trim()); $("authDialog").close(); location.reload(); }
+$("authForm").addEventListener("submit", e => { e.preventDefault(); saveToken(); });
+function askAction(title, message, action="Continue", danger=false, input=null, options=null) {
+  const d=$("actionDialog");
+  if (d.open) return Promise.resolve(null);
+  $("actionTitle").textContent=title;
+  $("actionMessage").textContent=message;
+  $("actionSubmit").textContent=action;
+  $("actionSubmit").className=danger?"btn danger":"btn primary";
+  $("actionInputWrap").classList.toggle("hidden",input===null);
+  $("actionInput").value=input??"";
+  $("actionSelectWrap").classList.toggle("hidden",options===null);
+  $("actionSelect").replaceChildren(...(options||[]).map(c=>new Option(c.name,c.id)));
+  d.returnValue="cancel";
+  return new Promise(resolve=>{
+    d.addEventListener("close",()=>resolve(d.returnValue==="accept"?(input!==null?$("actionInput").value:options!==null?$("actionSelect").value:true):null),{once:true});
+    d.showModal();
+    if(input!==null) $("actionInput").focus();
+  });
+}
 function saveTokenFromField() { localStorage.setItem("rag_token", $("apiTokenField").value.trim()); toast("Token saved in this browser"); }
 const fmtBytes = (n) => { if (!n && n !== 0) return "—"; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; };
 const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -108,9 +128,9 @@ function renderCollections() {
       <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "no embeddings yet"}</div>
       <div class="row" style="margin-top:10px">
         <button class="btn mini ${c.default_search ? 'primary' : ''}" onclick="toggleDefaultSearch('${c.id}', ${!c.default_search})">Default search: ${c.default_search ? 'ON' : 'OFF'}</button>
-        <button class="btn mini" onclick="renameCollection('${c.id}', '${esc(c.name)}')">Rename</button>
+        <button class="btn mini" onclick="renameCollection('${c.id}', ${esc(JSON.stringify(c.name))})">Rename</button>
         <button class="btn mini" onclick="reindexCollectionModal('${c.id}')">Reindex all</button>
-        <button class="btn mini danger" onclick="deleteCollection('${c.id}', '${esc(c.name)}')">Delete</button>
+        <button class="btn mini danger" onclick="deleteCollection('${c.id}', ${esc(JSON.stringify(c.name))})">Delete</button>
       </div>
     </div>`).join("") || `<p class="muted">No collections yet. Create one from the Import tab.</p>`;
 }
@@ -127,7 +147,7 @@ async function createCollection() {
   } catch (e) { toast(e.message, true); }
 }
 async function renameCollection(id, currentName) {
-  const next = prompt("New collection name:", currentName);
+  const next = await askAction("Rename collection","Enter a new name.","Rename",false,currentName);
   if (next === null) return;
   const name = next.trim();
   if (!name || name === currentName) return;
@@ -139,7 +159,7 @@ async function renameCollection(id, currentName) {
 }
 
 async function deleteCollection(id, name) {
-  if (!confirm(`Delete collection '${name}' and ALL of its documents/vectors?`)) return;
+  if (!(await askAction("Delete collection", `Delete collection '${name}' and ALL of its documents/vectors?`, "Delete", true))) return;
   try { await api(`/api/collections/${id}`, { method: "DELETE" }); await loadCollections(); toast(`Collection '${name}' deleted`); }
   catch (e) { toast(e.message, true); }
 }
@@ -155,7 +175,7 @@ function reindexCollectionModal(id) {
   const c = state.collections.find((x) => x.id === id);
   const cfg = { ...(state.effective?.ingest || {}), ...(c.ingest_config || {}) };
   const modelOpts = state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === (c.embedding_model || state.settings.embedding_model) ? "selected" : ""}>${esc(m.id)}</option>`).join("");
-  openModal(`Reindex collection '${esc(c.name)}'`, `
+  openModal(`Reindex collection ${esc(c.name)}`, `
     <p class="small muted">Reprocesses every document. Changing the embedding model removes current vectors and rebuilds them from scratch.</p>
     <div class="form-grid">
       <label>Embedding model<select id="rcModel">${modelOpts}</select></label>
@@ -237,7 +257,7 @@ function uploadFiles(items) {
   };
   xhr.onload = async () => {
     state.uploading = false;
-    if (xhr.status === 401) { $("tokenBanner").classList.remove("hidden"); box.innerHTML = ""; return; }
+    if (xhr.status === 401) { showAuthDialog(); box.innerHTML = ""; return; }
     let data;
     try { data = JSON.parse(xhr.responseText); } catch { data = { detail: xhr.responseText }; }
     if (xhr.status >= 400) { box.innerHTML = ""; toast(data.detail || "Upload failed", true); return; }
@@ -576,7 +596,7 @@ async function syncSource(id) {
   } catch (e) { toast(e.message, true); }
 }
 async function deleteSource(id) {
-  if (!confirm("Delete this directory source? Existing documents stay in the collection.")) return;
+  if (!(await askAction("Delete directory source", "Existing documents stay in the collection.", "Delete", true))) return;
   try {
     await api(`/api/collection-sources/${id}`, { method: "DELETE" });
     await loadCollectionSources();
@@ -589,21 +609,19 @@ function toggleDocCollectionFilter() {
   if (panel) panel.classList.toggle("hidden");
 }
 function cycleDocCollectionFilter(id) {
+  if (state.bulkBusy) return;
   const current = state.docCollectionFilters.get(id) || "neutral";
   const next = current === "neutral" ? "include" : current === "include" ? "exclude" : "neutral";
   if (next === "neutral") state.docCollectionFilters.delete(id);
   else state.docCollectionFilters.set(id, next);
-  state.docsOffset = 0;
-  state.selectedDocs.clear();
   renderDocCollectionFilter();
-  loadDocuments();
+  resetDocFilters();
 }
 function clearDocCollectionFilters() {
+  if (state.bulkBusy) return;
   state.docCollectionFilters.clear();
-  state.docsOffset = 0;
-  state.selectedDocs.clear();
   renderDocCollectionFilter();
-  loadDocuments();
+  resetDocFilters();
 }
 function renderDocCollectionFilter() {
   const panel = $("docCollectionFilterPanel");
@@ -624,7 +642,8 @@ function selectedDocCollectionFilterIds(mode) {
 
 /* ---------------- documents ---------------- */
 let docsDebounce = null;
-function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout(loadDocuments, 350); }
+function resetDocFilters(){state.docFilterEpoch++;state.docsOffset=0;state.selectedDocs.clear();updateDocsSelectionUI();return loadDocuments();}
+function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout(resetDocFilters, 350); }
 function docsPage(dir) { state.docsOffset = Math.max(0, state.docsOffset + dir * state.docsLimit); loadDocuments(); }
 function classificationSummary(d) {
   const queued = d.meta?.auto_classify && !d.auto_suggestion;
@@ -640,12 +659,15 @@ function classificationSummary(d) {
 function updateDocsSelectionUI() {
   const count = state.selectedDocs.size;
   const label = $("docsSelectedCount");
-  const btn = $("btnBulkClassifySelected");
   if (label) label.textContent = `${count} selected`;
-  if (btn) btn.disabled = count === 0;
+  for(const id of ["btnBulkClassifySelected","btnBulkMoveSelected","btnBulkReindexSelected","btnBulkRetrySelected","btnBulkCancelSelected","btnBulkDeleteSelected","btnClearSelection"]) $(id).disabled=!count||state.bulkBusy;
+  $("btnSelectFiltered").disabled=state.bulkBusy;
+  for (const id of ["docFilterStatus","docSearch","docCollectionFilterBtn"]) $(id).disabled=state.bulkBusy;
+  document.querySelectorAll(".doc-select").forEach(el=>el.disabled=state.bulkBusy);
   const page = $("docsSelectPage");
   if (page) {
     const ids = state.currentDocIds || [];
+    page.disabled=state.bulkBusy;
     page.checked = ids.length > 0 && ids.every((id) => state.selectedDocs.has(id));
     page.indeterminate = ids.some((id) => state.selectedDocs.has(id)) && !page.checked;
   }
@@ -661,28 +683,80 @@ function toggleDocsPage(checked) {
   document.querySelectorAll(".doc-select").forEach((el) => { el.checked = checked; });
   updateDocsSelectionUI();
 }
-async function queueBulkClassification(body, label) {
-  try {
-    const r = await api("/api/documents/classify-bulk", { method: "POST", body });
-    state.selectedDocs.clear();
-    updateDocsSelectionUI();
-    await loadDocuments();
-    toast(r.queued ? `${r.queued} document(s) queued for AI reclassification` : `No indexed documents matched ${label}`);
-  } catch (e) { toast(e.message, true); }
+function clearDocsSelection(){state.selectedDocs.clear();document.querySelectorAll(".doc-select").forEach(el=>el.checked=false);updateDocsSelectionUI();}
+function documentParams(limit,offset){
+  const params=new URLSearchParams({limit,offset});
+  for(const id of selectedDocCollectionFilterIds("include")) params.append("collection_ids",id);
+  for(const id of selectedDocCollectionFilterIds("exclude")) params.append("exclude_collection_ids",id);
+  if($("docFilterStatus").value) params.set("status",$("docFilterStatus").value);
+  if($("docSearch").value) params.set("q",$("docSearch").value);
+  return params;
 }
-async function bulkClassifySelected() {
-  const ids = [...state.selectedDocs];
-  if (!ids.length) return;
-  await queueBulkClassification({ document_ids: ids }, "the selection");
+async function selectFilteredDocs(){
+  if(state.bulkBusy)return;
+  state.bulkBusy=true;updateDocsSelectionUI();
+  const epoch=state.docFilterEpoch,ids=new Set(),limit=100,params=documentParams(limit,0);
+  try{
+    for(let offset=0;;offset+=limit){
+      params.set("offset",offset);
+      const data=await api("/api/documents?"+params);
+      if(epoch!==state.docFilterEpoch)return;
+      data.items.forEach(d=>ids.add(d.id));
+      if(offset+data.items.length>=data.total||!data.items.length)break;
+    }
+    state.selectedDocs=ids;await loadDocuments();
+  }catch(e){toast(e.message,true);}
+  finally{state.bulkBusy=false;updateDocsSelectionUI();}
 }
-async function loadDocuments() {
-  const params = new URLSearchParams({ limit: state.docsLimit, offset: state.docsOffset });
-  for (const id of selectedDocCollectionFilterIds("include")) params.append("collection_ids", id);
-  for (const id of selectedDocCollectionFilterIds("exclude")) params.append("exclude_collection_ids", id);
-  if ($("docFilterStatus").value) params.set("status", $("docFilterStatus").value);
-  if ($("docSearch").value) params.set("q", $("docSearch").value);
+async function runBulkAction(ids,label,worker){
+  if(!ids.length||state.bulkBusy)return;
+  state.bulkBusy=true;updateDocsSelectionUI();
+  const failures=[];let done=0,skipped=0;
+  try{
+    for(const id of ids){
+      try{if(await worker(id)===false)skipped++;else done++;state.selectedDocs.delete(id);}
+      catch(e){failures.push({id,message:e.message});state.selectedDocs.add(id);}
+      $("docsSelectedCount").textContent=(done+skipped+failures.length)+"/"+ids.length+" processed";
+    }
+    try{await loadCollections();await loadDocuments();}catch(e){toast(e.message,true);}
+    if(failures.length)openModal(esc(label+" results"),"<p>"+done+" succeeded · "+skipped+" skipped · "+failures.length+" failed. Failed documents remain selected.</p><ul>"+failures.map(f=>"<li>"+esc(f.id)+" — "+esc(f.message)+"</li>").join("")+"</ul>");
+    else toast(label+": "+done+" succeeded, "+skipped+" skipped");
+  }finally{state.bulkBusy=false;updateDocsSelectionUI();}
+}
+async function bulkClassifySelected(){
+  const ids=[...state.selectedDocs];if(!ids.length||state.bulkBusy)return;
+  if(!await askAction("Reclassify",ids.length+" selected documents. Only indexed documents are eligible.","Reclassify"))return;
+  state.bulkBusy=true;updateDocsSelectionUI();let queued=0,skipped=0;
+  try{
+    for(let i=0;i<ids.length;i+=500){
+      const batch=ids.slice(i,i+500),r=await api("/api/documents/classify-bulk",{method:"POST",body:{document_ids:batch}});
+      queued+=r.queued;skipped+=batch.length-r.queued;batch.forEach(id=>state.selectedDocs.delete(id));
+    }
+    toast(queued+" queued · "+skipped+" not eligible");
+  }catch(e){toast(queued+" queued before error: "+e.message,true);}
+  finally{state.bulkBusy=false;await loadDocuments();updateDocsSelectionUI();}
+}
+async function bulkMoveSelected(){
+  const ids=[...state.selectedDocs];if(!ids.length||state.bulkBusy)return;
+  const target=await askAction("Move documents",ids.length+" selected documents. Active documents and incompatible embeddings are rejected.","Move",false,null,state.collections);
+  if(!target)return;
+  await runBulkAction(ids,"Move",async id=>!(await api("/api/documents/"+id+"/move",{method:"POST",body:{target_collection_id:target}})).unchanged);
+}
+async function bulkDocumentAction(action,title,message,danger=false){
+  const ids=[...state.selectedDocs];if(!ids.length||state.bulkBusy)return;
+  if(!await askAction(title,ids.length+" selected documents. "+message,title,danger))return;
+  await runBulkAction(ids,title,id=>api("/api/documents/"+id+(action==="delete"?"":"/"+action),action==="delete"?{method:"DELETE"}:{method:"POST",body:{}}));
+}
+function bulkReindexSelected(){return bulkDocumentAction("reindex","Reindex","Current chunks and vectors will be rebuilt.");}
+function bulkRetrySelected(){return bulkDocumentAction("retry","Retry","Only failed or waiting documents can be retried.");}
+function bulkCancelSelected(){return bulkDocumentAction("cancel","Cancel processing","Partial chunks and vectors may be removed.",true);}
+function bulkDeleteSelected(){return bulkDocumentAction("delete","Delete","Documents and vectors will be permanently removed.",true);}
+async function loadDocuments(){
+  const params=documentParams(state.docsLimit,state.docsOffset);
+  const epoch=state.docFilterEpoch;
   try {
     const data = await api("/api/documents?" + params);
+    if(epoch!==state.docFilterEpoch)return;
     $("docsTotal").textContent = `${data.total} document(s) · page ${Math.floor(state.docsOffset / state.docsLimit) + 1}`;
     $("docsPrev").disabled = state.docsOffset === 0;
     $("docsNext").disabled = state.docsOffset + state.docsLimit >= data.total;
@@ -706,10 +780,10 @@ async function loadDocuments() {
           <button class="btn mini" onclick="docDetails('${d.id}')">Details</button>
           ${["error", "waiting"].includes(d.status) ? `<button class="btn mini" onclick="retryDoc('${d.id}')">Retry</button>` : ""}
           ${["pending", "extracting", "chunking", "embedding", "waiting", "cancelling"].includes(d.status) ? `<button class="btn mini danger" onclick="cancelDoc(&quot;${d.id}&quot;)">Cancel</button>` : ""}
-          <button class="btn mini" onclick="classifyDoc('${d.id}', '${esc(d.filename)}')">Classify</button>
-          <button class="btn mini" onclick="openMoveDoc('${d.id}', '${esc(d.filename)}', '${d.collection_id}')">Move</button>
-          <button class="btn mini" onclick="reindexDoc('${d.id}', '${esc(d.filename)}')">Reindex</button>
-          <button class="btn mini danger" onclick="deleteDoc('${d.id}', '${esc(d.filename)}')">Delete</button>
+          <button class="btn mini" onclick="classifyDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Classify</button>
+          <button class="btn mini" onclick="openMoveDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, '${d.collection_id}')">Move</button>
+          <button class="btn mini" onclick="reindexDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Reindex</button>
+          <button class="btn mini danger" onclick="deleteDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Delete</button>
         </div></td>
       </tr>`;
     }).join("") + `</tbody></table>`;
@@ -718,7 +792,7 @@ async function loadDocuments() {
 }
 async function retryDoc(id) { try { await api(`/api/documents/${id}/retry`, { method: "POST" }); toast("Document requeued"); loadDocuments(); } catch (e) { toast(e.message, true); } }
 async function cancelDoc(id) {
-  if (!confirm("Cancel processing for this document? Partial chunks and vectors will be removed.")) return;
+  if (!(await askAction("Cancel processing", "Partial chunks and vectors will be removed.", "Cancel processing", true))) return;
   try {
     const r = await api(`/api/documents/${id}/cancel`, { method: "POST" });
     toast(r.status === "cancelling" ? "Cancellation requested; waiting for a safe boundary" : "Document cancelled");
@@ -755,7 +829,7 @@ async function moveDoc(id) {
   } catch (e) { toast(e.message, true); }
 }
 async function reindexDoc(id, name) {
-  if (!confirm(`Reindex '${name}'? Current chunks/vectors will be recreated.`)) return;
+  if (!(await askAction("Reindex document", `Reindex '${name}'? Current chunks/vectors will be recreated.`, "Reindex"))) return;
   try { await api(`/api/documents/${id}/reindex`, { method: "POST", body: {} }); toast("Reindex started"); loadDocuments(); }
   catch (e) { toast(e.message, true); }
 }
@@ -802,7 +876,7 @@ async function applyClassification(id) {
 }
 
 async function deleteDoc(id, name) {
-  if (!confirm(`Delete '${name}' and its vectors?`)) return;
+  if (!(await askAction("Delete document", `Delete '${name}' and its vectors?`, "Delete", true))) return;
   try { await api(`/api/documents/${id}`, { method: "DELETE" }); toast("Document deleted"); loadDocuments(); loadCollections(); }
   catch (e) { toast(e.message, true); }
 }
@@ -1000,7 +1074,7 @@ async function pollDocumentsClassification() {
     setInterval(pollHealth, 60000);
     setInterval(() => loadModels(false), 10 * 60 * 1000);
   } catch (e) {
-    if (!token()) $("tokenBanner").classList.remove("hidden");
+    if (!token()) showAuthDialog();
     console.error(e);
   }
 })();

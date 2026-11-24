@@ -928,13 +928,20 @@ async def reindex_document(doc_id: str, body: DocReindex):
     cfg["embedding_model"] = model
     async with db.pool.connection() as conn:
         async with conn.transaction():
+            cur = await conn.execute(
+                "SELECT status FROM documents WHERE id=%s FOR UPDATE", (doc_id,))
+            current = await cur.fetchone()
+            if not current:
+                raise HTTPException(404, "documento não encontrado")
+            if current["status"] in ACTIVE_STATUSES:
+                raise HTTPException(409, "documento está em processamento; aguarde antes de reindexar")
+            extraction_cache_path(doc_id).unlink(missing_ok=True)
             await conn.execute("DELETE FROM chunks WHERE document_id=%s", (doc_id,))
             await conn.execute(
                 """UPDATE documents SET status='pending', error=NULL, retry_at=NULL,
                        attempts=0, chunks_total=0, chunks_embedded=0,
                        ingest_config=%s::jsonb, updated_at=now() WHERE id=%s""",
                 (json.dumps(cfg), doc_id))
-    extraction_cache_path(doc_id).unlink(missing_ok=True)
     await db.event(f"Reindexação iniciada: {doc['filename']}",
                    collection_id=doc["collection_id"], document_id=doc_id)
     return {"reindexing": doc["filename"], "config": cfg}

@@ -48,3 +48,21 @@ def test_brand_background_and_glass_have_single_shell_definition():
     assert "background:var(--glass-card)" in css
     assert 'class="collection-section"' in HTML
     assert 'aria-label="Collections"' in HTML
+
+
+def test_document_bulk_actions_and_dialogs_are_available():
+    assert not re.search(r"\b(?:confirm|alert|prompt)\s*\(", JS)
+    assert "tokenBanner" not in HTML + JS
+    assert '<dialog id="actionDialog"' in HTML
+    assert 'method="dialog"' in HTML
+    for action in ("Classify", "Move", "Reindex", "Retry", "Cancel", "Delete"):
+        assert f'id="btnBulk{action}Selected"' in HTML
+        assert f"bulk{action}Selected()" in HTML
+    assert 'onclick="selectFilteredDocs()"' in HTML
+    assert 'onclick="clearDocsSelection()"' in HTML
+    assert 'documentParams(limit,0)' in JS
+
+
+def test_runtime_branding_assets_are_documented():
+    for name in ("rag-mcp-lockup.png", "rag-mcp-icon.png", "rag-mcp-background.png"):
+        assert (ROOT / "docs/screens" / name).read_bytes() == (ROOT / "app/static/branding" / name).read_bytes()

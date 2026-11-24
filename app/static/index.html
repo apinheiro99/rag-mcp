@@ -25,11 +25,8 @@
   </div>
 </aside>
 
-<div id="tokenBanner" class="banner hidden">
-  This server requires an API token.
-  <input type="password" id="tokenInput" placeholder="Bearer token">
-  <button onclick="saveToken()">Save</button>
-</div>
+<dialog id="authDialog" class="action-dialog" aria-labelledby="authTitle">
+<form id="authForm" method="dialog"><h2 id="authTitle">Connect to RAG MCP</h2><p class="muted">This server requires an API token.</p><label>API token<input id="tokenInput" type="password" required></label><div class="dialog-actions"><button class="btn primary" type="submit">Connect</button></div></form></dialog>
 
 <main>
   <header class="app-header">
@@ -178,7 +175,7 @@
         <div class="row">
           <button class="btn" id="docCollectionFilterBtn" type="button" onclick="toggleDocCollectionFilter()">Collections</button>
           <div id="docCollectionFilterPanel" class="collection-filter-panel hidden"></div>
-          <select id="docFilterStatus" onchange="loadDocuments()">
+          <select id="docFilterStatus" onchange="resetDocFilters()">
             <option value="">All statuses</option>
             <option value="staged">Awaiting configuration</option>
             <option value="pending">Queued</option>
@@ -195,9 +192,16 @@
       </div>
       <div class="row between bulk-toolbar">
         <label class="check"><input type="checkbox" id="docsSelectPage" onchange="toggleDocsPage(this.checked)"> select page</label>
+        <button class="btn mini" id="btnSelectFiltered" onclick="selectFilteredDocs()">Select all filtered</button>
+        <button class="btn mini" id="btnClearSelection" onclick="clearDocsSelection()" disabled>Clear selection</button>
         <div class="row">
           <span id="docsSelectedCount" class="muted small">0 selected</span>
-          <button class="btn" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>Reclassify selected</button>
+          <button class="btn" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>Reclassify</button>
+          <button class="btn" id="btnBulkMoveSelected" onclick="bulkMoveSelected()" disabled>Move</button>
+          <button class="btn" id="btnBulkReindexSelected" onclick="bulkReindexSelected()" disabled>Reindex</button>
+          <button class="btn" id="btnBulkRetrySelected" onclick="bulkRetrySelected()" disabled>Retry</button>
+          <button class="btn" id="btnBulkCancelSelected" onclick="bulkCancelSelected()" disabled>Cancel processing</button>
+          <button class="btn danger" id="btnBulkDeleteSelected" onclick="bulkDeleteSelected()" disabled>Delete</button>
         </div>
       </div>
       <div id="docsTable"></div>
@@ -300,7 +304,12 @@
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<dialog id="actionDialog" class="action-dialog" aria-labelledby="actionTitle" aria-describedby="actionMessage">
+<form method="dialog"><h2 id="actionTitle"></h2><p id="actionMessage" class="muted"></p>
+<label id="actionInputWrap" class="hidden">Name<input id="actionInput" type="text"></label>
+<label id="actionSelectWrap" class="hidden">Destination collection<select id="actionSelect"></select></label>
+<div class="dialog-actions"><button class="btn" value="cancel" autofocus>Cancel</button><button id="actionSubmit" class="btn primary" value="accept">Continue</button></div></form></dialog>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>
