@@ -14,5 +14,5 @@ def test_deep_merge_recursive_and_non_mutating():
 
 def test_load_defaults_has_required_sections():
     cfg = load_defaults(Path("config/defaults.yaml"))
-    for key in ("ingest", "search", "auto", "limits", "worker", "workflow", "quality", "allowed_extensions"):
+    for key in ("ingest", "search", "auto", "limits", "worker", "workflow", "quality", "allowed_extensions", "repository_corpus"):
         assert key in cfg

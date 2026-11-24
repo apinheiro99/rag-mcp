@@ -24,6 +24,11 @@ def location_label(loc: dict) -> str:
         parts.append(f"capítulo: {loc['chapter']}")
     if loc.get("heading"):
         parts.append(f"seção: {loc['heading']}")
+    if loc.get("symbol"):
+        parts.append(f"symbol: {loc['symbol']}")
+    if loc.get("line_start"):
+        line_end = loc.get("line_end", loc["line_start"])
+        parts.append(f"lines {loc['line_start']}-{line_end}")
     if loc.get("table"):
         parts.append("tabela")
     return "; ".join(parts)

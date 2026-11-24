@@ -110,6 +110,26 @@ sources:
   interval_options_seconds: [600, 21600, 43200, 86400]
   default_exclude_patterns: [".git/**", "node_modules/**", "__pycache__/**", ".venv/**"]
 
+repository_corpus:
+  enabled: true
+  path: /rag-repository
+  collection_name: RAG Source Code
+  description: Searchable source code for this RAG repository.
+  default_search: false
+  interval_seconds: 600
+  exclude_patterns:
+    - ".git/**"
+    - "node_modules/**"
+    - "__pycache__/**"
+    - ".venv/**"
+    - ".pytest_cache/**"
+    - ".mypy_cache/**"
+    - ".ruff_cache/**"
+    - ".pip-cache/**"
+    - "dist/**"
+    - "build/**"
+    - "*.pyc"
+
 quality:
   enabled: true
   fail_on_bad: true

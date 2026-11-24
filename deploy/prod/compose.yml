@@ -46,6 +46,7 @@ services:
       - "${RAG_PORT:-8000}:8000"
     volumes:
       - ${RAG_PRIVATE_PATH:?absolute persistent RAG private root}:/rag-private
+      - ../..:/rag-repository:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

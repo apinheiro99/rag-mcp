@@ -282,6 +282,7 @@ class CollectionSourceCreate(BaseModel):
     interval_seconds: int | None = None
     enabled: bool = True
     exclude_patterns: list[str] = Field(default_factory=list)
+    source_type: str = "directory"
 
 
 class CollectionSourcePatch(BaseModel):
@@ -316,6 +317,8 @@ async def create_collection_source(col_id: str, body: CollectionSourceCreate):
         interval = validate_interval(interval, cfg)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    if body.source_type not in {"directory", "repository"}:
+        raise HTTPException(400, "source_type must be directory or repository")
     path = str(Path(body.path).expanduser().resolve())
     if not Path(path).is_dir():
         raise HTTPException(400, f"directory not found or not readable: {path}")
@@ -326,9 +329,11 @@ async def create_collection_source(col_id: str, body: CollectionSourceCreate):
         try:
             cur = await conn.execute(
                 """INSERT INTO collection_sources(
-                       id, collection_id, path, enabled, interval_seconds, exclude_patterns, next_sync_at)
-                   VALUES (%s,%s,%s,%s,%s,%s::jsonb,now()) RETURNING *""",
-                (str(uuid.uuid4()), col_id, path, body.enabled, interval, json.dumps(body.exclude_patterns)),
+                       id, collection_id, path, enabled, interval_seconds, exclude_patterns,
+                       next_sync_at, source_type)
+                   VALUES (%s,%s,%s,%s,%s,%s::jsonb,now(),%s) RETURNING *""",
+                (str(uuid.uuid4()), col_id, path, body.enabled, interval,
+                 json.dumps(body.exclude_patterns), body.source_type),
             )
             row = await cur.fetchone()
         except Exception as e:

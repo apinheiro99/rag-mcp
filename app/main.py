@@ -26,7 +26,7 @@ from .graph_retrieval import graph_worker
 from .mcp_server import create_mcp
 from .model_runtime import runtime_scheduler
 from .settings import settings
-from .source_sync import source_worker
+from .source_sync import ensure_repository_corpus, source_worker
 
 logging.basicConfig(
     level=getattr(logging, env.log_level, logging.INFO),
@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
     await runtime_scheduler.start()
     await worker.start()
     await classification_worker.start()
+    await ensure_repository_corpus()
     await source_worker.start()
     await graph_worker.start()
     await db.event("Servidor RAG iniciado")

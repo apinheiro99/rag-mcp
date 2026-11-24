@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,79 @@ def _copy_blob(path: Path, digest: str) -> str:
     return blob_rel
 
 
+def repository_commit(root: Path) -> str | None:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True, timeout=5,
+        ).stdout.strip() or None
+    except Exception:
+        return None
+
+
+async def ensure_repository_corpus() -> dict[str, Any] | None:
+    """Ensure the configured repository is a first-class, explicitly searchable corpus."""
+    eff = await settings.effective()
+    cfg = eff.get("repository_corpus", {})
+    if not cfg.get("enabled", False):
+        return None
+    root = Path(str(cfg.get("path") or "")).expanduser().resolve()
+    if not root.is_dir():
+        log.warning("repository corpus path unavailable: %s", root)
+        return None
+
+    model = await settings.get("embedding_model")
+    if not model:
+        log.warning("repository corpus deferred: embedding model is not configured")
+        return None
+
+    ingest_cfg = await resolve_ingest_config(None, None)
+    ingest_cfg["embedding_model"] = model
+    name = str(cfg.get("collection_name") or "RAG Source Code")
+    description = str(cfg.get("description") or "Searchable repository source code.")
+    default_search = bool(cfg.get("default_search", False))
+    interval = validate_interval(
+        int(cfg.get("interval_seconds", eff["sources"]["default_interval_seconds"])),
+        eff["sources"],
+    )
+    patterns = list(dict.fromkeys(
+        [str(x) for x in eff["sources"].get("default_exclude_patterns", [])]
+        + [str(x) for x in cfg.get("exclude_patterns", [])]
+    ))
+
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            """INSERT INTO collections(id,name,description,ingest_config,default_search,embedding_model)
+               VALUES (%s,%s,%s,%s::jsonb,%s,%s)
+               ON CONFLICT (name) DO UPDATE SET
+                 description=EXCLUDED.description,
+                 default_search=EXCLUDED.default_search,
+                 updated_at=now()
+               RETURNING *""",
+            (str(uuid.uuid4()), name, description, json.dumps(ingest_cfg), default_search, model),
+        )
+        collection = await cur.fetchone()
+        cur = await conn.execute(
+            """INSERT INTO collection_sources(
+                   id, collection_id, path, enabled, interval_seconds, exclude_patterns,
+                   next_sync_at, source_type)
+               VALUES (%s,%s,%s,TRUE,%s,%s::jsonb,now(),'repository')
+               ON CONFLICT (collection_id,path) DO UPDATE SET
+                 enabled=TRUE,
+                 interval_seconds=EXCLUDED.interval_seconds,
+                 exclude_patterns=EXCLUDED.exclude_patterns,
+                 source_type='repository',
+                 next_sync_at=now(),
+                 updated_at=now()
+               RETURNING *""",
+            (str(uuid.uuid4()), collection["id"], str(root), interval, json.dumps(patterns)),
+        )
+        source = await cur.fetchone()
+    return {"collection": collection, "source": source}
+
+
+
+
 async def sync_collection_source(source_id: str) -> dict[str, Any]:
     eff = await settings.effective()
     source_cfg = eff.get("sources", {})
@@ -75,6 +149,10 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
         raise ValueError("source not found")
 
     root = Path(source["path"]).expanduser().resolve()
+    source_type = str(source.get("source_type") or "directory")
+    repository_revision = repository_commit(root) if source_type == "repository" else None
+    if source_type == "repository" and not repository_revision:
+        log.warning("repository source has no readable git commit: %s", root)
     if not root.is_dir():
         raise ValueError(f"source path is not a readable directory: {root}")
 
@@ -127,6 +205,11 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
             if old and old["content_sha256"] == digest:
                 stats["unchanged"] += 1
                 continue
+            source_meta = (
+                {"source_type": "repository", "repository_commit": repository_revision,
+                 "repository_path": rel}
+                if source_type == "repository" else {}
+            )
             blob_rel = await asyncio.to_thread(_copy_blob, path, digest)
             initial_status = "pending" if auto_start else "staged"
             mtime_ns = path.stat().st_mtime_ns
@@ -147,10 +230,12 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
                         """UPDATE documents SET filename=%s, stored_path=%s, content_sha256=%s,
                                size_bytes=%s, source_mtime_ns=%s, status=%s, error=NULL,
                                attempts=0, retry_at=NULL, chunks_total=0, chunks_embedded=0,
-                               ingest_config=%s::jsonb, updated_at=now(), processed_at=NULL
+                               ingest_config=%s::jsonb, meta=%s::jsonb,
+                               updated_at=now(), processed_at=NULL
                            WHERE id=%s""",
                         (path.name, blob_rel, digest, size, mtime_ns, initial_status,
-                         json.dumps(auto_config) if auto_config else None, old["id"]),
+                         json.dumps(auto_config) if auto_config else None,
+                         json.dumps(source_meta), old["id"]),
                     )
                     extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
                     stats["changed"] += 1
@@ -160,11 +245,11 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
                         """INSERT INTO documents(
                                id, collection_id, filename, source_path, stored_path,
                                content_sha256, size_bytes, status, ingest_config,
-                               source_id, source_mtime_ns)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
+                               source_id, source_mtime_ns, meta)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)""",
                         (doc_id, source["collection_id"], path.name, rel, blob_rel, digest,
                          size, initial_status, json.dumps(auto_config) if auto_config else None,
-                         source_id, mtime_ns),
+                         source_id, mtime_ns, json.dumps(source_meta)),
                     )
                     stats["new"] += 1
         except Exception:
