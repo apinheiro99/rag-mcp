@@ -10,3 +10,8 @@ def test_binary_hnsw_candidate_stage_keeps_document_filters_after_shortlist():
     assert "JOIN documents" not in candidate_stage
     assert "superseded_by" not in search
     assert "WHERE d.status='ready'" in search[end:]
+
+
+def test_search_requires_exact_embedding_reranker_model_profile():
+    search = Path("app/search.py").read_text()
+    assert "runtime_scheduler.ensure_resident(client, requirements, exact=True)" in search
