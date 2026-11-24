@@ -536,14 +536,11 @@ Rerank observability is being extended; unfinished validation is tracked later i
 
 The retrieval engine can only rank what the corpus contains.
 
-Observed issue:
-older infrastructure documents sometimes compete with current canonical documents.
+Canonicality governance:
+documents explicitly marked as superseded remain stored and directly addressable by document id,
+but ordinary retrieval excludes them so stale knowledge cannot outrank its replacement.
 
-Example:
-legacy DEV hostname convention with `-01` can surface above current convention without `-01`.
-
-This is a corpus curation/canonicality/versioning concern and remains future work.
-
+This preserves historical access without polluting normal retrieval.
 It is **not** a reason to redact operational credentials from the private KB.
 
 ---
@@ -758,15 +755,15 @@ The library uses specific topic shelves rather than broad implementation buckets
 Manual and automatic classification use the configured embedding model, not a generative LLM. The document is compared with profiles built from each existing user-defined collection name, description, and representative examples. Existing collections are auto-routed only when semantic score and winner margin pass configurable thresholds. Weak or ambiguous matches remain in `Unclassified` for review. New collections are never created automatically.
 
 
-### Known corpus issue
+### Corpus canonicality
 
-Older infrastructure documents can compete with current canonical documents (e.g. legacy DEV `-01` naming). This remains a corpus canonicality/versioning problem. Private operational credentials remain valid searchable knowledge.
+Documents can be explicitly marked as superseded by a replacement document. Superseded
+documents are hidden from normal retrieval while remaining available for explicit historical
+lookup by document id. The admin UI exposes Supersede/Restore controls.
 
 ### Remaining roadmap
 
-- corpus canonicality/versioning remains a corpus-governance improvement, not a runtime blocker;
 - OpenAI Secure MCP Tunnel is active in production as a Compose sidecar with deployment-owned host runtime inputs, following the REACH pattern.
-
 All original runtime/product roadmap items (default-search semantics, explicit error semantics, automatic classification, directory synchronization, administrative UI parity, encoding recovery, GitHub publication and production deployment) are implemented.
 
 ---
