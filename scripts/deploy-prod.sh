@@ -5,7 +5,6 @@ ROOT="${RAG_PROD_ROOT:-$HOME/rag-prod/rag-mcp}"
 : "${RAG_PRIVATE_PATH:?RAG_PRIVATE_PATH must point to the durable production private root}"
 PRIVATE="$(realpath -m "$RAG_PRIVATE_PATH")"
 RUNTIME_ENV="$PRIVATE/.env"
-RECOVERY_PRIVATE="${RAG_PRIVATE_RECOVERY_PATH:-$HOME/rag-prod/rag-private}"
 
 mkdir -p "$(dirname "$ROOT")"
 if [ ! -d "$ROOT/.git" ]; then
@@ -22,19 +21,6 @@ if [ ! -e "$PRIVATE" ]; then
 fi
 [ -d "$PRIVATE" ] || { echo "RAG_PRIVATE_PATH is not a directory: $PRIVATE" >&2; exit 1; }
 [ -w "$PRIVATE" ] || { echo "RAG_PRIVATE_PATH is not writable: $PRIVATE" >&2; exit 1; }
-
-# Recovery/configuration material is separate from live state. When a host-side
-# recovery checkout is present, refresh only configuration files; never touch data/postgres.
-if [ -d "$RECOVERY_PRIVATE/.git" ]; then
-  git -C "$RECOVERY_PRIVATE" fetch origin main
-  git -C "$RECOVERY_PRIVATE" reset --hard origin/main
-  install -m 600 "$RECOVERY_PRIVATE/.env" "$RUNTIME_ENV"
-  if [ -d "$RECOVERY_PRIVATE/tunnel" ]; then
-    install -d -m 700 "$PRIVATE/tunnel"
-    cp -a "$RECOVERY_PRIVATE/tunnel/." "$PRIVATE/tunnel/"
-    find "$PRIVATE/tunnel" -type f -exec chmod 600 {} +
-  fi
-fi
 
 # Existing persistent directories may be owned by the containers that use them
 # (not by the gitlab-runner account). Preserve ownership/permissions exactly as-is.
