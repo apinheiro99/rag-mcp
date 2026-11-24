@@ -118,7 +118,7 @@ These addresses are deployment facts, not architecture requirements.
 | `rerank.py` | rerank prompt, response parsing and ordering |
 | `rerank_runtime.py` | model-switch orchestration and fail-open behavior |
 | `autoconfig.py` | ingestion configuration suggestion |
-| `collection_classifier.py` | LLM-assisted collection routing suggestions |
+| `collection_classifier.py` | Embedding-based collection routing against existing user-defined collections |
 | `source_sync.py` | incremental directory-source synchronization + scheduler |
 
 Rule: one owner per responsibility. New behavior should extend the owning module instead of creating parallel policy elsewhere.
