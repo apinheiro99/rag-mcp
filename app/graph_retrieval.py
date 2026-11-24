@@ -101,11 +101,14 @@ async def persistent_evidence_graph(rows: list[dict[str, Any]], query: str, limi
 
     mentions = await fetch_mentions()
     if not mentions:
-        for document_id in document_ids:
-            await rebuild_document_mentions(document_id)
-        mentions = await fetch_mentions()
+        graph = _assemble(rows, {}, query, limit, persistent=True)
+        graph["available"] = False
+        graph["reason"] = "graph_not_materialized_yet"
+        return graph
 
-    return _assemble(rows, mentions, query, limit, persistent=True)
+    graph = _assemble(rows, mentions, query, limit, persistent=True)
+    graph["available"] = True
+    return graph
 
 
 async def graph_document_fingerprint(document_id: str) -> str:
