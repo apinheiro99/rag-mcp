@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS collections (
 );
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS default_search BOOLEAN NOT NULL DEFAULT TRUE;
 
+CREATE TABLE IF NOT EXISTS categories (
+    id            UUID PRIMARY KEY,
+    collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (collection_id, name)
+);
+CREATE INDEX IF NOT EXISTS categories_collection_idx ON categories(collection_id);
+
 CREATE TABLE IF NOT EXISTS collection_sources (
     id               UUID PRIMARY KEY,
     collection_id    UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
@@ -70,6 +81,8 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS documents_collection_idx ON documents(collection_id);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_id UUID REFERENCES collection_sources(id) ON DELETE SET NULL;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_mtime_ns BIGINT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES categories(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS documents_category_idx ON documents(category_id);
 CREATE UNIQUE INDEX IF NOT EXISTS documents_source_path_idx ON documents(source_id, source_path) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_status_idx ON documents(status);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS graph_indexed_at TIMESTAMPTZ;

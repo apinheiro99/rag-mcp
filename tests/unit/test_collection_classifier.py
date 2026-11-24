@@ -1,6 +1,6 @@
 import pytest
 
-from app.collection_classifier import classify_document, collection_profile, cosine_similarity, representative_sample, suggest_category
+from app.collection_classifier import parse_category_proposal, classify_document, collection_profile, cosine_similarity, representative_sample, suggest_category
 
 COLLECTIONS = [
     {"name": "Python", "description": "Python books", "doc_count": 4, "examples": ["Fluent Python"]},
@@ -78,3 +78,14 @@ def test_suggest_category_strips_author_suffix():
         "",
     )
     assert suggestion["name"] == "DevOps GitLab"
+
+
+def test_parse_category_proposal_accepts_short_semantic_category():
+    proposal = parse_category_proposal('{"name":"Economics","description":"Economics books."}')
+    assert proposal == {"name": "Economics", "description": "Economics books."}
+
+
+def test_parse_category_proposal_rejects_title_like_long_name():
+    import pytest
+    with pytest.raises(ValueError, match="1-3 word"):
+        parse_category_proposal('{"name":"The Complete Economics Handbook Fifth Edition","description":"x"}')

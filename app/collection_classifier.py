@@ -1,6 +1,7 @@
 """Embedding-based collection routing for already indexed documents."""
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Any
@@ -36,6 +37,65 @@ def suggest_category(filename: str, source_path: str) -> dict[str, str]:
         "name": name,
         "description": f"Documents primarily about {name}.",
     }
+
+def parse_category_proposal(raw: str) -> dict[str, str]:
+    text = (raw or "").strip()
+    fence = chr(96) * 3
+    if text.startswith(fence):
+        first_newline = text.find("\n")
+        if first_newline >= 0:
+            text = text[first_newline + 1:]
+        if text.endswith(fence):
+            text = text[:-3]
+        text = text.strip()
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("category proposal must be a JSON object")
+    name = str(data.get("name") or "").strip()
+    description = str(data.get("description") or "").strip()
+    if not name or len(name) > 80:
+        raise ValueError("category proposal name is missing or too long")
+    words = name.split()
+    if len(words) > 3:
+        raise ValueError("category proposal must be a broad 1-3 word category")
+    return {
+        "name": name,
+        "description": description or f"Books primarily about {name}.",
+    }
+
+
+async def propose_category_with_llm(
+    client: LMStudioClient,
+    model: str,
+    *,
+    filename: str,
+    text: str,
+    existing_categories: list[str],
+    sample_chars: int,
+    timeout: float,
+) -> dict[str, str]:
+    sample = representative_sample(text, sample_chars)
+    existing = ", ".join(existing_categories) if existing_categories else "(none)"
+    prompt = (
+        "Classify this book into a broad reusable subject category. "
+        "If none of the existing categories fits, propose a NEW category name. "
+        "Use a short 1-3 word subject, not the book title, author, edition, or publisher. "
+        "Examples: Software Testing, Economics, Nuclear Engineering, PostgreSQL. "
+        "Return ONLY JSON with keys name and description.\\n\\n"
+        f"Existing categories: {existing}\\n"
+        f"Filename: {filename}\\n\\n"
+        f"Book sample:\\n{sample}"
+    )
+    raw = await client.chat(
+        [{"role": "user", "content": prompt}],
+        model,
+        temperature=0.0,
+        max_tokens=180,
+        timeout=timeout,
+        reasoning_effort="none",
+    )
+    return parse_category_proposal(raw)
+
 
 def representative_sample(text: str, sample_chars: int) -> str:
     text = (text or "").strip()

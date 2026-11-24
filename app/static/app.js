@@ -12,7 +12,7 @@ const STATUS_LABEL = {
 const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
 
 let state = {
-  collections: [], sources: [], events: [], models: [], settings: {}, effective: null,
+  collections: [], categories: [], sources: [], events: [], models: [], settings: {}, effective: null,
   mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
   pollTick: 0, lastActive: 0, uploading: false,
   selectedDocs: new Set(), currentDocIds: [], docsHasPendingAI: false, activeTab: "dashboard",
@@ -135,17 +135,9 @@ function renderCollections() {
     </div>`).join("") || `<p class="muted">No collections yet. Create one from the Import tab.</p>`;
 }
 async function createCollection() {
-  const name = $("newCollectionName").value.trim();
-  if (!name) return toast("Enter a collection name", true);
-  try {
-    const col = await api("/api/collections", { method: "POST", body: { name } });
-    $("newCollectionName").value = "";
-    await loadCollections();
-    $("importCollection").value = col.id;
-    onImportCollectionChange();
-    toast(`Collection '${name}' created`);
-  } catch (e) { toast(e.message, true); }
+  toast("Top-level collections are fixed. Create book categories in Settings.", true);
 }
+
 async function renameCollection(id, currentName) {
   const next = await askAction("Rename collection","Enter a new name.","Rename",false,currentName);
   if (next === null) return;
@@ -303,10 +295,9 @@ async function refreshStaged() {
   let colId = $("importCollection").value;
   if (!colId) { $("stagedCount").textContent = ""; return; }
   if (colId === "__auto__") {
-    const inboxName = state.effective?.classification?.staging_collection_name;
-    const inbox = state.collections.find((c) => c.name === inboxName);
-    if (!inbox) return;
-    colId = inbox.id;
+    const books = state.collections.find((c) => c.name === "Computer Books");
+    if (!books) return;
+    colId = books.id;
   }
   try {
     const data = await api(`/api/documents?collection_id=${colId}&status=staged&limit=1`);
@@ -658,15 +649,36 @@ function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout
 function docsPage(dir) { state.docsOffset = Math.max(0, state.docsOffset + dir * state.docsLimit); loadDocuments(); }
 function classificationSummary(d) {
   const queued = d.meta?.auto_classify && !d.auto_suggestion;
-  if (queued) return `<span class="badge pending">Classification queued</span>`;
-  const s = d.auto_suggestion;
-  if (!s) return `<span class="muted small">—</span>`;
-  if (s.status === "classification_error") return `<span class="small" style="color:var(--red)">Classification error · ${esc(s.error || "")}</span>`;
-  const dest = s.routed_to || s.existing_collection || s.proposed_collection?.name || "review";
-  const confidence = Math.round((Number(s.confidence) || 0) * 100);
-  const prefix = s.auto_applied ? "Classified ✓" : "Review";
-  return `<span class="small ${s.auto_applied ? "" : "muted"}">${prefix} · ${esc(dest)} · ${confidence}%</span>`;
+  if (queued) return `<span class="badge pending">Category queued</span>`;
+  const sug = d.auto_suggestion;
+  if (!sug) return `<span class="small">${esc(d.category || "Uncategorized")}</span>`;
+  if (sug.status === "classification_error") return `<span class="small" style="color:var(--red)">Classification error · ${esc(sug.error || "")}</span>`;
+  if (sug.decision === "rejected") return `<span class="small muted">Uncategorized · proposal rejected</span>`;
+  const existing = sug.existing_category || sug.existing_collection;
+  const proposed = sug.proposed_category || sug.proposed_collection;
+  const dest = sug.routed_to || existing || proposed?.name || d.category || "Uncategorized";
+  const confidence = Math.round((Number(sug.confidence) || 0) * 100);
+  if (!sug.auto_applied && proposed?.name) {
+    return `<div class="small"><b>New category?</b> ${esc(proposed.name)} · ${confidence}%</div>
+      <div class="row" style="margin-top:4px">
+        <button class="btn mini primary" onclick="reviewCategoryDecision('${d.id}', true)">Yes</button>
+        <button class="btn mini" onclick="reviewCategoryDecision('${d.id}', false)">No</button>
+      </div>`;
+  }
+  return `<span class="small">${sug.auto_applied ? "Categorized ✓" : "Review"} · ${esc(dest)} · ${confidence}%</span>`;
 }
+
+async function reviewCategoryDecision(id, accept) {
+  try {
+    const r = await api(`/api/documents/${id}/classification-decision`, {
+      method: "POST", body: { accept }
+    });
+    toast(accept ? `Category '${r.category?.name || ""}' added and applied` : "Kept as Uncategorized");
+    await loadBookCategories();
+    await loadDocuments();
+  } catch (e) { toast(e.message, true); }
+}
+
 function updateDocsSelectionUI() {
   const count = state.selectedDocs.size;
   const label = $("docsSelectedCount");
@@ -774,7 +786,7 @@ async function loadDocuments(){
     state.currentDocIds = data.items.map((d) => d.id);
     state.docsHasPendingAI = data.items.some((d) => d.meta?.auto_classify && !d.auto_suggestion);
     $("docsTable").innerHTML = `<table><thead><tr>
-      <th></th><th>Document</th><th>Collection</th><th>Status</th><th>Classification</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
+      <th></th><th>Document</th><th>Collection</th><th>Category</th><th>Status</th><th>Classification</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
     </tr></thead><tbody>` + data.items.map((d) => {
       const pct = d.chunks_total ? Math.round((d.chunks_embedded / d.chunks_total) * 100) : 0;
       const selected = state.selectedDocs.has(d.id) ? "checked" : "";
@@ -782,6 +794,7 @@ async function loadDocuments(){
         <td><input type="checkbox" class="doc-select" ${selected} onchange="toggleDocSelection('${d.id}', this.checked)"></td>
         <td><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></td>
         <td>${esc(d.collection)}</td>
+        <td>${esc(d.category || "Uncategorized")}</td>
         <td>${badge(d.status)}${d.superseded_by ? `<div class="docpath" style="color:var(--yellow)">superseded → ${esc(d.superseded_by)}</div>` : ""}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
         <td>${classificationSummary(d)}</td>
         <td>${d.chunks_total ? `<span class="mini-progress"><div style="width:${pct}%"></div></span> <span class="small muted">${d.chunks_embedded}/${d.chunks_total}</span>` : "—"}</td>
@@ -852,38 +865,31 @@ async function classifyDoc(id, name) {
     state.classificationSuggestions = state.classificationSuggestions || {};
     state.classificationSuggestions[id] = r;
     const confidence = Math.round((r.confidence || 0) * 100);
-    const destination = r.existing_collection
-      ? `Existing collection: <b>${esc(r.existing_collection)}</b>`
-      : `Proposed new collection: <b>${esc(r.proposed_collection?.name || "")}</b>`;
-    openModal(`Classify '${esc(name)}'`, `
+    const existing = r.existing_category || r.existing_collection;
+    const proposed = r.proposed_category || r.proposed_collection;
+    const destination = existing
+      ? `Existing category: <b>${esc(existing)}</b>`
+      : `Proposed new category: <b>${esc(proposed?.name || "")}</b>`;
+    const actions = proposed?.name
+      ? `<div class="row"><button class="btn primary" onclick="reviewManualCategory('${id}', true)">Yes, add category</button><button class="btn" onclick="reviewManualCategory('${id}', false)">No, Uncategorized</button></div>`
+      : `<p class="muted small">Existing categories are assigned automatically when confidence passes the configured threshold.</p>`;
+    openModal(`Categorize '${esc(name)}'`, `
       <p>${destination}</p>
       <p><b>Confidence:</b> ${confidence}%</p>
       <p class="muted">${esc(r.rationale || "")}</p>
-      <button class="btn primary" onclick="applyClassification('${id}')">Apply suggestion</button>`);
+      ${actions}`);
   } catch (e) { toast(e.message, true); }
 }
 
-async function applyClassification(id) {
-  const r = state.classificationSuggestions?.[id];
-  if (!r) return;
+async function reviewManualCategory(id, accept) {
   try {
-    let target = null;
-    if (r.existing_collection) {
-      target = state.collections.find((c) => c.name === r.existing_collection);
-      if (!target) throw new Error(`Collection '${r.existing_collection}' no longer exists`);
-    } else if (r.proposed_collection) {
-      target = await api("/api/collections", { method: "POST", body: {
-        name: r.proposed_collection.name, description: r.proposed_collection.description || ""
-      }});
-      await loadCollections();
-    }
-    if (!target) throw new Error("Classifier did not return a destination");
-    const moved = await api(`/api/documents/${id}/move`, {
-      method: "POST", body: { target_collection_id: target.id },
+    await api(`/api/documents/${id}/classification-decision`, {
+      method: "POST", body: { accept }
     });
     closeModal();
+    await loadBookCategories();
     await loadDocuments();
-    toast(`Moved to ${moved.to_collection}`);
+    toast(accept ? "Category added and applied" : "Document kept Uncategorized");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1049,6 +1055,7 @@ async function loadSettings() {
 }
 async function loadSettingsTab() {
   await loadSettings();
+  await loadBookCategories();
   $("lmUrl").value = state.settings.lmstudio_url || "";
   $("keepRerankerLoaded").checked = (state.effective?.rerank?.mode === "resident");
   $("overridesJson").value = JSON.stringify(state.settings.overrides || {}, null, 2);
@@ -1058,6 +1065,61 @@ async function loadSettingsTab() {
     <p class="muted small">Exposed tools: rag_search (com filtros), rag_search_metrics, list_collections, get_document.</p>`;
   await loadModels(false);
 }
+async function loadBookCategories() {
+  const books = state.collections.find((c) => c.name === "Computer Books");
+  if (!books) return;
+  try {
+    const data = await api(`/api/categories?collection_id=${books.id}`);
+    state.categories = data.categories || [];
+    const box = $("categoriesList");
+    if (!box) return;
+    box.innerHTML = state.categories.length
+      ? `<div class="upload-list">${state.categories.map((c) => `
+          <div class="upload-item">
+            <span><b>${esc(c.name)}</b><span class="muted small"> · ${c.doc_count} document(s)${c.description ? " · " + esc(c.description) : ""}</span></span>
+            <span class="row">
+              <button class="btn mini" onclick="renameBookCategory('${c.id}', ${esc(JSON.stringify(c.name))})">Rename</button>
+              <button class="btn mini danger" onclick="deleteBookCategory('${c.id}', ${esc(JSON.stringify(c.name))})">Delete</button>
+            </span>
+          </div>`).join("")}</div>`
+      : `<p class="muted">No categories yet. The first book can propose one automatically.</p>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+async function createBookCategory() {
+  const books = state.collections.find((c) => c.name === "Computer Books");
+  const name = $("newCategoryName")?.value.trim();
+  const description = $("newCategoryDescription")?.value.trim() || "";
+  if (!books || !name) return toast("Enter a category name", true);
+  try {
+    await api(`/api/collections/${books.id}/categories`, {
+      method: "POST", body: { name, description }
+    });
+    $("newCategoryName").value = "";
+    $("newCategoryDescription").value = "";
+    await loadBookCategories();
+    toast(`Category '${name}' created`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function renameBookCategory(id, current) {
+  const next = await askAction("Rename category", "Enter the new category name.", "Rename", false, current);
+  if (!next) return;
+  try {
+    await api(`/api/categories/${id}`, { method: "PATCH", body: { name: next.trim() } });
+    await loadBookCategories();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteBookCategory(id, name) {
+  if (!(await askAction("Delete category", `Delete '${name}'? Its books remain in Computer Books as Uncategorized.`, "Delete", true))) return;
+  try {
+    await api(`/api/categories/${id}`, { method: "DELETE" });
+    await loadBookCategories();
+    await loadDocuments();
+  } catch (e) { toast(e.message, true); }
+}
+
 async function loadModels(verbose) {
   $("modelsInfo").textContent = "querying LM Studio…";
   try {
