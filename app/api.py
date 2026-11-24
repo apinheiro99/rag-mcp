@@ -19,6 +19,7 @@ from .classification_runtime import classification_worker, classify_document_run
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
+from .graph_retrieval import graph_worker
 from .ingest import ACTIVE_STATUSES, extraction_cache_path, resolve_ingest_config, worker
 from .ingest_policy import should_auto_start_upload, should_ignore_empty_upload
 from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable
@@ -65,6 +66,9 @@ async def health():
         },
         "source_worker": {
             "running": source_worker._task is not None and not source_worker._task.done(),
+        },
+        "graph_worker": {
+            "running": graph_worker._task is not None and not graph_worker._task.done(),
         },
         "model_runtime": runtime_scheduler.status(),
         "lmstudio": lm,

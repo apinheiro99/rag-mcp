@@ -577,7 +577,7 @@ A document that no longer represents the system should be updated, archived or r
 - fail-open fallback to vector ranking;
 - UI checkbox to keep reranker resident;
 - Default search ON/OFF per collection with explicit-filter override;
-- LLM-assisted collection classification with confidence/new-collection proposal;
+- embedding-based collection classification against user-defined collection profiles;
 - incremental directory source synchronization with configurable intervals;
 - CP1252/legacy text decoding recovery before quality gating;
 - backend administrative API parity in the Web UI.
@@ -753,9 +753,9 @@ RAG MCP está operacional:
 
 The library uses specific topic shelves rather than broad implementation buckets. Current examples include Software Architecture, Software Craftsmanship, Design Patterns, Domain-Driven Design, Python, PostgreSQL, Distributed Systems, RAG & AI Agents, Transformers & Generative AI and AI Application Engineering. `Knowledge Base` remains Default search OFF and is still searchable when explicitly selected.
 
-### LLM-assisted collection classification
+### Embedding-based collection classification
 
-Implemented in two modes. Manual classification returns an exact existing collection with confidence or proposes a new collection with rationale, then exposes an explicit Apply action. Import also offers **Automatic classification**: documents enter a configurable `Unclassified` inbox with Default search OFF, classification runs after upload, and existing-collection matches at or above the configured confidence threshold are routed automatically. Low-confidence matches and proposed new collections remain staged for review; new collections are never created automatically.
+Manual and automatic classification use the configured embedding model, not a generative LLM. The document is compared with profiles built from each existing user-defined collection name, description, and representative examples. Existing collections are auto-routed only when semantic score and winner margin pass configurable thresholds. Weak or ambiguous matches remain in `Unclassified` for review. New collections are never created automatically.
 
 
 ### Known corpus issue
@@ -765,7 +765,7 @@ Older infrastructure documents can compete with current canonical documents (e.g
 ### Remaining roadmap
 
 - corpus canonicality/versioning remains a corpus-governance improvement, not a runtime blocker;
-- optional OpenAI Secure MCP Tunnel activation remains operator-gated by the OpenAI `tunnel_id`/credentials.
+- OpenAI Secure MCP Tunnel is active in production as a Compose sidecar with deployment-owned host runtime inputs, following the REACH pattern.
 
 All original runtime/product roadmap items (default-search semantics, explicit error semantics, automatic classification, directory synchronization, administrative UI parity, encoding recovery, GitHub publication and production deployment) are implemented.
 
@@ -1062,9 +1062,7 @@ below its configured heuristic threshold; it does not certify answer relevance.
 Heading-only results can be expanded with an adjacent same-section passage and
 explicit provenance.
 
-The experimental rag_evidence_graph tool builds a query-local graph of shared
-named mentions across retrieved documents. This is a lightweight exploratory
-prototype, not a full entity/relation extraction or community-summary GraphRAG.
+The `rag_evidence_graph` tool uses a persistent CPU evidence graph of deterministic named-concept mentions. A background worker continuously backfills the existing corpus and recomputes only ready documents whose chunk fingerprint changed. Query-time graph use is fail-open: if materialization for relevant content is not ready, the graph is reported unavailable and ordinary retrieval continues without waiting or rebuilding. This remains an evidence graph, not a full Microsoft GraphRAG implementation with LLM-based entity extraction or community summaries.
 
 Run the read-only retrieval benchmark using scripts/evaluate_retrieval.py with
 --url, --cases, --output and --k. The example cases measure known-source recall

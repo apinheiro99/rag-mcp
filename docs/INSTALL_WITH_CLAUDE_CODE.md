@@ -11,7 +11,7 @@ For development, use `./install.sh` followed by `./start.sh`. For a managed prod
 RAG MCP already exposes Streamable HTTP at `/mcp`. Production can optionally run OpenAI `tunnel-client` as a Compose sidecar without exposing that endpoint publicly.
 
 1. Create a Secure MCP Tunnel in OpenAI Platform and associate it with the intended ChatGPT workspace/organization.
-2. Prepare a private tunnel directory containing `tunnel-client.yaml` and the credentials produced by the tunnel onboarding flow. Configure the MCP target as `http://app:8000/mcp` because the tunnel sidecar shares the RAG Compose network.
-3. Set `RAG_TUNNEL_BINARY` and `RAG_TUNNEL_DIR` in the production private `.env`. Leaving both unset keeps the tunnel disabled.
-4. Redeploy. `scripts/deploy-prod.sh` adds `deploy/tunnel.compose.yml` only when the two tunnel inputs are configured.
+2. Provision the deployment-owned tunnel inputs once on the production host: the `tunnel-client` binary and a tunnel directory containing `tunnel-client.yaml` plus its credential file. Configure the MCP target as `http://app:8000/mcp`.
+3. Production exports `RAG_TUNNEL_BINARY=$HOME/rag-prod/bin/tunnel-client` and `RAG_TUNNEL_DIR=$HOME/rag-prod/tunnel`; the public repository does not provision or inspect credential contents.
+4. Redeploy. `scripts/deploy-prod.sh` adds `deploy/tunnel.compose.yml` when those host paths are provided and checks tunnel readiness after application health.
 5. In ChatGPT Plugins, add a custom MCP server, choose **Tunnel**, select/paste the matching `tunnel_id`, then create it as a private plugin.

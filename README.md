@@ -90,13 +90,13 @@ upload
   -> document becomes ready
   -> classification job enters FIFO
   -> unload incompatible resident models if required
-  -> load classification LLM
+  -> reuse the configured embedding model
   -> classify
-  -> keep classification LLM resident while compatible jobs remain queued
+  -> classify against existing collection profiles
   -> next incompatible job determines the next resident profile
 ```
 
-That means a larger classification model can be used without permanently consuming VRAM. Consecutive jobs with the same model profile reuse already loaded models and avoid unnecessary churn.
+Classification is embedding-based and does not require a separate generative LLM residency cycle.
 
 ---
 
@@ -127,9 +127,9 @@ That means a larger classification model can be used without permanently consumi
 
 1. the document enters an `Unclassified` inbox with `Default search` OFF;
 2. ingestion and embedding finish first;
-3. classification runs as a separate queued GPU job;
-4. an existing collection above the configured confidence threshold is applied automatically;
-5. low-confidence decisions and proposed new collections stay available for review;
+3. classification compares the document embedding with profiles of existing user-defined collections;
+4. an existing collection is applied only when semantic score and winner margin thresholds are satisfied;
+5. weak or ambiguous matches stay available for review;
 6. new collections are **never created automatically**.
 
 ### Directory sources
@@ -330,7 +330,6 @@ Tasks:
 - confirm the configured embedding model is available;
 - confirm the configured reranker is available;
 - do not select a generative model as the reranker;
-- if automatic collection classification is desired, configure a generative LLM separately under the automatic-mode LLM setting;
 - ingest one small document into a test collection;
 - run one semantic query and confirm source-traceable results;
 - report exactly what was configured, what was validated and anything still requiring operator action.
