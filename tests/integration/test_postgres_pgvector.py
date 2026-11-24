@@ -1297,15 +1297,15 @@ async def test_auto_route_applies_only_above_configured_confidence(live_db, monk
 
 
 @pytest.mark.asyncio
-async def test_classification_runtime_queues_llm_and_keeps_profile_resident(live_db, monkeypatch):
+async def test_classification_runtime_uses_embedding_model_directly(live_db, monkeypatch):
     import app.classification_runtime as classification_module
 
     collection_id = uuid.uuid4()
     doc_id = uuid.uuid4()
     async with live_db.pool.connection() as conn:
         await conn.execute(
-            "INSERT INTO collections(id,name,description,ingest_config) VALUES (%s,%s,'test','{}'::jsonb)",
-            (collection_id, f"Runtime-{collection_id}"),
+            "INSERT INTO collections(id,name,description,ingest_config,embedding_model,embedding_dim) VALUES (%s,%s,'test','{}'::jsonb,%s,4096)",
+            (collection_id, f"Runtime-{collection_id}", "text-embedding-qwen3-embedding-8b"),
         )
         await conn.execute(
             """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
@@ -1323,18 +1323,17 @@ async def test_classification_runtime_queues_llm_and_keeps_profile_resident(live
             return {
                 "auto": {"sample_chars": 3500, "request_timeout": 240},
                 "classification": {
-                    "context_length": 8192,
-                    "confidence_threshold": 0.90,
+                    "confidence_threshold": 0.55,
                     "auto_apply_existing": True,
                     "staging_collection_name": "Unclassified",
-                    "reasoning_effort": "none",
-                    "seed": 42,
+                    "embedding_match_threshold": 0.55,
+                    "embedding_margin_threshold": 0.03,
                 },
             }
 
         async def get(self, key, default=None):
-            if key == "llm_model":
-                return "google/gemma-4-12b-qat"
+            if key == "embedding_model":
+                return "text-embedding-qwen3-embedding-8b"
             return default
 
         async def lmstudio_client(self, **kwargs):
@@ -1348,31 +1347,27 @@ async def test_classification_runtime_queues_llm_and_keeps_profile_resident(live
         return FakeExtracted()
 
     async def fake_classify(client, model, **kwargs):
+        captured["model"] = model
+        captured["kwargs"] = kwargs
         return {
             "existing_collection": None,
             "confidence": 0.5,
-            "proposed_collection": {"name": "Other", "description": "test"},
+            "proposed_collection": None,
+            "new_collection_suggested": True,
             "rationale": "test",
+            "source": "embedding",
         }
-
-    async def fake_run(name, client, requirements, operation, *, release_after=False):
-        captured["name"] = name
-        captured["requirements"] = requirements
-        captured["release_after"] = release_after
-        return await operation()
 
     monkeypatch.setattr(classification_module, "db", live_db)
     monkeypatch.setattr(classification_module, "settings", FakeSettings())
     monkeypatch.setattr(classification_module, "_sample_extract", fake_sample_extract)
     monkeypatch.setattr(classification_module, "classify_document", fake_classify)
-    monkeypatch.setattr(classification_module.runtime_scheduler, "run", fake_run)
 
-    result = await classification_module.classify_document_runtime(str(doc_id), "google/gemma-4-12b-qat")
+    result = await classification_module.classify_document_runtime(str(doc_id))
     assert result["filename"] == "book.txt"
-    assert captured["name"] == f"classify:{doc_id}"
-    assert captured["requirements"][0].model == "google/gemma-4-12b-qat"
-    assert captured["requirements"][0].context_length == 8192
-    assert captured["release_after"] is False
+    assert captured["model"] == "text-embedding-qwen3-embedding-8b"
+    assert captured["kwargs"]["match_threshold"] == 0.55
+    assert captured["kwargs"]["margin_threshold"] == 0.03
 
 
 @pytest.mark.asyncio
@@ -1381,7 +1376,7 @@ async def test_bulk_classification_queues_only_ready_documents(live_db, monkeypa
 
     class FakeSettings:
         async def get(self, key, default=None):
-            return "google/gemma-test" if key == "llm_model" else default
+            return "text-embedding-qwen3-embedding-8b" if key == "embedding_model" else default
 
     monkeypatch.setattr(api_module, "db", live_db)
     monkeypatch.setattr(api_module, "settings", FakeSettings())
