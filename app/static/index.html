@@ -185,6 +185,14 @@
           <button class="btn" onclick="loadDocuments()">Refresh</button>
         </div>
       </div>
+      <div class="row between bulk-toolbar">
+        <label class="check"><input type="checkbox" id="docsSelectPage" onchange="toggleDocsPage(this.checked)"> select page</label>
+        <div class="row">
+          <span id="docsSelectedCount" class="muted small">0 selected</span>
+          <button class="btn" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>Reclassify selected</button>
+          <button class="btn" onclick="bulkClassifyFiltered()">Reclassify all filtered</button>
+        </div>
+      </div>
       <div id="docsTable"></div>
       <div class="row between">
         <span id="docsTotal" class="muted small"></span>

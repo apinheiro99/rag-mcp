@@ -32,6 +32,32 @@ Rules:
 """
 
 
+def representative_sample(text: str, sample_chars: int) -> str:
+    """Return a deterministic content sample spread across the document.
+
+    Front matter is common in books, so classification must not rely on the
+    filename/title page alone. The budget is split across beginning, middle,
+    and end while preserving deterministic input for seeded inference.
+    """
+    text = (text or "").strip()
+    sample_chars = max(300, int(sample_chars))
+    if len(text) <= sample_chars:
+        return text
+
+    labels = ("[BEGIN]\n", "\n\n[MIDDLE]\n", "\n\n[END]\n")
+    overhead = sum(len(x) for x in labels)
+    budget = max(90, sample_chars - overhead)
+    first_n = budget // 3
+    middle_n = budget // 3
+    end_n = budget - first_n - middle_n
+    middle_start = max(0, (len(text) // 2) - (middle_n // 2))
+    return (
+        labels[0] + text[:first_n]
+        + labels[1] + text[middle_start:middle_start + middle_n]
+        + labels[2] + text[-end_n:]
+    )
+
+
 def parse_json_object(content: str) -> dict[str, Any]:
     content = content.strip()
     content = re.sub(r"^```(?:json)?\s*", "", content)
@@ -125,7 +151,9 @@ async def classify_document(
     prompt = (
         f"EXISTING COLLECTIONS:\n{json.dumps(shelves, ensure_ascii=False, indent=2)}\n\n"
         f"DOCUMENT:\nfilename: {filename}\nsource_path: {source_path}\n\n"
-        f"SAMPLE:\n{text[:sample_chars]}\n\nReturn only the requested JSON."
+        f"CONTENT SAMPLE (distributed across the document):\n{representative_sample(text, sample_chars)}\n\n"
+        "Classify from the document content and taxonomy evidence; do not route from the filename alone.\n"
+        "Return only the requested JSON."
     )
     content = await client.chat(
         [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],

@@ -260,3 +260,6 @@ main {
 .event-level { min-width: 58px; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .05em; }
 .event.warning .event-level { color: var(--yellow); }
 .event.error .event-level { color: var(--red); }
+
+.bulk-toolbar { margin: 10px 0 12px; padding: 8px 10px; background: var(--panel2, rgba(255,255,255,.025)); border-radius: 8px; }
+.doc-select { width: 16px; height: 16px; cursor: pointer; }

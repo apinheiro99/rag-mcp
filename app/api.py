@@ -526,7 +526,7 @@ async def upload_documents(collection_id: str = Form(...),
         collection_id = _uuid(collection_id)
         async with db.pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT id, ingest_config, embedding_model FROM collections WHERE id=%s",
+                "SELECT id, name, ingest_config, embedding_model FROM collections WHERE id=%s",
                 (collection_id,),
             )
             collection = await cur.fetchone()
@@ -624,10 +624,17 @@ async def upload_documents(collection_id: str = Form(...),
     staged = sum(1 for r in results if r["status"] == "staged")
     queued = sum(1 for r in results if r["status"] == "pending")
     if queued:
-        await db.event(
-            f"{queued} documento(s) importado(s) e enfileirado(s) automaticamente",
-            collection_id=collection_id,
-        )
+        if auto_classify:
+            event_message = (
+                f"{queued} document(s) uploaded to {collection['name']} and queued for ingestion; "
+                "automatic classification will run after indexing"
+            )
+        else:
+            event_message = (
+                f"{queued} document(s) uploaded to {collection['name']} and queued for ingestion "
+                "(manual destination; automatic classification not requested)"
+            )
+        await db.event(event_message, collection_id=collection_id)
     if staged:
         message = (
             f"{staged} document(s) awaiting ingestion configuration"
@@ -642,6 +649,8 @@ async def upload_documents(collection_id: str = Form(...),
         "duplicates": sum(1 for r in results if r["status"] == "duplicate"),
         "ignored_empty": sum(1 for r in results if r["status"] == "ignored_empty"),
         "auto_classifying": sum(1 for r in results if r.get("auto_classify")),
+        "route_mode": "automatic_classification" if auto_classify else "manual_destination",
+        "destination_collection": collection["name"],
     }
 
 
@@ -759,6 +768,63 @@ async def classify_document_route(doc_id: str, body: ClassifyDocumentRequest):
         and float(result["confidence"]) >= threshold
     )
     return result
+
+
+class BulkClassifyRequest(BaseModel):
+    document_ids: list[str] = Field(default_factory=list, max_length=500)
+    all_filtered: bool = False
+    collection_id: str | None = None
+    q: str | None = None
+
+
+@router.post("/documents/classify-bulk")
+async def classify_documents_bulk(body: BulkClassifyRequest):
+    if not await settings.get("llm_model"):
+        raise HTTPException(400, "select an LLM model before classifying")
+    if not body.document_ids and not body.all_filtered:
+        raise HTTPException(400, "select document_ids or set all_filtered=true")
+
+    where = ["d.status='ready'"]
+    params: list[Any] = []
+    if body.document_ids:
+        ids = [_uuid(x) for x in body.document_ids]
+        placeholders = ",".join(["%s"] * len(ids))
+        where.append(f"d.id IN ({placeholders})")
+        params.extend(ids)
+    elif body.all_filtered:
+        if body.collection_id:
+            where.append("d.collection_id=%s")
+            params.append(_uuid(body.collection_id))
+        if body.q:
+            where.append("(d.filename ILIKE %s OR d.source_path ILIKE %s)")
+            params.extend([f"%{body.q}%", f"%{body.q}%"])
+
+    clause = " AND ".join(where)
+    async with db.pool.connection() as conn:
+        async with conn.transaction():
+            cur = await conn.execute(
+                f"SELECT d.id,d.filename FROM documents d WHERE {clause} ORDER BY d.created_at",
+                params,
+            )
+            docs = await cur.fetchall()
+            if not docs:
+                return {"queued": 0, "document_ids": []}
+            ids = [str(d["id"]) for d in docs]
+            placeholders = ",".join(["%s"] * len(ids))
+            await conn.execute(
+                f"""UPDATE documents SET
+                       auto_suggestion=NULL,
+                       meta=((coalesce(meta,'{{}}'::jsonb)
+                              - 'auto_classify_attempts' - 'auto_classify_next_at')
+                             || '{{"auto_classify":true}}'::jsonb),
+                       updated_at=now()
+                   WHERE id IN ({placeholders})""",
+                ids,
+            )
+    await db.event(
+        f"Bulk automatic classification queued: {len(ids)} indexed document(s)",
+    )
+    return {"queued": len(ids), "document_ids": ids}
 
 
 class DocMove(BaseModel):
