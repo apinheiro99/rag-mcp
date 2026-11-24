@@ -89,3 +89,61 @@ def test_parse_category_proposal_rejects_title_like_long_name():
     import pytest
     with pytest.raises(ValueError, match="1-3 word"):
         parse_category_proposal('{"name":"The Complete Economics Handbook Fifth Edition","description":"x"}')
+
+
+class FakeHybridClient:
+    def __init__(self, vectors, chat_response):
+        self.vectors = vectors
+        self.chat_response = chat_response
+        self.chat_calls = 0
+
+    async def embed(self, texts, model):
+        return self.vectors
+
+    async def chat(self, messages, model, **kwargs):
+        self.chat_calls += 1
+        return self.chat_response
+
+
+@pytest.mark.asyncio
+async def test_llm_existing_category_choice_is_restricted_to_catalog():
+    from app.collection_classifier import classify_existing_category_with_llm
+
+    client = FakeHybridClient(
+        [[1, 0]],
+        '{"category":"Economics","confidence":0.99,"rationale":"invented"}',
+    )
+    with pytest.raises(ValueError, match="outside the allowed catalog"):
+        await classify_existing_category_with_llm(
+            client,
+            "llm",
+            filename="Designing Web Interfaces.epub",
+            text="web interface design patterns and rich interaction",
+            categories=[{"name":"Computing","description":"Computer science and software books"}],
+            sample_chars=900,
+            timeout=5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_designing_web_interfaces_can_be_zero_shot_classified_as_computing():
+    from app.collection_classifier import classify_existing_category_with_llm
+
+    client = FakeHybridClient(
+        [[1, 0]],
+        '{"category":"Computing","confidence":0.94,"rationale":"The book is about software and web interface design."}',
+    )
+    result = await classify_existing_category_with_llm(
+        client,
+        "llm",
+        filename="Designing Web Interfaces.epub",
+        text="principles and patterns for rich interactions, web applications, UI design, software behavior",
+        categories=[{
+            "name":"Computing",
+            "description":"Technical books covering computer science, software engineering, programming, architecture, databases, AI, networking, and related computing disciplines.",
+        }],
+        sample_chars=900,
+        timeout=5,
+    )
+    assert result["category"] == "Computing"
+    assert result["confidence"] == pytest.approx(0.94)

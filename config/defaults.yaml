@@ -87,6 +87,7 @@ classification:
   auto_apply_existing: true
   embedding_match_threshold: 0.55
   embedding_margin_threshold: 0.03
+  llm_fallback_enabled: true
   max_attempts: 3
   retry_backoff_seconds: [60, 300, 1800]
 

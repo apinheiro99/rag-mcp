@@ -97,6 +97,73 @@ async def propose_category_with_llm(
     return parse_category_proposal(raw)
 
 
+def parse_existing_category_choice(raw: str, allowed: set[str]) -> dict[str, Any]:
+    text = (raw or "").strip()
+    fence = chr(96) * 3
+    if text.startswith(fence):
+        first_newline = text.find("\n")
+        if first_newline >= 0:
+            text = text[first_newline + 1:]
+        if text.endswith(fence):
+            text = text[:-3]
+        text = text.strip()
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("category choice must be a JSON object")
+    category = data.get("category")
+    if category is None:
+        return {
+            "category": None,
+            "confidence": 0.0,
+            "rationale": str(data.get("rationale") or "").strip(),
+        }
+    category = str(category).strip()
+    if category not in allowed:
+        raise ValueError("classifier returned a category outside the allowed catalog")
+    confidence = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
+    return {
+        "category": category,
+        "confidence": confidence,
+        "rationale": str(data.get("rationale") or "").strip(),
+    }
+
+
+async def classify_existing_category_with_llm(
+    client: LMStudioClient,
+    model: str,
+    *,
+    filename: str,
+    text: str,
+    categories: list[dict[str, Any]],
+    sample_chars: int,
+    timeout: float,
+) -> dict[str, Any]:
+    allowed = {str(c["name"]) for c in categories}
+    catalog = "\n".join(
+        f"- {c['name']}: {str(c.get('description') or '').strip()}"
+        for c in categories
+    )
+    sample = representative_sample(text, sample_chars)
+    prompt = (
+        "Choose the single best category for this document from the catalog below. "
+        "You MUST choose only from the provided category names, or null if none fits. "
+        "Do not invent, rename, broaden, or create a category. "
+        "Return ONLY JSON with keys category, confidence, rationale.\n\n"
+        f"Categories:\n{catalog}\n\n"
+        f"Filename: {filename}\n\n"
+        f"Document sample:\n{sample}"
+    )
+    raw = await client.chat(
+        [{"role": "user", "content": prompt}],
+        model,
+        temperature=0.0,
+        max_tokens=180,
+        timeout=timeout,
+        reasoning_effort="none",
+    )
+    return parse_existing_category_choice(raw, allowed)
+
+
 def representative_sample(text: str, sample_chars: int) -> str:
     text = (text or "").strip()
     sample_chars = max(300, int(sample_chars))
