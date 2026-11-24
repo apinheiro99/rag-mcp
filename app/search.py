@@ -159,6 +159,21 @@ async def _search_group(
     return rows, embedding_ms, db_ms
 
 
+
+def should_apply_lexical(dense: list[dict], candidate_k: int, scfg: dict) -> tuple[bool, str | None]:
+    """Use lexical retrieval only when dense retrieval is weak or undersupplied."""
+    if not scfg.get("hybrid_enabled"):
+        return False, "disabled"
+    if not dense:
+        return True, None
+    min_candidates = max(1, min(candidate_k, int(scfg.get("hybrid_min_dense_candidates", candidate_k))))
+    if len(dense) < min_candidates:
+        return True, None
+    threshold = float(scfg.get("hybrid_min_dense_score", 0.55))
+    if float(dense[0].get("score", 0.0)) < threshold:
+        return True, None
+    return False, "dense_sufficient"
+
 def fuse_rankings(rankings: list[list[dict]], rank_constant: int) -> list[dict]:
     """Reciprocal rank fusion; never equate lexical and cosine scores."""
     merged = {}
@@ -309,11 +324,13 @@ async def semantic_search(
         if reranker_model:
             requirements.append(ModelRequirement(reranker_model, context_length))
 
-        hybrid = bool(scfg.get("hybrid_enabled")) and min_score <= 0
+        hybrid_requested = bool(scfg.get("hybrid_enabled")) and min_score <= 0
+        hybrid = False
+        lexical_skipped_reason = None
         adaptive = bool(scfg.get("adaptive_enabled")) and bool(rcfg.get("enabled"))
         expanded = False
         async def execute_search_pipeline():
-            nonlocal embedding_ms, db_ms, results, expanded, dense_ms, lexical_ms, heading_ms
+            nonlocal embedding_ms, db_ms, results, expanded, dense_ms, lexical_ms, heading_ms, hybrid, lexical_skipped_reason
             dense = []
             lexical = []
             depth = max(candidate_k, int(scfg["adaptive_candidate_limit"])) if adaptive else candidate_k
@@ -327,6 +344,8 @@ async def semantic_search(
                 dense_ms += db_elapsed
                 dense.extend(_format_result(r) for r in rows if float(r["score"]) >= min_score)
             dense.sort(key=lambda x: x["score"], reverse=True)
+            if hybrid_requested:
+                hybrid, lexical_skipped_reason = should_apply_lexical(dense, candidate_k, scfg)
             if hybrid:
                 t = time.perf_counter()
                 lexical = [_format_result(r) for r in await _lexical_search(
@@ -374,7 +393,7 @@ async def semantic_search(
             "collections_searched": [c["name"] for c in cols],
             "filters_applied": filters.to_dict(),
             "total_candidates": len(results),
-            "retrieval": {"hybrid": hybrid, "expanded": expanded,
+            "retrieval": {"hybrid_requested": hybrid_requested, "hybrid": hybrid, "lexical_skipped_reason": lexical_skipped_reason, "expanded": expanded,
                           "timings_ms": {"dense": round(dense_ms, 2), "lexical": round(lexical_ms, 2),
                                          "heading": round(heading_ms, 2), "embedding": round(embedding_ms, 2)}},
             "rerank": {
