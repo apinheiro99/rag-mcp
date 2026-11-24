@@ -105,6 +105,7 @@ class _HTMLTextExtractor(HTMLParser):
         self.segments: list[Segment] = []
         self._skip_depth = 0
         self._in_title = False
+        self._in_head = False
         self._heading_buf: list[str] | None = None
         self._current_heading: str | None = None
         self._buf: list[str] = []
@@ -120,8 +121,14 @@ class _HTMLTextExtractor(HTMLParser):
         if tag in _SKIP_TAGS:
             self._skip_depth += 1
             return
+        if tag == "head":
+            self._in_head = True
+            return
         if tag == "title":
             self._in_title = True
+            return
+        if self._in_head or self._skip_depth:
+            return
         if tag in _HEADING_TAGS:
             self._flush()
             self._heading_buf = []
@@ -134,6 +141,12 @@ class _HTMLTextExtractor(HTMLParser):
             return
         if tag == "title":
             self._in_title = False
+            return
+        if tag == "head":
+            self._in_head = False
+            return
+        if self._in_head or self._skip_depth:
+            return
         if tag in _HEADING_TAGS and self._heading_buf is not None:
             heading = normalize_ws("".join(self._heading_buf))
             self._heading_buf = None
@@ -147,6 +160,9 @@ class _HTMLTextExtractor(HTMLParser):
             return
         if self._in_title:
             self.title += data
+            return
+        if self._in_head:
+            return
         if self._heading_buf is not None:
             self._heading_buf.append(data)
         self._buf.append(data)
