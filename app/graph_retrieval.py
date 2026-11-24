@@ -6,10 +6,14 @@ indexing and lazily backfilled for older documents.
 from __future__ import annotations
 
 from collections import defaultdict
+import asyncio
+import logging
 import re
 from typing import Any
 
 from .db import db
+
+log = logging.getLogger("rag.graph_retrieval")
 
 CONCEPT = re.compile(r"\b(?:[A-Z][A-Za-z0-9]{2,}(?:\s+[A-Z][A-Za-z0-9]{2,})*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
 
@@ -74,7 +78,8 @@ async def rebuild_document_mentions(document_id: str) -> int:
         async with conn.transaction():
             await conn.execute("DELETE FROM graph_mentions WHERE document_id=%s", (document_id,))
             if rows:
-                await conn.executemany(
+                cur = conn.cursor()
+                await cur.executemany(
                     "INSERT INTO graph_mentions(chunk_id,document_id,concept) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                     rows,
                 )
@@ -129,14 +134,12 @@ class GraphWorker:
         self._stop = None
 
     async def start(self) -> None:
-        import asyncio
         if self._task and not self._task.done():
             return
         self._stop = asyncio.Event()
         self._task = asyncio.create_task(self._run(), name="graph-evidence-worker")
 
     async def stop(self) -> None:
-        import asyncio
         if not self._task:
             return
         self._stop.set()
@@ -175,15 +178,20 @@ class GraphWorker:
             )
 
     async def _run(self) -> None:
-        import asyncio
         while not self._stop.is_set():
-            item = await self._next_stale_document()
-            if not item:
+            try:
+                item = await self._next_stale_document()
+                if not item:
+                    await asyncio.sleep(self.poll_interval)
+                    continue
+                document_id, fp = item
+                await rebuild_document_mentions(document_id)
+                await self._mark_fingerprint(document_id, fp)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("graph worker iteration failed; retrying")
                 await asyncio.sleep(self.poll_interval)
-                continue
-            document_id, fp = item
-            await rebuild_document_mentions(document_id)
-            await self._mark_fingerprint(document_id, fp)
 
 
 graph_worker = GraphWorker()
