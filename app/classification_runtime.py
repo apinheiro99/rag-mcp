@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from .collection_classifier import classify_document, propose_category_with_llm
+from .collection_classifier import classify_document
 from .config import env
 from .db import db
 from .extraction import ExtractedDoc, ExtractionError, extract
@@ -49,7 +49,7 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         if not doc:
             raise ValueError("document not found")
         if doc["collection"] != COMPUTER_BOOKS:
-            raise ValueError("automatic category classification applies only to Informática")
+            raise ValueError("automatic category classification applies only to Computer Books")
         cur = await conn.execute(
             """SELECT cat.id, cat.name, cat.description,
                       (SELECT count(*) FROM documents x WHERE x.category_id=cat.id) AS doc_count,
@@ -80,25 +80,10 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         match_threshold=float(cfg.get("embedding_match_threshold", 0.55)),
         margin_threshold=float(cfg.get("embedding_margin_threshold", 0.03)),
     )
-    if result.get("new_collection_suggested"):
-        proposal_model = await settings.get("llm_model")
-        if proposal_model:
-            try:
-                semantic = await propose_category_with_llm(
-                    client,
-                    proposal_model,
-                    filename=doc["filename"],
-                    text=extracted.full_text(),
-                    existing_categories=[str(c["name"]) for c in collections],
-                    sample_chars=eff["auto"]["sample_chars"],
-                    timeout=eff["auto"]["request_timeout"],
-                )
-                result["proposed_collection"] = semantic
-                result["proposal_source"] = "llm"
-                result["proposal_model"] = proposal_model
-            except Exception as exc:
-                log.warning("semantic category proposal failed; using deterministic fallback: %s", exc)
-                result["proposal_source"] = "fallback"
+    if not result.get("existing_collection"):
+        result["proposed_collection"] = None
+        result["new_collection_suggested"] = False
+        result["proposal_source"] = "disabled"
     threshold = float(cfg["confidence_threshold"])
     result["existing_category"] = result.get("existing_collection")
     result["proposed_category"] = result.get("proposed_collection")
@@ -149,7 +134,7 @@ async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dic
                 result["auto_apply_reason"] = "document is not ready"
                 return result
             if doc["collection"] != COMPUTER_BOOKS:
-                result["auto_apply_reason"] = "document is not in Informática"
+                result["auto_apply_reason"] = "document is not in Computer Books"
                 return result
 
             target = await (

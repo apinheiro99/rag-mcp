@@ -215,7 +215,7 @@ async def create_category(col_id: str, body: CategoryCreate):
         if not col:
             raise HTTPException(404, "collection not found")
         if col["name"] != COMPUTER_BOOKS:
-            raise HTTPException(409, "categories are supported only inside Informática")
+            raise HTTPException(409, "categories are supported only inside Computer Books")
         cur = await conn.execute(
             """INSERT INTO categories(id,collection_id,name,description)
                VALUES (%s,%s,%s,%s)
@@ -267,7 +267,7 @@ async def delete_category(category_id: str):
 async def create_collection(body: CollectionCreate):
     raise HTTPException(
         409,
-        "top-level collection topology is fixed; create a category inside Informática instead",
+        "top-level collection topology is fixed; create a category inside Computer Books instead",
     )
 
 
@@ -499,7 +499,7 @@ AUTO_COLLECTION_SENTINEL = "__auto__"
 
 
 async def _ensure_auto_inbox() -> dict[str, Any]:
-    # Automatic book imports are indexed directly into Informática.
+    # Automatic book imports are indexed directly into Computer Books.
     # Category remains NULL until the post-ingest classifier assigns one.
     return await computer_books_collection(db, settings)
 
@@ -863,47 +863,27 @@ async def classification_decision(doc_id: str, body: ClassificationDecision):
             if not doc:
                 raise HTTPException(404, "document not found")
             if doc["collection"] != COMPUTER_BOOKS:
-                raise HTTPException(409, "category decisions apply only to Informática")
+                raise HTTPException(409, "category decisions apply only to Computer Books")
             suggestion = doc.get("auto_suggestion") or {}
             proposed = suggestion.get("proposed_collection") or suggestion.get("proposed_category")
             if not proposed:
                 raise HTTPException(409, "document has no pending category proposal")
 
-            if not body.accept:
-                suggestion["decision"] = "rejected"
-                suggestion["auto_applied"] = False
-                await conn.execute(
-                    """UPDATE documents SET category_id=NULL,auto_suggestion=%s::jsonb,
-                           meta=(coalesce(meta,'{}'::jsonb)-'auto_classify'),updated_at=now()
-                       WHERE id=%s""",
-                    (json.dumps(suggestion), doc_id),
+            if body.accept:
+                raise HTTPException(
+                    409,
+                    "automatic category creation is disabled; create categories manually in Settings",
                 )
-                return {"decision": "rejected", "category": None}
 
-            name = str(proposed.get("name") or "").strip()
-            if not name:
-                raise HTTPException(422, "proposed category has no name")
-            cur = await conn.execute(
-                """INSERT INTO categories(id,collection_id,name,description)
-                   VALUES (%s,%s,%s,%s)
-                   ON CONFLICT (collection_id,name) DO UPDATE SET updated_at=now()
-                   RETURNING *""",
-                (
-                    str(uuid.uuid4()), doc["collection_id"], name,
-                    str(proposed.get("description") or "").strip(),
-                ),
-            )
-            category = await cur.fetchone()
-            suggestion["decision"] = "accepted"
-            suggestion["auto_applied"] = True
-            suggestion["routed_to"] = category["name"]
+            suggestion["decision"] = "rejected"
+            suggestion["auto_applied"] = False
             await conn.execute(
-                """UPDATE documents SET category_id=%s,auto_suggestion=%s::jsonb,
+                """UPDATE documents SET category_id=NULL,auto_suggestion=%s::jsonb,
                        meta=(coalesce(meta,'{}'::jsonb)-'auto_classify'),updated_at=now()
                    WHERE id=%s""",
-                (category["id"], json.dumps(suggestion), doc_id),
+                (json.dumps(suggestion), doc_id),
             )
-    return {"decision": "accepted", "category": category}
+            return {"decision": "rejected", "category": None}
 
 
 class BulkClassifyRequest(BaseModel):

@@ -295,7 +295,7 @@ async function refreshStaged() {
   let colId = $("importCollection").value;
   if (!colId) { $("stagedCount").textContent = ""; return; }
   if (colId === "__auto__") {
-    const books = state.collections.find((c) => c.name === "Informática");
+    const books = state.collections.find((c) => c.name === "Computer Books");
     if (!books) return;
     colId = books.id;
   }
@@ -653,30 +653,11 @@ function classificationSummary(d) {
   const sug = d.auto_suggestion;
   if (!sug) return `<span class="small">${esc(d.category || "Uncategorized")}</span>`;
   if (sug.status === "classification_error") return `<span class="small" style="color:var(--red)">Classification error · ${esc(sug.error || "")}</span>`;
-  if (sug.decision === "rejected") return `<span class="small muted">Uncategorized · proposal rejected</span>`;
   const existing = sug.existing_category || sug.existing_collection;
-  const proposed = sug.proposed_category || sug.proposed_collection;
-  const dest = sug.routed_to || existing || proposed?.name || d.category || "Uncategorized";
+  const dest = sug.routed_to || existing || d.category;
   const confidence = Math.round((Number(sug.confidence) || 0) * 100);
-  if (!sug.auto_applied && proposed?.name) {
-    return `<div class="small"><b>New category?</b> ${esc(proposed.name)} · ${confidence}%</div>
-      <div class="row" style="margin-top:4px">
-        <button class="btn mini primary" onclick="reviewCategoryDecision('${d.id}', true)">Yes</button>
-        <button class="btn mini" onclick="reviewCategoryDecision('${d.id}', false)">No</button>
-      </div>`;
-  }
+  if (!dest) return `<span class="small muted">Uncategorized · no matching category</span>`;
   return `<span class="small">${sug.auto_applied ? "Categorized ✓" : "Review"} · ${esc(dest)} · ${confidence}%</span>`;
-}
-
-async function reviewCategoryDecision(id, accept) {
-  try {
-    const r = await api(`/api/documents/${id}/classification-decision`, {
-      method: "POST", body: { accept }
-    });
-    toast(accept ? `Category '${r.category?.name || ""}' added and applied` : "Kept as Uncategorized");
-    await loadBookCategories();
-    await loadDocuments();
-  } catch (e) { toast(e.message, true); }
 }
 
 function updateDocsSelectionUI() {
@@ -862,34 +843,12 @@ async function classifyDoc(id, name) {
   try {
     toast(`Classifying '${name}'…`);
     const r = await api(`/api/documents/${id}/classify`, { method: "POST", body: {} });
-    state.classificationSuggestions = state.classificationSuggestions || {};
-    state.classificationSuggestions[id] = r;
     const confidence = Math.round((r.confidence || 0) * 100);
     const existing = r.existing_category || r.existing_collection;
-    const proposed = r.proposed_category || r.proposed_collection;
-    const destination = existing
-      ? `Existing category: <b>${esc(existing)}</b>`
-      : `Proposed new category: <b>${esc(proposed?.name || "")}</b>`;
-    const actions = proposed?.name
-      ? `<div class="row"><button class="btn primary" onclick="reviewManualCategory('${id}', true)">Yes, add category</button><button class="btn" onclick="reviewManualCategory('${id}', false)">No, Uncategorized</button></div>`
-      : `<p class="muted small">Existing categories are assigned automatically when confidence passes the configured threshold.</p>`;
-    openModal(`Categorize '${esc(name)}'`, `
-      <p>${destination}</p>
-      <p><b>Confidence:</b> ${confidence}%</p>
-      <p class="muted">${esc(r.rationale || "")}</p>
-      ${actions}`);
-  } catch (e) { toast(e.message, true); }
-}
-
-async function reviewManualCategory(id, accept) {
-  try {
-    await api(`/api/documents/${id}/classification-decision`, {
-      method: "POST", body: { accept }
-    });
-    closeModal();
-    await loadBookCategories();
+    openModal(`Categorize '${esc(name)}'`, existing
+      ? `<p>Best existing category: <b>${esc(existing)}</b></p><p><b>Confidence:</b> ${confidence}%</p><p class="muted">${esc(r.rationale || "")}</p>`
+      : `<p><b>No existing category matched.</b></p><p class="muted">Create or rename categories in Settings, then run classification again.</p>`);
     await loadDocuments();
-    toast(accept ? "Category added and applied" : "Document kept Uncategorized");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1066,7 +1025,7 @@ async function loadSettingsTab() {
   await loadModels(false);
 }
 async function loadBookCategories() {
-  const books = state.collections.find((c) => c.name === "Informática");
+  const books = state.collections.find((c) => c.name === "Computer Books");
   if (!books) return;
   try {
     const data = await api(`/api/categories?collection_id=${books.id}`);
@@ -1087,7 +1046,7 @@ async function loadBookCategories() {
 }
 
 async function createBookCategory() {
-  const books = state.collections.find((c) => c.name === "Informática");
+  const books = state.collections.find((c) => c.name === "Computer Books");
   const name = $("newCategoryName")?.value.trim();
   const description = $("newCategoryDescription")?.value.trim() || "";
   if (!books || !name) return toast("Enter a category name", true);
@@ -1112,7 +1071,7 @@ async function renameBookCategory(id, current) {
 }
 
 async function deleteBookCategory(id, name) {
-  if (!(await askAction("Delete category", `Delete '${name}'? Its books remain in Informática as Uncategorized.`, "Delete", true))) return;
+  if (!(await askAction("Delete category", `Delete '${name}'? Its books remain in Computer Books as Uncategorized.`, "Delete", true))) return;
   try {
     await api(`/api/categories/${id}`, { method: "DELETE" });
     await loadBookCategories();
