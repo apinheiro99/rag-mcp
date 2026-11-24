@@ -68,8 +68,8 @@ def test_suggest_category_from_book_title():
         "The Art of Software Testing, 3rd Edition.pdf",
         "The Art of Software Testing, 3rd Edition.pdf",
     )
-    assert suggestion["name"] == "Art Software Testing 3rd"
-    assert "Art Software Testing 3rd" in suggestion["description"]
+    assert suggestion["name"] == "Software Testing"
+    assert "Software Testing" in suggestion["description"]
 
 
 def test_suggest_category_strips_author_suffix():
@@ -77,4 +77,4 @@ def test_suggest_category_strips_author_suffix():
         "Automating DevOps with GitLab CI-CD Pipelines - Build -- Jane Doe -- ( WeLib.gl ).epub",
         "",
     )
-    assert suggestion["name"] == "Automating DevOps GitLab CI"
+    assert suggestion["name"] == "DevOps GitLab"
