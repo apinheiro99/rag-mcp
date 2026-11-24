@@ -61,7 +61,7 @@ async def test_graph_worker_survives_iteration_failure(monkeypatch):
     import asyncio
     import app.graph_retrieval as gr
 
-    worker = gr.GraphWorker(poll_interval=0.001)
+    worker = gr.GraphWorker()
     calls = {"n": 0}
 
     async def boom():
@@ -72,6 +72,9 @@ async def test_graph_worker_survives_iteration_failure(monkeypatch):
         return None
 
     monkeypatch.setattr(worker, "_next_stale_document", boom)
+    async def tiny_poll():
+        return 0.001
+    monkeypatch.setattr(worker, "_poll_interval", tiny_poll)
     worker._stop = asyncio.Event()
     await asyncio.wait_for(worker._run(), timeout=0.1)
     assert calls["n"] >= 2

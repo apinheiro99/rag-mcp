@@ -71,6 +71,10 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_id UUID REFERENCES collect
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_mtime_ns BIGINT;
 CREATE UNIQUE INDEX IF NOT EXISTS documents_source_path_idx ON documents(source_id, source_path) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_status_idx ON documents(status);
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS graph_indexed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS documents_graph_stale_idx
+    ON documents(status, graph_indexed_at, processed_at);
+
 CREATE INDEX IF NOT EXISTS documents_queue_idx ON documents(status, created_at)
     WHERE status IN ('pending','extracting','chunking','embedding','waiting');
 

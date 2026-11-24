@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from .db import db
+from .settings import settings
 
 log = logging.getLogger("rag.graph_retrieval")
 
@@ -116,22 +117,13 @@ async def persistent_evidence_graph(rows: list[dict[str, Any]], query: str, limi
     return graph
 
 
-async def graph_document_fingerprint(document_id: str) -> str:
-    async with db.pool.connection() as conn:
-        cur = await conn.execute(
-            """SELECT md5(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq)) AS fp
-               FROM chunks c WHERE c.document_id=%s""",
-            (document_id,),
-        )
-        row = await cur.fetchone()
-        return (row or {}).get("fp") or ""
-
-
 class GraphWorker:
-    def __init__(self, poll_interval: float = 10.0) -> None:
-        self.poll_interval = poll_interval
+    def __init__(self) -> None:
         self._task = None
         self._stop = None
+        self.current_document: str | None = None
+        self.indexed_documents = 0
+        self.last_error: str | None = None
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -150,48 +142,51 @@ class GraphWorker:
             pass
         self._task = None
 
-    async def _next_stale_document(self) -> tuple[str, str] | None:
+    async def _next_stale_document(self) -> str | None:
         async with db.pool.connection() as conn:
             cur = await conn.execute(
-                """SELECT d.id::text AS id,
-                          md5(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq)) AS fp
-                   FROM documents d
-                   JOIN chunks c ON c.document_id=d.id
-                   WHERE d.status='ready'
-                   GROUP BY d.id, d.meta
-                   HAVING coalesce(d.meta->>'graph_fingerprint','') <>
-                          md5(string_agg(c.id::text || ':' || md5(c.content), '|' ORDER BY c.seq))
-                   ORDER BY d.updated_at
+                """SELECT id::text AS id
+                   FROM documents
+                   WHERE status='ready'
+                     AND processed_at IS NOT NULL
+                     AND (graph_indexed_at IS NULL OR graph_indexed_at < processed_at)
+                   ORDER BY processed_at, id
                    LIMIT 1"""
             )
             row = await cur.fetchone()
-            return (str(row["id"]), row["fp"]) if row else None
+            return str(row["id"]) if row else None
 
-    async def _mark_fingerprint(self, document_id: str, fp: str) -> None:
+    async def _mark_indexed(self, document_id: str) -> None:
         async with db.pool.connection() as conn:
             await conn.execute(
-                """UPDATE documents
-                   SET meta=coalesce(meta,'{}'::jsonb) || jsonb_build_object('graph_fingerprint',%s),
-                       updated_at=updated_at
-                   WHERE id=%s""",
-                (fp, document_id),
+                "UPDATE documents SET graph_indexed_at=now() WHERE id=%s",
+                (document_id,),
             )
+
+    async def _poll_interval(self) -> float:
+        effective = await settings.effective()
+        return max(0.1, float(effective.get("graph", {}).get("poll_interval_seconds", 10)))
 
     async def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                item = await self._next_stale_document()
-                if not item:
-                    await asyncio.sleep(self.poll_interval)
+                document_id = await self._next_stale_document()
+                if not document_id:
+                    await asyncio.sleep(await self._poll_interval())
                     continue
-                document_id, fp = item
+                self.current_document = document_id
                 await rebuild_document_mentions(document_id)
-                await self._mark_fingerprint(document_id, fp)
+                await self._mark_indexed(document_id)
+                self.indexed_documents += 1
+                self.last_error = None
+                self.current_document = None
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.current_document = None
                 log.exception("graph worker iteration failed; retrying")
-                await asyncio.sleep(self.poll_interval)
+                await asyncio.sleep(await self._poll_interval())
 
 
 graph_worker = GraphWorker()

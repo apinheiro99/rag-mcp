@@ -28,7 +28,7 @@ from .lmstudio import LMStudioError, LMStudioUnavailable
 from .model_runtime import ModelRequirement, runtime_scheduler
 from .quality import QualityGateError, analyze_document_quality
 from .settings import settings
-from .graph_retrieval import graph_document_fingerprint, rebuild_document_mentions
+from .graph_retrieval import rebuild_document_mentions
 
 log = logging.getLogger("rag.ingest")
 
@@ -552,13 +552,10 @@ class DocumentIngestor:
             chunks_embedded=total,
         )
         await rebuild_document_mentions(doc_id)
-        graph_fp = await graph_document_fingerprint(doc_id)
         async with db.pool.connection() as conn:
             await conn.execute(
-                """UPDATE documents
-                   SET meta=coalesce(meta,'{}'::jsonb) || jsonb_build_object('graph_fingerprint',%s)
-                   WHERE id=%s""",
-                (graph_fp, doc_id),
+                "UPDATE documents SET graph_indexed_at=now() WHERE id=%s",
+                (doc_id,),
             )
         await db.event(
             f"[ok] {doc['filename']} indexado ({total} chunks, modelo {model})",
