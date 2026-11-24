@@ -46,8 +46,6 @@ class Env:
         self.defaults_file = Path(_env("DEFAULTS_FILE", str(BASE_DIR / "config" / "defaults.yaml")))
         self.api_token = _env("RAG_API_TOKEN", "")
         self.mcp_enabled = _env_bool("MCP_ENABLED", True)
-        self.dev_reload = _env_bool("RAG_DEV_RELOAD", False)
-        self.dev_reload_poll_ms = max(250, _env_int("RAG_DEV_RELOAD_POLL_MS", 1000))
         self.mcp_name = _env("MCP_NAME", "rag-server")
         self.mcp_allowed_hosts = [h.strip() for h in _env("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
         self.log_level = _env("LOG_LEVEL", "INFO").upper()
