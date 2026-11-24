@@ -1930,3 +1930,21 @@ async def test_deleting_category_leaves_books_uncategorized(live_db):
 
     assert doc["collection_id"] == books_id
     assert doc["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_migration_refreshes_real_postgres_statistics(live_db):
+    from app.migrate_library_taxonomy import refresh_planner_statistics
+
+    await refresh_planner_statistics(live_db)
+    async with live_db.pool.connection() as conn:
+        rows = await (
+            await conn.execute(
+                """SELECT relname,last_analyze FROM pg_stat_user_tables
+                   WHERE relname = ANY(%s::text[]) ORDER BY relname""",
+                (["collections", "documents", "chunks"],),
+            )
+        ).fetchall()
+
+    assert [r["relname"] for r in rows] == ["chunks", "collections", "documents"]
+    assert all(r["last_analyze"] is not None for r in rows)
