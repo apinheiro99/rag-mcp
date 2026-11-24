@@ -70,6 +70,9 @@ auto:
 model_runtime:
   queue_maxsize: 32
 
+graph:
+  poll_interval_seconds: 10
+
 classification:
   enabled: true
   staging_collection_name: Unclassified

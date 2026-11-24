@@ -69,6 +69,9 @@ async def health():
         },
         "graph_worker": {
             "running": graph_worker._task is not None and not graph_worker._task.done(),
+            "current_document": graph_worker.current_document,
+            "indexed_documents": graph_worker.indexed_documents,
+            "last_error": graph_worker.last_error,
         },
         "model_runtime": runtime_scheduler.status(),
         "lmstudio": lm,
