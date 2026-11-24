@@ -177,7 +177,8 @@
       <div class="card-head">
         <h2>Documents</h2>
         <div class="row">
-          <select id="docFilterCollection" onchange="loadDocuments()"><option value="">All collections</option></select>
+          <button class="btn" id="docCollectionFilterBtn" type="button" onclick="toggleDocCollectionFilter()">Collections</button>
+          <div id="docCollectionFilterPanel" class="collection-filter-panel hidden"></div>
           <select id="docFilterStatus" onchange="loadDocuments()">
             <option value="">All statuses</option>
             <option value="staged">Awaiting configuration</option>
@@ -198,7 +199,6 @@
         <div class="row">
           <span id="docsSelectedCount" class="muted small">0 selected</span>
           <button class="btn" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>Reclassify selected</button>
-          <button class="btn" onclick="bulkClassifyFiltered()">Reclassify all filtered</button>
         </div>
       </div>
       <div id="docsTable"></div>

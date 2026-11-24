@@ -41,7 +41,6 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       RAG_BUILD_VERSION: ${RAG_BUILD_VERSION:-dev}
       RAG_BUILD_COMMIT: ${RAG_BUILD_COMMIT:-}
-      RAG_ENVIRONMENT: ${RAG_ENVIRONMENT:-prod}
       RAG_DEV_RELOAD: "false"
     ports:
       - "${RAG_PORT:-8000}:8000"

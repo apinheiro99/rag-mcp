@@ -113,7 +113,6 @@ main() {
   port="$(env_value RAG_PORT 8000)"
   export RAG_BUILD_VERSION="${RAG_BUILD_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)}"
   export RAG_BUILD_COMMIT="${RAG_BUILD_COMMIT:-$(git rev-parse HEAD)}"
-  export RAG_ENVIRONMENT="${RAG_ENVIRONMENT:-dev}"
   info "Subindo PostgreSQL + RAG..."
   if [ "${1:-}" = "--build" ]; then
     "${COMPOSE[@]}" up -d --build
