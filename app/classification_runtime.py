@@ -6,11 +6,12 @@ import json
 import logging
 from typing import Any
 
-from .collection_classifier import classify_document
+from .collection_classifier import classify_document, propose_category_with_llm
 from .config import env
 from .db import db
 from .extraction import ExtractedDoc, ExtractionError, extract
 from .ingest import extraction_cache_path
+from .library_taxonomy import COMPUTER_BOOKS
 from .lmstudio import LMStudioError
 from .settings import settings
 
@@ -47,17 +48,20 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         doc = await cur.fetchone()
         if not doc:
             raise ValueError("document not found")
-        staging_name = str(eff["classification"]["staging_collection_name"]).strip()
+        if doc["collection"] != COMPUTER_BOOKS:
+            raise ValueError("automatic category classification applies only to Computer Books")
         cur = await conn.execute(
-            """SELECT c.id, c.name, c.description, c.embedding_model, c.embedding_dim,
-                      (SELECT count(*) FROM documents x WHERE x.collection_id=c.id) AS doc_count,
+            """SELECT cat.id, cat.name, cat.description,
+                      (SELECT count(*) FROM documents x WHERE x.category_id=cat.id) AS doc_count,
                       ARRAY(
                           SELECT x.filename FROM documents x
-                          WHERE x.collection_id=c.id AND x.status='ready'
+                          WHERE x.category_id=cat.id AND x.status='ready'
                           ORDER BY x.created_at, x.filename LIMIT 4
                       ) AS examples
-               FROM collections c WHERE c.name<>%s ORDER BY c.name""",
-            (staging_name,),
+               FROM categories cat
+               WHERE cat.collection_id=%s
+               ORDER BY cat.name""",
+            (doc["collection_id"],),
         )
         collections = await cur.fetchall()
 
@@ -76,7 +80,28 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
         match_threshold=float(cfg.get("embedding_match_threshold", 0.55)),
         margin_threshold=float(cfg.get("embedding_margin_threshold", 0.03)),
     )
+    if result.get("new_collection_suggested"):
+        proposal_model = await settings.get("llm_model")
+        if proposal_model:
+            try:
+                semantic = await propose_category_with_llm(
+                    client,
+                    proposal_model,
+                    filename=doc["filename"],
+                    text=extracted.full_text(),
+                    existing_categories=[str(c["name"]) for c in collections],
+                    sample_chars=eff["auto"]["sample_chars"],
+                    timeout=eff["auto"]["request_timeout"],
+                )
+                result["proposed_collection"] = semantic
+                result["proposal_source"] = "llm"
+                result["proposal_model"] = proposal_model
+            except Exception as exc:
+                log.warning("semantic category proposal failed; using deterministic fallback: %s", exc)
+                result["proposal_source"] = "fallback"
     threshold = float(cfg["confidence_threshold"])
+    result["existing_category"] = result.get("existing_collection")
+    result["proposed_category"] = result.get("proposed_collection")
     result.update({
         "document_id": doc_id,
         "filename": doc["filename"],
@@ -92,11 +117,11 @@ async def classify_document_runtime(doc_id: str, model: str | None = None) -> di
 
 
 async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    """Move an already-embedded document without re-embedding when compatible."""
+    """Assign an existing category without moving the document between collections."""
     eff = await settings.effective()
     cfg = eff["classification"]
     threshold = float(cfg["confidence_threshold"])
-    existing_name = result.get("existing_collection")
+    existing_name = result.get("existing_category") or result.get("existing_collection")
     eligible = bool(
         cfg["auto_apply_existing"]
         and existing_name
@@ -112,61 +137,48 @@ async def apply_ready_classification(doc_id: str, result: dict[str, Any]) -> dic
 
     async with db.pool.connection() as conn:
         async with conn.transaction():
-            cur = await conn.execute(
-                """SELECT d.id,d.filename,d.status,d.content_sha256,d.collection_id,
-                          src.name AS source_collection,src.embedding_model AS source_model,
-                          src.embedding_dim AS source_dim
-                   FROM documents d JOIN collections src ON src.id=d.collection_id
-                   WHERE d.id=%s FOR UPDATE""",
-                (doc_id,),
-            )
-            doc = await cur.fetchone()
+            doc = await (
+                await conn.execute(
+                    """SELECT d.id,d.filename,d.status,d.collection_id,c.name AS collection
+                       FROM documents d JOIN collections c ON c.id=d.collection_id
+                       WHERE d.id=%s FOR UPDATE""",
+                    (doc_id,),
+                )
+            ).fetchone()
             if not doc or doc["status"] != "ready":
                 result["auto_apply_reason"] = "document is not ready"
                 return result
-
-            cur = await conn.execute("SELECT * FROM collections WHERE name=%s", (existing_name,))
-            target = await cur.fetchone()
-            if not target:
-                result["auto_apply_reason"] = "target collection no longer exists"
+            if doc["collection"] != COMPUTER_BOOKS:
+                result["auto_apply_reason"] = "document is not in Computer Books"
                 return result
 
-            cur = await conn.execute(
-                "SELECT id FROM documents WHERE collection_id=%s AND content_sha256=%s AND id<>%s",
-                (target["id"], doc["content_sha256"], doc_id),
-            )
-            if await cur.fetchone():
-                result["auto_apply_reason"] = "identical content already exists in target collection"
-                return result
-
-            if target["embedding_model"] and target["embedding_model"] != doc["source_model"]:
-                result["auto_apply_reason"] = "target uses a different embedding model"
-                return result
-            if target["embedding_dim"] and target["embedding_dim"] != doc["source_dim"]:
-                result["auto_apply_reason"] = "target uses a different embedding dimension"
-                return result
-
-            if not target["embedding_model"]:
+            target = await (
                 await conn.execute(
-                    "UPDATE collections SET embedding_model=%s, embedding_dim=%s, updated_at=now() WHERE id=%s",
-                    (doc["source_model"], doc["source_dim"], target["id"]),
+                    """SELECT * FROM categories
+                       WHERE collection_id=%s AND name=%s""",
+                    (doc["collection_id"], existing_name),
                 )
+            ).fetchone()
+            if not target:
+                result["auto_apply_reason"] = "target category no longer exists"
+                return result
 
-            result.update({"auto_applied": True, "routed_to": existing_name, "status": "ready"})
+            result.update({
+                "auto_applied": True,
+                "routed_to": existing_name,
+                "status": "ready",
+                "existing_category": existing_name,
+            })
             await conn.execute(
-                """UPDATE documents SET collection_id=%s,auto_suggestion=%s::jsonb,
+                """UPDATE documents SET category_id=%s,auto_suggestion=%s::jsonb,
                        meta=(coalesce(meta,'{}'::jsonb) - 'auto_classify'),updated_at=now()
                    WHERE id=%s""",
                 (target["id"], json.dumps(result), doc_id),
             )
-            await conn.execute(
-                "UPDATE chunks SET collection_id=%s WHERE document_id=%s",
-                (target["id"], doc_id),
-            )
 
     await db.event(
-        f"Automatically classified: {doc['filename']} → {existing_name} ({float(result['confidence']):.2f})",
-        collection_id=target["id"], document_id=doc_id,
+        f"Automatically categorized: {doc['filename']} → {existing_name} ({float(result['confidence']):.2f})",
+        collection_id=doc["collection_id"], document_id=doc_id,
     )
     return result
 

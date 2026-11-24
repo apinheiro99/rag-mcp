@@ -22,6 +22,7 @@ from .classification_runtime import classification_worker
 from .config import env
 from .db import db
 from .ingest import worker
+from .library_taxonomy import ensure_core_collections
 from .graph_retrieval import graph_worker
 from .mcp_server import create_mcp
 from .model_runtime import runtime_scheduler
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
     env.extracted_dir.mkdir(parents=True, exist_ok=True)
     await db.start()
     await settings.load()
+    await ensure_core_collections()
     effective = await settings.effective()
     await runtime_scheduler.configure(maxsize=int(effective["model_runtime"]["queue_maxsize"]))
     await runtime_scheduler.start()

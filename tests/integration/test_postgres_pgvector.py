@@ -214,35 +214,10 @@ async def api_client(live_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_collection_inherits_effective_ingest_defaults(api_client, monkeypatch):
-    async def fake_effective():
-        return {
-            "ingest": {
-                "chunk_size": 1500,
-                "chunk_overlap": 200,
-                "min_chunk_size": 120,
-                "strategy": "recursive",
-                "separators": ["\n\n", "\n", ". ", " "],
-                "embed_batch_size": 16,
-            },
-            "limits": {
-                "chunk_size_range": [200, 8000],
-                "chunk_overlap_range": [0, 1000],
-                "min_chunk_size_range": [0, 2000],
-                "embed_batch_size_range": [1, 128],
-            },
-        }
-
-    monkeypatch.setattr(api_module.settings, "effective", fake_effective)
-    name = f"defaults-{uuid.uuid4().hex}"
-    response = await api_client.post("/api/collections", json={"name": name})
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["ingest_config"]["strategy"] == "recursive"
-    assert body["ingest_config"]["chunk_size"] == 1500
-    assert body["ingest_config"]["chunk_overlap"] == 200
-    assert body["ingest_config"]["embed_batch_size"] == 16
+async def test_top_level_collection_creation_is_locked(api_client):
+    response = await api_client.post("/api/collections", json={"name": "Economics"})
+    assert response.status_code == 409
+    assert "top-level collection topology is fixed" in response.json()["detail"]
 
 
 async def _insert_collection(conn, collection_id, name, model="same-model", dim=3):
@@ -1064,34 +1039,35 @@ async def test_ingestor_finalizes_cancelling_document_and_cleans_partial_chunks(
     assert chunk_count["n"] == 0
 
 @pytest.mark.asyncio
-async def test_default_search_flag_defaults_on_and_can_be_patched(api_client, live_db, monkeypatch):
-    async def fake_effective():
-        return {
-            "ingest": {
-                "chunk_size": 1500,
-                "chunk_overlap": 200,
-                "min_chunk_size": 120,
-                "strategy": "recursive",
-                "separators": ["\n\n", "\n", ". ", " "],
-                "embed_batch_size": 16,
-            },
-            "limits": {
-                "chunk_size_range": [200, 8000],
-                "chunk_overlap_range": [0, 1000],
-                "min_chunk_size_range": [0, 2000],
-                "embed_batch_size_range": [1, 128],
-            },
-        }
-    monkeypatch.setattr(api_module.settings, "effective", fake_effective)
-    name = f"default-search-{uuid.uuid4().hex[:8]}"
-    resp = await api_client.post('/api/collections', json={'name': name})
-    created = resp.json()
-    assert created['default_search'] is True
+async def test_core_collection_default_search_policy(live_db, monkeypatch):
+    import app.library_taxonomy as taxonomy
 
-    changed = (await api_client.patch(
-        f"/api/collections/{created['id']}", json={'default_search': False}
-    )).json()
-    assert changed['default_search'] is False
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "ingest": {
+                    "chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120,
+                    "strategy": "recursive", "separators": ["\n\n", "\n", ". ", " "],
+                    "embed_batch_size": 16,
+                }
+            }
+        async def get(self, key, default=None):
+            return "integration-embedding" if key == "embedding_model" else default
+
+    # Isolate this policy check from legacy shelves by precreating only core names.
+    async with live_db.pool.connection() as conn:
+        for name in ("Computer Books", "Knowledge Base", "RAG Source Code"):
+            await conn.execute(
+                """INSERT INTO collections(id,name,ingest_config,default_search)
+                   VALUES (%s,%s,'{}'::jsonb,true)
+                   ON CONFLICT (name) DO NOTHING""",
+                (uuid.uuid4(), name),
+            )
+
+    result = await taxonomy.ensure_core_collections(live_db, FakeSettings())
+    assert result["collections"]["Computer Books"]["default_search"] is True
+    assert result["collections"]["Knowledge Base"]["default_search"] is False
+    assert result["collections"]["RAG Source Code"]["default_search"] is False
 
 
 @pytest.mark.asyncio
@@ -1205,33 +1181,39 @@ async def test_directory_source_sync_tracks_new_changed_and_deleted_files(live_d
     assert count["n"] == 0
 
 @pytest.mark.asyncio
-async def test_auto_classification_inbox_is_default_search_off(live_db, monkeypatch):
-    import app.api as api_module
+async def test_automatic_book_import_targets_computer_books(live_db, monkeypatch):
+    import app.api as api_for_auto
 
     class FakeSettings:
         async def effective(self):
             return {
-                "classification": {
-                    "staging_collection_name": "Test Unclassified",
-                    "confidence_threshold": 0.92,
-                    "auto_apply_existing": True,
-                },
-                "ingest": {"chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120, "strategy": "recursive", "embed_batch_size": 16},
-                "limits": {"chunk_size_range": [200,8000], "chunk_overlap_range": [0,1000], "min_chunk_size_range": [0,2000], "embed_batch_size_range": [1,128]},
+                "ingest": {
+                    "chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120,
+                    "strategy": "recursive", "separators": ["\n\n", "\n", ". ", " "],
+                    "embed_batch_size": 16,
+                }
             }
-
         async def get(self, key, default=None):
             return "text-embedding-qwen3-embedding-8b" if key == "embedding_model" else default
 
-    monkeypatch.setattr(api_module, "db", live_db)
-    monkeypatch.setattr(api_module, "settings", FakeSettings())
-    inbox = await api_module._ensure_auto_inbox()
-    assert inbox["name"] == "Test Unclassified"
-    assert inbox["default_search"] is False
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            """INSERT INTO collections(
+                   id,name,description,ingest_config,default_search,embedding_model)
+               VALUES (%s,'Computer Books','books','{}'::jsonb,true,%s)
+               ON CONFLICT (name) DO NOTHING""",
+            (uuid.uuid4(), "text-embedding-qwen3-embedding-8b"),
+        )
+
+    monkeypatch.setattr(api_for_auto, "db", live_db)
+    monkeypatch.setattr(api_for_auto, "settings", FakeSettings())
+    inbox = await api_for_auto._ensure_auto_inbox()
+    assert inbox["name"] == "Computer Books"
+    assert inbox["default_search"] is True
 
 
 @pytest.mark.asyncio
-async def test_auto_route_applies_only_above_configured_confidence(live_db, monkeypatch):
+async def test_auto_category_applies_only_above_configured_confidence(live_db, monkeypatch):
     import app.classification_runtime as classification_module
 
     class FakeSettings:
@@ -1246,69 +1228,114 @@ async def test_auto_route_applies_only_above_configured_confidence(live_db, monk
     monkeypatch.setattr(classification_module, "db", live_db)
     monkeypatch.setattr(classification_module, "settings", FakeSettings())
 
-    inbox_id, target_id = uuid.uuid4(), uuid.uuid4()
+    books_id = uuid.uuid4()
+    category_id = uuid.uuid4()
     high_id, low_id = uuid.uuid4(), uuid.uuid4()
     model = "text-embedding-qwen3-embedding-8b"
     async with live_db.pool.connection() as conn:
         await conn.execute(
-            "INSERT INTO collections(id,name,ingest_config,default_search,embedding_model,embedding_dim) VALUES (%s,%s,'{}'::jsonb,false,%s,4096)",
-            (inbox_id, f"Inbox-{inbox_id}", model),
+            """INSERT INTO collections(
+                   id,name,ingest_config,default_search,embedding_model,embedding_dim)
+               VALUES (%s,'Computer Books','{}'::jsonb,true,%s,4096)
+               ON CONFLICT (name) DO UPDATE SET embedding_model=EXCLUDED.embedding_model,
+                 embedding_dim=EXCLUDED.embedding_dim
+               RETURNING id""",
+            (books_id, model),
         )
+        books = await (
+            await conn.execute("SELECT id FROM collections WHERE name='Computer Books'")
+        ).fetchone()
+        books_id = books["id"]
         await conn.execute(
-            "INSERT INTO collections(id,name,ingest_config,default_search,embedding_model,embedding_dim) VALUES (%s,%s,'{}'::jsonb,true,%s,4096)",
-            (target_id, f"Python-{target_id}", model),
+            """INSERT INTO categories(id,collection_id,name,description)
+               VALUES (%s,%s,'Python','Python books')
+               ON CONFLICT (collection_id,name) DO NOTHING""",
+            (category_id, books_id),
         )
+        category = await (
+            await conn.execute(
+                "SELECT id FROM categories WHERE collection_id=%s AND name='Python'", (books_id,)
+            )
+        ).fetchone()
+        category_id = category["id"]
         for doc_id, digest in ((high_id, "a" * 64), (low_id, "b" * 64)):
             await conn.execute(
-                """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status,meta)
+                """INSERT INTO documents(
+                       id,collection_id,filename,source_path,stored_path,content_sha256,
+                       size_bytes,status,meta)
                    VALUES (%s,%s,%s,%s,%s,%s,10,'ready','{"auto_classify":true}'::jsonb)""",
-                (doc_id, inbox_id, f"{doc_id}.txt", f"{doc_id}.txt", f"blobs/{doc_id}", digest),
+                (doc_id, books_id, f"{doc_id}.txt", f"{doc_id}.txt", f"blobs/{doc_id}", digest),
             )
 
-    target_name = f"Python-{target_id}"
     high = await classification_module.apply_ready_classification(str(high_id), {
-        "existing_collection": target_name,
+        "existing_category": "Python",
         "confidence": 0.95,
-        "proposed_collection": None,
+        "proposed_category": None,
         "rationale": "clear Python content",
     })
     low = await classification_module.apply_ready_classification(str(low_id), {
-        "existing_collection": target_name,
+        "existing_category": "Python",
         "confidence": 0.70,
-        "proposed_collection": None,
+        "proposed_category": None,
         "rationale": "uncertain",
     })
+
     assert high["auto_applied"] is True
-    assert high["routed_to"] == target_name
+    assert high["routed_to"] == "Python"
     assert low["auto_applied"] is False
     assert low["auto_apply_eligible"] is False
 
     async with live_db.pool.connection() as conn:
-        high_row = await (await conn.execute("SELECT collection_id,status,auto_suggestion FROM documents WHERE id=%s", (high_id,))).fetchone()
-        low_row = await (await conn.execute("SELECT collection_id,status FROM documents WHERE id=%s", (low_id,))).fetchone()
-    assert high_row["collection_id"] == target_id
+        high_row = await (
+            await conn.execute(
+                "SELECT collection_id,category_id,status,auto_suggestion FROM documents WHERE id=%s",
+                (high_id,),
+            )
+        ).fetchone()
+        low_row = await (
+            await conn.execute(
+                "SELECT collection_id,category_id,status FROM documents WHERE id=%s", (low_id,)
+            )
+        ).fetchone()
+
+    assert high_row["collection_id"] == books_id
+    assert high_row["category_id"] == category_id
     assert high_row["status"] == "ready"
     assert high_row["auto_suggestion"]["auto_applied"] is True
-    assert high_row["auto_suggestion"]["routed_to"] == target_name
-    assert low_row["collection_id"] == inbox_id
-    assert low_row["status"] == "ready"
+    assert low_row["collection_id"] == books_id
+    assert low_row["category_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_classification_runtime_uses_embedding_model_directly(live_db, monkeypatch):
+async def test_classification_runtime_uses_embedding_model_and_categories(live_db, monkeypatch):
     import app.classification_runtime as classification_module
 
-    collection_id = uuid.uuid4()
+    books_id = uuid.uuid4()
     doc_id = uuid.uuid4()
     async with live_db.pool.connection() as conn:
         await conn.execute(
-            "INSERT INTO collections(id,name,description,ingest_config,embedding_model,embedding_dim) VALUES (%s,%s,'test','{}'::jsonb,%s,4096)",
-            (collection_id, f"Runtime-{collection_id}", "text-embedding-qwen3-embedding-8b"),
+            """INSERT INTO collections(
+                   id,name,description,ingest_config,embedding_model,embedding_dim)
+               VALUES (%s,'Computer Books','test','{}'::jsonb,%s,4096)
+               ON CONFLICT (name) DO UPDATE SET embedding_model=EXCLUDED.embedding_model,
+                 embedding_dim=EXCLUDED.embedding_dim""",
+            (books_id, "text-embedding-qwen3-embedding-8b"),
+        )
+        books = await (
+            await conn.execute("SELECT id FROM collections WHERE name='Computer Books'")
+        ).fetchone()
+        books_id = books["id"]
+        await conn.execute(
+            """INSERT INTO categories(id,collection_id,name,description)
+               VALUES (%s,%s,'Software Testing','Testing books')
+               ON CONFLICT (collection_id,name) DO NOTHING""",
+            (uuid.uuid4(), books_id),
         )
         await conn.execute(
-            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
+            """INSERT INTO documents(
+                   id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
                VALUES (%s,%s,'book.txt','book.txt','blobs/book',%s,10,'ready')""",
-            (doc_id, collection_id, "c" * 64),
+            (doc_id, books_id, "c" * 64),
         )
 
     captured = {}
@@ -1323,17 +1350,12 @@ async def test_classification_runtime_uses_embedding_model_directly(live_db, mon
                 "classification": {
                     "confidence_threshold": 0.55,
                     "auto_apply_existing": True,
-                    "staging_collection_name": "Unclassified",
                     "embedding_match_threshold": 0.55,
                     "embedding_margin_threshold": 0.03,
                 },
             }
-
         async def get(self, key, default=None):
-            if key == "embedding_model":
-                return "text-embedding-qwen3-embedding-8b"
-            return default
-
+            return "text-embedding-qwen3-embedding-8b" if key == "embedding_model" else default
         async def lmstudio_client(self, **kwargs):
             return FakeClient()
 
@@ -1350,7 +1372,7 @@ async def test_classification_runtime_uses_embedding_model_directly(live_db, mon
         return {
             "existing_collection": None,
             "confidence": 0.5,
-            "proposed_collection": None,
+            "proposed_collection": {"name": "New Topic", "description": "new"},
             "new_collection_suggested": True,
             "rationale": "test",
             "source": "embedding",
@@ -1363,9 +1385,11 @@ async def test_classification_runtime_uses_embedding_model_directly(live_db, mon
 
     result = await classification_module.classify_document_runtime(str(doc_id))
     assert result["filename"] == "book.txt"
+    assert result["proposed_category"]["name"] == "New Topic"
     assert captured["model"] == "text-embedding-qwen3-embedding-8b"
     assert captured["kwargs"]["match_threshold"] == 0.55
     assert captured["kwargs"]["margin_threshold"] == 0.03
+    assert "Software Testing" in [c["name"] for c in captured["kwargs"]["collections"]]
 
 
 @pytest.mark.asyncio
@@ -1620,3 +1644,157 @@ async def test_repository_corpus_bootstrap_and_sync_preserve_git_provenance(
     assert row["meta"]["source_type"] == "repository"
     assert row["meta"]["repository_commit"] == commit
     assert row["meta"]["repository_path"] == "sample.py"
+
+
+@pytest.mark.asyncio
+async def test_core_collection_migration_converts_legacy_shelves_to_categories(live_db, monkeypatch):
+    import app.library_taxonomy as taxonomy
+
+    legacy_id = uuid.uuid4()
+    doc_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+    digest = uuid.uuid4().hex
+
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            """INSERT INTO collections(id,name,description,ingest_config,default_search)
+               VALUES (%s,'Legacy Python','Old shelf','{}'::jsonb,true)""",
+            (legacy_id,),
+        )
+        await conn.execute(
+            """INSERT INTO documents(
+                   id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status)
+               VALUES (%s,%s,'python.epub','python.epub','blobs/python',%s,1,'ready')""",
+            (doc_id, legacy_id, digest),
+        )
+        await conn.execute(
+            """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+               VALUES (%s,%s,%s,0,'python content',true)""",
+            (chunk_id, doc_id, legacy_id),
+        )
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "ingest": {
+                    "chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120,
+                    "strategy": "recursive", "separators": ["\n\n", "\n", ". ", " "],
+                    "embed_batch_size": 16,
+                }
+            }
+        async def get(self, key, default=None):
+            return "integration-embedding" if key == "embedding_model" else default
+
+    monkeypatch.setattr(taxonomy, "db", live_db)
+    monkeypatch.setattr(taxonomy, "settings", FakeSettings())
+
+    result = await taxonomy.ensure_core_collections()
+    books_id = result["collections"][taxonomy.COMPUTER_BOOKS]["id"]
+
+    async with live_db.pool.connection() as conn:
+        collections = await (
+            await conn.execute("SELECT name FROM collections ORDER BY name")
+        ).fetchall()
+        category = await (
+            await conn.execute(
+                "SELECT id,name FROM categories WHERE collection_id=%s AND name='Legacy Python'",
+                (books_id,),
+            )
+        ).fetchone()
+        doc = await (
+            await conn.execute(
+                "SELECT collection_id,category_id FROM documents WHERE id=%s", (doc_id,)
+            )
+        ).fetchone()
+        chunk = await (
+            await conn.execute(
+                "SELECT collection_id FROM chunks WHERE id=%s", (chunk_id,)
+            )
+        ).fetchone()
+
+    assert [x["name"] for x in collections] == [
+        "Computer Books", "Knowledge Base", "RAG Source Code"
+    ]
+    assert category is not None
+    assert doc["collection_id"] == books_id
+    assert doc["category_id"] == category["id"]
+    assert chunk["collection_id"] == books_id
+
+
+@pytest.mark.asyncio
+async def test_category_decision_accepts_or_rejects_proposed_category(live_db, monkeypatch):
+    import app.api as api_for_categories
+    import app.library_taxonomy as taxonomy
+
+    class FakeSettings:
+        async def effective(self):
+            return {
+                "ingest": {
+                    "chunk_size": 1500, "chunk_overlap": 200, "min_chunk_size": 120,
+                    "strategy": "recursive", "separators": ["\n\n", "\n", ". ", " "],
+                    "embed_batch_size": 16,
+                }
+            }
+        async def get(self, key, default=None):
+            return "integration-embedding" if key == "embedding_model" else default
+
+    monkeypatch.setattr(taxonomy, "db", live_db)
+    monkeypatch.setattr(taxonomy, "settings", FakeSettings())
+    core = await taxonomy.ensure_core_collections()
+    books = core["collections"][taxonomy.COMPUTER_BOOKS]
+
+    accepted_id = uuid.uuid4()
+    rejected_id = uuid.uuid4()
+    proposal = {
+        "proposed_category": {"name": "Economics", "description": "Economics books."},
+        "proposed_collection": {"name": "Economics", "description": "Economics books."},
+        "confidence": 0.42,
+        "auto_applied": False,
+    }
+    async with live_db.pool.connection() as conn:
+        for doc_id, name in [(accepted_id, "econ.epub"), (rejected_id, "econ2.epub")]:
+            await conn.execute(
+                """INSERT INTO documents(
+                       id,collection_id,filename,source_path,stored_path,content_sha256,
+                       size_bytes,status,auto_suggestion,meta)
+                   VALUES (%s,%s,%s,%s,%s,%s,1,'ready',%s::jsonb,'{}'::jsonb)""",
+                (
+                    doc_id, books["id"], name, name, f"blobs/{doc_id}",
+                    uuid.uuid4().hex, json.dumps(proposal),
+                ),
+            )
+
+    monkeypatch.setattr(api_for_categories, "db", live_db)
+    app = FastAPI()
+    app.include_router(api_for_categories.router)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        accepted = await client.post(
+            f"/api/documents/{accepted_id}/classification-decision", json={"accept": True}
+        )
+        rejected = await client.post(
+            f"/api/documents/{rejected_id}/classification-decision", json={"accept": False}
+        )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["category"]["name"] == "Economics"
+    assert rejected.status_code == 200
+    assert rejected.json()["category"] is None
+
+    async with live_db.pool.connection() as conn:
+        accepted_doc = await (
+            await conn.execute(
+                """SELECT cat.name AS category FROM documents d
+                   LEFT JOIN categories cat ON cat.id=d.category_id WHERE d.id=%s""",
+                (accepted_id,),
+            )
+        ).fetchone()
+        rejected_doc = await (
+            await conn.execute(
+                "SELECT category_id,auto_suggestion FROM documents WHERE id=%s", (rejected_id,)
+            )
+        ).fetchone()
+
+    assert accepted_doc["category"] == "Economics"
+    assert rejected_doc["category_id"] is None
+    assert rejected_doc["auto_suggestion"]["decision"] == "rejected"

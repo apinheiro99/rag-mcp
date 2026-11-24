@@ -15,13 +15,14 @@ from pydantic import BaseModel, Field
 
 from . import autoconfig
 from .chunking import ConfigError, validate_ingest_config
-from .classification_runtime import classification_worker, classify_document_runtime
+from .classification_runtime import apply_ready_classification, classification_worker, classify_document_runtime
 from .config import env
 from .db import db
 from .extraction import ExtractionError, extract
 from .graph_retrieval import graph_worker, persistent_evidence_graph
 from .ingest import ACTIVE_STATUSES, extraction_cache_path, resolve_ingest_config, worker
 from .ingest_policy import should_auto_start_upload, should_ignore_empty_upload
+from .library_taxonomy import CORE_COLLECTIONS, COMPUTER_BOOKS, computer_books_collection
 from .lmstudio import LMStudioClient, LMStudioError, LMStudioUnavailable
 from .retrieval_observability import retrieval_metrics
 from .search import SearchError, semantic_search
@@ -170,30 +171,116 @@ async def list_collections():
     return {"collections": rows}
 
 
-@router.post("/collections", status_code=201)
-async def create_collection(body: CollectionCreate):
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(400, "nome vazio")
-    try:
-        cfg = await resolve_ingest_config(None, body.ingest_config)
-    except ConfigError as e:
-        raise HTTPException(400, str(e))
+
+class CategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = ""
+
+
+class CategoryPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+
+
+@router.get("/categories")
+async def list_categories(collection_id: str | None = None):
+    params: list[Any] = []
+    where = ""
+    if collection_id:
+        where = "WHERE cat.collection_id=%s"
+        params.append(_uuid(collection_id))
     async with db.pool.connection() as conn:
         cur = await conn.execute(
-            """INSERT INTO collections(id, name, description, ingest_config)
-               VALUES (%s,%s,%s,%s::jsonb) ON CONFLICT (name) DO NOTHING RETURNING *""",
-            (str(uuid.uuid4()), name, body.description, json.dumps(cfg)))
+            f"""SELECT cat.*, c.name AS collection,
+                       (SELECT count(*) FROM documents d WHERE d.category_id=cat.id) AS doc_count
+                FROM categories cat
+                JOIN collections c ON c.id=cat.collection_id
+                {where}
+                ORDER BY cat.name""",
+            params,
+        )
+        rows = await cur.fetchall()
+    return {"categories": rows}
+
+
+@router.post("/collections/{col_id}/categories", status_code=201)
+async def create_category(col_id: str, body: CategoryCreate):
+    col_id = _uuid(col_id)
+    name = body.name.strip()
+    async with db.pool.connection() as conn:
+        col = await (
+            await conn.execute("SELECT name FROM collections WHERE id=%s", (col_id,))
+        ).fetchone()
+        if not col:
+            raise HTTPException(404, "collection not found")
+        if col["name"] != COMPUTER_BOOKS:
+            raise HTTPException(409, "categories are supported only inside Computer Books")
+        cur = await conn.execute(
+            """INSERT INTO categories(id,collection_id,name,description)
+               VALUES (%s,%s,%s,%s)
+               ON CONFLICT (collection_id,name) DO NOTHING RETURNING *""",
+            (str(uuid.uuid4()), col_id, name, body.description.strip()),
+        )
         row = await cur.fetchone()
     if not row:
-        raise HTTPException(409, f"coleção '{name}' já existe")
-    await db.event(f"Coleção criada: {name}", collection_id=row["id"])
+        raise HTTPException(409, f"category '{name}' already exists")
     return row
+
+
+@router.patch("/categories/{category_id}")
+async def patch_category(category_id: str, body: CategoryPatch):
+    category_id = _uuid(category_id)
+    sets = ["updated_at=now()"]
+    params: list[Any] = []
+    if body.name is not None:
+        sets.append("name=%s")
+        params.append(body.name.strip())
+    if body.description is not None:
+        sets.append("description=%s")
+        params.append(body.description.strip())
+    params.append(category_id)
+    async with db.pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                f"UPDATE categories SET {', '.join(sets)} WHERE id=%s RETURNING *", params
+            )
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "category not found")
+    return row
+
+
+@router.delete("/categories/{category_id}")
+async def delete_category(category_id: str):
+    category_id = _uuid(category_id)
+    async with db.pool.connection() as conn:
+        row = await (
+            await conn.execute("DELETE FROM categories WHERE id=%s RETURNING name", (category_id,))
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "category not found")
+    return {"deleted": row["name"]}
+
+
+@router.post("/collections", status_code=201)
+async def create_collection(body: CollectionCreate):
+    raise HTTPException(
+        409,
+        "top-level collection topology is fixed; create a category inside Computer Books instead",
+    )
 
 
 @router.patch("/collections/{col_id}")
 async def patch_collection(col_id: str, body: CollectionPatch):
     col_id = _uuid(col_id)
+    async with db.pool.connection() as conn:
+        current = await (
+            await conn.execute("SELECT name FROM collections WHERE id=%s", (col_id,))
+        ).fetchone()
+    if not current:
+        raise HTTPException(404, "coleção não encontrada")
+    if body.name is not None and current["name"] in CORE_COLLECTIONS:
+        raise HTTPException(409, "core collections cannot be renamed")
     sets, params = ["updated_at=now()"], []
     if body.name is not None:
         sets.append("name=%s"); params.append(body.name.strip())
@@ -222,6 +309,13 @@ async def patch_collection(col_id: str, body: CollectionPatch):
 async def delete_collection(col_id: str):
     col_id = _uuid(col_id)
     async with db.pool.connection() as conn:
+        current = await (
+            await conn.execute("SELECT name FROM collections WHERE id=%s", (col_id,))
+        ).fetchone()
+        if not current:
+            raise HTTPException(404, "coleção não encontrada")
+        if current["name"] in CORE_COLLECTIONS:
+            raise HTTPException(409, "core collections cannot be deleted")
         cur = await conn.execute(
             "SELECT stored_path FROM documents WHERE collection_id=%s", (col_id,))
         paths = [r["stored_path"] for r in await cur.fetchall()]
@@ -404,36 +498,9 @@ AUTO_COLLECTION_SENTINEL = "__auto__"
 
 
 async def _ensure_auto_inbox() -> dict[str, Any]:
-    eff = await settings.effective()
-    cfg = eff["classification"]
-    name = str(cfg["staging_collection_name"]).strip()
-    if not name:
-        raise RuntimeError("classification staging_collection_name is empty")
-    async with db.pool.connection() as conn:
-        cur = await conn.execute("SELECT * FROM collections WHERE name=%s", (name,))
-        row = await cur.fetchone()
-        default_model = await settings.get("embedding_model")
-        if row:
-            if row["default_search"] or (default_model and not row["embedding_model"]):
-                await conn.execute(
-                    """UPDATE collections SET default_search=false,
-                           embedding_model=coalesce(embedding_model,%s),updated_at=now() WHERE id=%s""",
-                    (default_model, row["id"]),
-                )
-                row["default_search"] = False
-                row["embedding_model"] = row["embedding_model"] or default_model
-            return row
-        ingest_cfg = validate_ingest_config(eff["ingest"], eff["limits"])
-        if default_model:
-            ingest_cfg["embedding_model"] = default_model
-        cur = await conn.execute(
-            """INSERT INTO collections(id,name,description,ingest_config,default_search,embedding_model)
-               VALUES (%s,%s,%s,%s::jsonb,false,%s) RETURNING *""",
-            (str(uuid.uuid4()), name, "Automatic classification inbox", json.dumps(ingest_cfg), default_model),
-        )
-        row = await cur.fetchone()
-    await db.event(f"Automatic classification inbox created: {name}", collection_id=row["id"])
-    return row
+    # Automatic book imports are indexed directly into Computer Books.
+    # Category remains NULL until the post-ingest classifier assigns one.
+    return await computer_books_collection(db, settings)
 
 
 # ----------------------------------------------------------------- documents
@@ -485,8 +552,9 @@ async def list_documents(collection_id: str | None = None,
     clause = ("WHERE " + " AND ".join(where)) if where else ""
     async with db.pool.connection() as conn:
         cur = await conn.execute(
-            f"""SELECT d.*, c.name AS collection FROM documents d
-                JOIN collections c ON c.id=d.collection_id {clause}
+            f"""SELECT d.*, c.name AS collection, cat.name AS category FROM documents d
+                JOIN collections c ON c.id=d.collection_id
+                LEFT JOIN categories cat ON cat.id=d.category_id {clause}
                 ORDER BY d.created_at DESC LIMIT %s OFFSET %s""",
             params + [limit, offset])
         items = await cur.fetchall()
@@ -501,8 +569,9 @@ async def get_document(doc_id: str):
     doc_id = _uuid(doc_id)
     async with db.pool.connection() as conn:
         cur = await conn.execute(
-            """SELECT d.*, c.name AS collection FROM documents d
-               JOIN collections c ON c.id=d.collection_id WHERE d.id=%s""", (doc_id,))
+            """SELECT d.*, c.name AS collection, cat.name AS category FROM documents d
+               JOIN collections c ON c.id=d.collection_id
+               LEFT JOIN categories cat ON cat.id=d.category_id WHERE d.id=%s""", (doc_id,))
         doc = await cur.fetchone()
         if not doc:
             raise HTTPException(404, "documento não encontrado")
@@ -761,15 +830,79 @@ async def classify_document_route(doc_id: str, body: ClassifyDocumentRequest):
         raise HTTPException(503, f"embedding model unavailable: {e}") from e
     except ValueError as e:
         raise HTTPException(502, f"invalid classifier response: {e}") from e
-    eff = await settings.effective()
-    threshold = float(eff["classification"]["confidence_threshold"])
-    result["auto_apply_threshold"] = threshold
-    result["auto_apply_eligible"] = bool(
-        eff["classification"]["auto_apply_existing"]
-        and result.get("existing_collection")
-        and float(result["confidence"]) >= threshold
-    )
+    result = await apply_ready_classification(doc_id, result)
+    if not result.get("auto_applied"):
+        async with db.pool.connection() as conn:
+            await conn.execute(
+                """UPDATE documents SET auto_suggestion=%s::jsonb,updated_at=now()
+                   WHERE id=%s""",
+                (json.dumps(result), doc_id),
+            )
     return result
+
+
+
+class ClassificationDecision(BaseModel):
+    accept: bool
+
+
+@router.post("/documents/{doc_id}/classification-decision")
+async def classification_decision(doc_id: str, body: ClassificationDecision):
+    doc_id = _uuid(doc_id)
+    async with db.pool.connection() as conn:
+        async with conn.transaction():
+            doc = await (
+                await conn.execute(
+                    """SELECT d.id,d.filename,d.auto_suggestion,d.collection_id,c.name AS collection
+                       FROM documents d JOIN collections c ON c.id=d.collection_id
+                       WHERE d.id=%s FOR UPDATE""",
+                    (doc_id,),
+                )
+            ).fetchone()
+            if not doc:
+                raise HTTPException(404, "document not found")
+            if doc["collection"] != COMPUTER_BOOKS:
+                raise HTTPException(409, "category decisions apply only to Computer Books")
+            suggestion = doc.get("auto_suggestion") or {}
+            proposed = suggestion.get("proposed_collection") or suggestion.get("proposed_category")
+            if not proposed:
+                raise HTTPException(409, "document has no pending category proposal")
+
+            if not body.accept:
+                suggestion["decision"] = "rejected"
+                suggestion["auto_applied"] = False
+                await conn.execute(
+                    """UPDATE documents SET category_id=NULL,auto_suggestion=%s::jsonb,
+                           meta=(coalesce(meta,'{}'::jsonb)-'auto_classify'),updated_at=now()
+                       WHERE id=%s""",
+                    (json.dumps(suggestion), doc_id),
+                )
+                return {"decision": "rejected", "category": None}
+
+            name = str(proposed.get("name") or "").strip()
+            if not name:
+                raise HTTPException(422, "proposed category has no name")
+            cur = await conn.execute(
+                """INSERT INTO categories(id,collection_id,name,description)
+                   VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (collection_id,name) DO UPDATE SET updated_at=now()
+                   RETURNING *""",
+                (
+                    str(uuid.uuid4()), doc["collection_id"], name,
+                    str(proposed.get("description") or "").strip(),
+                ),
+            )
+            category = await cur.fetchone()
+            suggestion["decision"] = "accepted"
+            suggestion["auto_applied"] = True
+            suggestion["routed_to"] = category["name"]
+            await conn.execute(
+                """UPDATE documents SET category_id=%s,auto_suggestion=%s::jsonb,
+                       meta=(coalesce(meta,'{}'::jsonb)-'auto_classify'),updated_at=now()
+                   WHERE id=%s""",
+                (category["id"], json.dumps(suggestion), doc_id),
+            )
+    return {"decision": "accepted", "category": category}
 
 
 class BulkClassifyRequest(BaseModel):
