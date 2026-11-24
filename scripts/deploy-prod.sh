@@ -75,6 +75,8 @@ if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   : "${RAG_TUNNEL_DIR:?RAG_TUNNEL_DIR must be set when Secure MCP Tunnel is enabled}"
   [ -f "$RAG_TUNNEL_BINARY" ] || { echo "missing tunnel client binary: $RAG_TUNNEL_BINARY" >&2; exit 1; }
   [ -f "$RAG_TUNNEL_DIR/tunnel-client.yaml" ] || { echo "missing tunnel config: $RAG_TUNNEL_DIR/tunnel-client.yaml" >&2; exit 1; }
+  export RAG_TUNNEL_UID="${RAG_TUNNEL_UID:-$(stat -c %u "$RAG_TUNNEL_DIR")}"
+  export RAG_TUNNEL_GID="${RAG_TUNNEL_GID:-$(stat -c %g "$RAG_TUNNEL_DIR")}"
   COMPOSE_ARGS+=(-f deploy/tunnel.compose.yml)
 fi
 
