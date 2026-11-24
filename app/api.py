@@ -93,6 +93,11 @@ async def health():
         "model_runtime": runtime_scheduler.status(),
         "lmstudio": lm,
         "mcp_enabled": env.mcp_enabled,
+        "build": {
+            "version": env.build_version,
+            "commit": env.build_commit,
+            "environment": env.runtime_environment,
+        },
     }
 
 

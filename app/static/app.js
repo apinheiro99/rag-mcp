@@ -439,11 +439,12 @@ function renderIngest(s) {
 async function pollHealth() {
   let h = null;
   try { h = await api("/api/health"); } catch { /* offline */ }
-  const pill = (label, ok, warn = false) =>
-    `<span class="pill"><span class="dot ${ok ? (warn ? "warn" : "ok") : "bad"}"></span>${label}</span>`;
-  $("healthPills").innerHTML = h
-    ? pill("DB", h.database) + pill("LM Studio", h.lmstudio?.reachable) + pill(h.worker?.paused ? "paused" : "worker", h.worker?.running, h.worker?.paused)
-    : pill("server offline", false);
+  const version = h?.build?.version || "dev";
+  const envName = h?.build?.environment || "dev";
+  if ($("versionText")) $("versionText").textContent = `${version} · ${envName.toUpperCase()}`;
+  if ($("sidebarVersion")) $("sidebarVersion").classList.toggle("offline", !h);
+  const status = document.querySelector(".app-header-status");
+  if (status) status.classList.toggle("offline", !h || h.status !== "ok");
   $("healthCards").innerHTML = h ? `
     <div class="card"><div class="stat-label">PostgreSQL + pgvector</div>
       <div class="stat" style="color:${h.database ? "var(--green)" : "var(--red)"}">${h.database ? "online" : "offline"}</div></div>

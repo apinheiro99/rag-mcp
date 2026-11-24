@@ -51,6 +51,9 @@ class Env:
         self.mcp_name = _env("MCP_NAME", "rag-server")
         self.mcp_allowed_hosts = [h.strip() for h in _env("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
         self.log_level = _env("LOG_LEVEL", "INFO").upper()
+        self.build_version = _env("RAG_BUILD_VERSION", "dev")
+        self.build_commit = _env("RAG_BUILD_COMMIT", "")
+        self.runtime_environment = _env("RAG_ENVIRONMENT", "dev")
         self.lmstudio_url_default = _env("LMSTUDIO_URL", "http://127.0.0.1:1234").rstrip("/")
 
     @property

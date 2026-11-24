@@ -263,3 +263,9 @@ tr:hover td { background:rgba(36,215,242,.035); }
 
 .bulk-toolbar { margin: 10px 0 12px; padding: 8px 10px; background: var(--panel2, rgba(255,255,255,.025)); border-radius: 8px; }
 .doc-select { width: 16px; height: 16px; cursor: pointer; }
+
+.sidebar-version { margin-top:auto; display:flex; align-items:center; gap:10px; padding:14px 10px 4px; border-top:1px solid var(--border); color:var(--muted); font-size:.78rem; line-height:1.35; }
+.sidebar-version strong { display:block; color:var(--text); font-size:.82rem; }
+.sidebar-version span:not(.version-dot) { display:block; }
+.version-dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 10px rgba(36,215,242,.6); flex:none; }
+.sidebar-version.offline .version-dot,.app-header-status.offline .ready-dot { background:var(--red); box-shadow:0 0 10px rgba(255,104,125,.45); }
