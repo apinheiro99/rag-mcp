@@ -8,6 +8,7 @@ cada trecho.
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -88,6 +89,103 @@ def decode_text_bytes(raw: bytes) -> str:
 
 def read_text_file(path: Path) -> str:
     return decode_text_bytes(path.read_bytes())
+
+
+SOURCE_CODE_EXTENSIONS = {
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c", ".h", ".cpp", ".hpp",
+    ".cs", ".go", ".rs", ".rb", ".php", ".sh", ".bash", ".sql",
+}
+
+
+def _line_segment(lines: list[str], start: int, end: int, **loc) -> Segment:
+    start = max(1, int(start))
+    end = max(start, min(int(end), len(lines)))
+    return Segment(
+        "".join(lines[start - 1:end]).strip(),
+        {"line_start": start, "line_end": end, **loc},
+    )
+
+
+def python_source_to_segments(text: str) -> list[Segment]:
+    """Split Python by top-level symbols while preserving line provenance."""
+    lines = text.splitlines(keepends=True)
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return [Segment(text, {"symbol": "<module>", "line_start": 1, "line_end": len(lines)})]
+    nodes = [
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and getattr(node, "end_lineno", None)
+    ]
+    segments: list[Segment] = []
+    first = min((int(node.lineno) for node in nodes), default=len(lines) + 1)
+    if first > 1:
+        seg = _line_segment(lines, 1, first - 1, symbol="<module>", code_kind="module")
+        if seg.text:
+            segments.append(seg)
+    for node in nodes:
+        start = int(node.lineno)
+        decorators = getattr(node, "decorator_list", []) or []
+        decorator_lines = [int(d.lineno) for d in decorators if getattr(d, "lineno", None)]
+        if decorator_lines:
+            start = min([start, *decorator_lines])
+        kind = "class" if isinstance(node, ast.ClassDef) else "function"
+        seg = _line_segment(lines, start, int(node.end_lineno), symbol=node.name, code_kind=kind)
+        if seg.text:
+            segments.append(seg)
+    if not segments and text.strip():
+        segments.append(Segment(text, {"symbol": "<module>", "line_start": 1, "line_end": len(lines)}))
+    return segments
+
+
+_JS_DECL = re.compile(
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+    r"(?:(?:function|class|interface|enum|type)\s+([A-Za-z_$][\w$]*)|"
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=)"
+)
+
+
+def javascript_source_to_segments(text: str) -> list[Segment]:
+    """Best-effort symbol blocks for JS/TS without adding a parser dependency."""
+    lines = text.splitlines(keepends=True)
+    starts: list[tuple[int, str]] = []
+    for i, line in enumerate(lines, 1):
+        match = _JS_DECL.match(line)
+        if match:
+            starts.append((i, match.group(1) or match.group(2)))
+    if not starts:
+        return [Segment(text, {"symbol": "<module>", "line_start": 1, "line_end": len(lines)})]
+    segments: list[Segment] = []
+    if starts[0][0] > 1:
+        seg = _line_segment(lines, 1, starts[0][0] - 1, symbol="<module>", code_kind="module")
+        if seg.text:
+            segments.append(seg)
+    for idx, (start, symbol) in enumerate(starts):
+        end = starts[idx + 1][0] - 1 if idx + 1 < len(starts) else len(lines)
+        seg = _line_segment(lines, start, end, symbol=symbol, code_kind="symbol")
+        if seg.text:
+            segments.append(seg)
+    return segments
+
+
+def extract_source_code(path: Path, ext: str, *, sample: bool = False) -> ExtractedDoc:
+    text = read_text_file(path)
+    if sample:
+        text = text[:20000]
+    if not text.strip():
+        raise ExtractionError("arquivo vazio")
+    if ext == ".py":
+        segments = python_source_to_segments(text)
+        language = "python"
+    elif ext in {".js", ".ts", ".tsx", ".jsx"}:
+        segments = javascript_source_to_segments(text)
+        language = ext.lstrip(".")
+    else:
+        lines = text.splitlines(keepends=True)
+        segments = [Segment(text, {"symbol": "<module>", "line_start": 1, "line_end": len(lines)})]
+        language = ext.lstrip(".") or "text"
+    return ExtractedDoc(segments, {"kind": "source_code", "language": language})
 
 
 # ---------------------------------------------------------------- HTML
@@ -835,6 +933,8 @@ def extract(path: Path, filename: str, *, sample: bool = False,
         doc = extract_djvu(path)
     elif ext == ".chm":
         doc = extract_chm(path)
+    elif ext in SOURCE_CODE_EXTENSIONS:
+        doc = extract_source_code(path, ext, sample=sample)
     elif ext in TEXT_EXTENSIONS or ext == "":
         text = read_text_file(path)
         if sample:

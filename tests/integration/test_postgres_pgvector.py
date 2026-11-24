@@ -13,6 +13,7 @@ import app.api as api_module
 import app.ingest as ingest_module
 import app.retrieval_observability as observability_module
 import app.search as search_module
+import app.source_sync as source_sync_module
 from app.db import Database, vector_literal
 from app.ingest import DocumentIngestor, IngestStore
 from app.model_runtime import runtime_scheduler
@@ -1536,3 +1537,86 @@ async def test_concurrent_setting_writes_do_not_cross_talk(live_db):
     await asyncio.gather(*(live_db.set_setting(key, value) for key, value in pairs))
     values = await asyncio.gather(*(live_db.get_setting(key) for key, _ in pairs))
     assert values == [value for _, value in pairs]
+
+
+@pytest.mark.asyncio
+async def test_repository_corpus_bootstrap_and_sync_preserve_git_provenance(
+    live_db, tmp_path, monkeypatch
+):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    (repo / "sample.py").write_text("def answer():\n    return 42\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "sample.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial"], check=True)
+    commit = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+    effective = {
+        "repository_corpus": {
+            "enabled": True,
+            "path": str(repo),
+            "collection_name": "RAG Source Code Integration",
+            "description": "integration repo",
+            "default_search": False,
+            "interval_seconds": 600,
+            "exclude_patterns": [".git/**"],
+        },
+        "sources": {
+            "default_interval_seconds": 600,
+            "interval_options_seconds": [600],
+            "default_exclude_patterns": [".git/**", "__pycache__/**"],
+        },
+        "allowed_extensions": [".py"],
+        "ingest": {"max_file_mb": 10},
+        "workflow": {"auto_start_configured_uploads": False},
+    }
+
+    async def fake_effective():
+        return effective
+
+    async def fake_get(key, default=None):
+        return "integration-embedding" if key == "embedding_model" else default
+
+    async def fake_resolve(collection_cfg, override):
+        return {
+            "chunk_size": 1500,
+            "chunk_overlap": 200,
+            "min_chunk_size": 120,
+            "strategy": "recursive",
+            "separators": ["\n\n", "\n", ". ", " "],
+            "embedding_model": "integration-embedding",
+            "embed_batch_size": 16,
+        }
+
+    monkeypatch.setattr(source_sync_module, "db", live_db)
+    monkeypatch.setattr(source_sync_module.settings, "effective", fake_effective)
+    monkeypatch.setattr(source_sync_module.settings, "get", fake_get)
+    monkeypatch.setattr(source_sync_module, "resolve_ingest_config", fake_resolve)
+    monkeypatch.setattr(source_sync_module.env, "data_dir", tmp_path / "data")
+
+    boot = await source_sync_module.ensure_repository_corpus()
+    assert boot is not None
+    assert boot["collection"]["default_search"] is False
+    assert boot["source"]["source_type"] == "repository"
+
+    stats = await source_sync_module.sync_collection_source(str(boot["source"]["id"]))
+    assert stats["new"] == 1
+
+    async with live_db.pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT source_path, status, meta FROM documents WHERE source_id=%s",
+                (boot["source"]["id"],),
+            )
+        ).fetchone()
+    assert row["source_path"] == "sample.py"
+    assert row["status"] == "staged"
+    assert row["meta"]["source_type"] == "repository"
+    assert row["meta"]["repository_commit"] == commit
+    assert row["meta"]["repository_path"] == "sample.py"

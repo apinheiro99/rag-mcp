@@ -243,3 +243,39 @@ def test_mobi_family_reports_missing_parser(tmp_path, monkeypatch):
     monkeypatch.setattr("app.extraction.shutil.which", lambda _: None)
     with pytest.raises(ExtractionError, match="mobitool"):
         extract(p, p.name)
+
+
+def test_extract_python_source_preserves_symbols_and_lines(tmp_path):
+    p = tmp_path / "sample.py"
+    p.write_text(
+        '"""module docs"""\n\n'
+        '@decorator\n'
+        'def alpha(x):\n'
+        '    return x + 1\n\n'
+        'class Beta:\n'
+        '    def method(self):\n'
+        '        return 2\n',
+        encoding="utf-8",
+    )
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "source_code"
+    assert doc.meta["language"] == "python"
+    symbols = [seg.loc["symbol"] for seg in doc.segments]
+    assert symbols == ["<module>", "alpha", "Beta"]
+    alpha = doc.segments[1]
+    assert alpha.loc["line_start"] == 3
+    assert alpha.loc["line_end"] == 5
+    assert "@decorator" in alpha.text
+
+
+def test_extract_javascript_source_preserves_symbol_blocks(tmp_path):
+    p = tmp_path / "sample.js"
+    p.write_text(
+        "import x from 'x';\n\n"
+        "export function alpha() { return 1; }\n"
+        "const beta = () => 2;\n",
+        encoding="utf-8",
+    )
+    doc = extract(p, p.name)
+    assert doc.meta["kind"] == "source_code"
+    assert [seg.loc["symbol"] for seg in doc.segments] == ["<module>", "alpha", "beta"]

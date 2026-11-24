@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS collection_sources (
 );
 CREATE INDEX IF NOT EXISTS collection_sources_due_idx
     ON collection_sources(enabled, next_sync_at);
+ALTER TABLE collection_sources ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'directory';
 
 -- status: staged | pending | extracting | chunking | embedding | waiting | ready | error
 CREATE TABLE IF NOT EXISTS documents (
