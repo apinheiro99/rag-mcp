@@ -1056,7 +1056,7 @@ async def test_core_collection_default_search_policy(live_db, monkeypatch):
 
     # Isolate this policy check from legacy shelves by precreating only core names.
     async with live_db.pool.connection() as conn:
-        for name in ("Computer Books", "Knowledge Base", "RAG Source Code"):
+        for name in ("Informática", "Knowledge Base", "RAG Source Code"):
             await conn.execute(
                 """INSERT INTO collections(id,name,ingest_config,default_search)
                    VALUES (%s,%s,'{}'::jsonb,true)
@@ -1065,7 +1065,7 @@ async def test_core_collection_default_search_policy(live_db, monkeypatch):
             )
 
     result = await taxonomy.ensure_core_collections(live_db, FakeSettings())
-    assert result["collections"]["Computer Books"]["default_search"] is True
+    assert result["collections"]["Informática"]["default_search"] is True
     assert result["collections"]["Knowledge Base"]["default_search"] is False
     assert result["collections"]["RAG Source Code"]["default_search"] is False
 
@@ -1200,7 +1200,7 @@ async def test_automatic_book_import_targets_computer_books(live_db, monkeypatch
         await conn.execute(
             """INSERT INTO collections(
                    id,name,description,ingest_config,default_search,embedding_model)
-               VALUES (%s,'Computer Books','books','{}'::jsonb,true,%s)
+               VALUES (%s,'Informática','books','{}'::jsonb,true,%s)
                ON CONFLICT (name) DO NOTHING""",
             (uuid.uuid4(), "text-embedding-qwen3-embedding-8b"),
         )
@@ -1208,7 +1208,7 @@ async def test_automatic_book_import_targets_computer_books(live_db, monkeypatch
     monkeypatch.setattr(api_for_auto, "db", live_db)
     monkeypatch.setattr(api_for_auto, "settings", FakeSettings())
     inbox = await api_for_auto._ensure_auto_inbox()
-    assert inbox["name"] == "Computer Books"
+    assert inbox["name"] == "Informática"
     assert inbox["default_search"] is True
 
 
@@ -1236,14 +1236,14 @@ async def test_auto_category_applies_only_above_configured_confidence(live_db, m
         await conn.execute(
             """INSERT INTO collections(
                    id,name,ingest_config,default_search,embedding_model,embedding_dim)
-               VALUES (%s,'Computer Books','{}'::jsonb,true,%s,4096)
+               VALUES (%s,'Informática','{}'::jsonb,true,%s,4096)
                ON CONFLICT (name) DO UPDATE SET embedding_model=EXCLUDED.embedding_model,
                  embedding_dim=EXCLUDED.embedding_dim
                RETURNING id""",
             (books_id, model),
         )
         books = await (
-            await conn.execute("SELECT id FROM collections WHERE name='Computer Books'")
+            await conn.execute("SELECT id FROM collections WHERE name='Informática'")
         ).fetchone()
         books_id = books["id"]
         await conn.execute(
@@ -1316,13 +1316,13 @@ async def test_classification_runtime_uses_embedding_model_and_categories(live_d
         await conn.execute(
             """INSERT INTO collections(
                    id,name,description,ingest_config,embedding_model,embedding_dim)
-               VALUES (%s,'Computer Books','test','{}'::jsonb,%s,4096)
+               VALUES (%s,'Informática','test','{}'::jsonb,%s,4096)
                ON CONFLICT (name) DO UPDATE SET embedding_model=EXCLUDED.embedding_model,
                  embedding_dim=EXCLUDED.embedding_dim""",
             (books_id, "text-embedding-qwen3-embedding-8b"),
         )
         books = await (
-            await conn.execute("SELECT id FROM collections WHERE name='Computer Books'")
+            await conn.execute("SELECT id FROM collections WHERE name='Informática'")
         ).fetchone()
         books_id = books["id"]
         await conn.execute(
@@ -1647,7 +1647,9 @@ async def test_repository_corpus_bootstrap_and_sync_preserve_git_provenance(
 
 
 @pytest.mark.asyncio
-async def test_core_collection_migration_converts_legacy_shelves_to_categories(live_db, monkeypatch):
+async def test_core_collection_migration_consolidates_legacy_shelves_without_inferred_categories(
+    live_db, monkeypatch
+):
     import app.library_taxonomy as taxonomy
 
     legacy_id = uuid.uuid4()
@@ -1656,6 +1658,7 @@ async def test_core_collection_migration_converts_legacy_shelves_to_categories(l
     digest = uuid.uuid4().hex
 
     async with live_db.pool.connection() as conn:
+        await conn.execute("DELETE FROM settings WHERE key='library_taxonomy_version'")
         await conn.execute(
             """INSERT INTO collections(id,name,description,ingest_config,default_search)
                VALUES (%s,'Legacy Python','Old shelf','{}'::jsonb,true)""",
@@ -1685,22 +1688,24 @@ async def test_core_collection_migration_converts_legacy_shelves_to_categories(l
         async def get(self, key, default=None):
             return "integration-embedding" if key == "embedding_model" else default
 
-    monkeypatch.setattr(taxonomy, "db", live_db)
-    monkeypatch.setattr(taxonomy, "settings", FakeSettings())
-
-    result = await taxonomy.ensure_core_collections()
-    books_id = result["collections"][taxonomy.COMPUTER_BOOKS]["id"]
+    result = await taxonomy.ensure_core_collections(
+        live_db, FakeSettings(), apply_migration=True
+    )
+    books_id = result["collections"][taxonomy.BOOK_LIBRARY]["id"]
 
     async with live_db.pool.connection() as conn:
-        collections = await (
-            await conn.execute("SELECT name FROM collections ORDER BY name")
-        ).fetchall()
-        category = await (
+        inferred = await (
             await conn.execute(
-                "SELECT id,name FROM categories WHERE collection_id=%s AND name='Legacy Python'",
+                "SELECT id FROM categories WHERE collection_id=%s AND name='Legacy Python'",
                 (books_id,),
             )
         ).fetchone()
+        categories = await (
+            await conn.execute(
+                "SELECT name FROM categories WHERE collection_id=%s ORDER BY name",
+                (books_id,),
+            )
+        ).fetchall()
         doc = await (
             await conn.execute(
                 "SELECT collection_id,category_id FROM documents WHERE id=%s", (doc_id,)
@@ -1712,13 +1717,71 @@ async def test_core_collection_migration_converts_legacy_shelves_to_categories(l
             )
         ).fetchone()
 
-    assert [x["name"] for x in collections] == [
-        "Computer Books", "Knowledge Base", "RAG Source Code"
+    assert inferred is None
+    assert [x["name"] for x in categories] == [
+        "AI & RAG", "Data & Databases", "Software Engineering"
     ]
-    assert category is not None
     assert doc["collection_id"] == books_id
-    assert doc["category_id"] == category["id"]
+    assert doc["category_id"] is None
     assert chunk["collection_id"] == books_id
+
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            """INSERT INTO categories(id,collection_id,name,description)
+               VALUES (%s,%s,'Economics','Economics books.')""",
+            (uuid.uuid4(), books_id),
+        )
+    again = await taxonomy.ensure_core_collections(
+        live_db, FakeSettings(), apply_migration=True
+    )
+    assert again["taxonomy_reset"] is False
+    async with live_db.pool.connection() as conn:
+        custom = await (
+            await conn.execute(
+                "SELECT id FROM categories WHERE collection_id=%s AND name='Economics'",
+                (books_id,),
+            )
+        ).fetchone()
+    assert custom is not None
+
+
+@pytest.mark.asyncio
+async def test_bad_v1_computer_books_name_is_repaired_not_kept_as_category(live_db):
+    import app.library_taxonomy as taxonomy
+
+    async with live_db.pool.connection() as conn:
+        await conn.execute("DELETE FROM settings WHERE key='library_taxonomy_version'")
+        canonical = await (
+            await conn.execute("SELECT id FROM collections WHERE name='Informática'")
+        ).fetchone()
+        if canonical:
+            await conn.execute("DELETE FROM documents WHERE collection_id=%s", (canonical["id"],))
+            await conn.execute("DELETE FROM collections WHERE id=%s", (canonical["id"],))
+        await conn.execute(
+            """INSERT INTO collections(id,name,description,ingest_config,default_search)
+               VALUES (%s,'Computer Books','bad v1 name','{}'::jsonb,true)
+               ON CONFLICT (name) DO NOTHING""",
+            (uuid.uuid4(),),
+        )
+
+    class FakeSettings:
+        async def effective(self):
+            return {"ingest": {"chunk_size":1500,"chunk_overlap":200,"min_chunk_size":120,
+                "strategy":"recursive","separators":["\n\n","\n",". "," "],"embed_batch_size":16}}
+        async def get(self, key, default=None):
+            return "integration-embedding" if key == "embedding_model" else default
+
+    await taxonomy.ensure_core_collections(live_db, FakeSettings(), apply_migration=True)
+    async with live_db.pool.connection() as conn:
+        names = [r["name"] for r in await (
+            await conn.execute("SELECT name FROM collections ORDER BY name")
+        ).fetchall()]
+        bad_category = await (
+            await conn.execute("SELECT id FROM categories WHERE name='Computer Books'")
+        ).fetchone()
+    assert "Informática" in names
+    assert "Computer Books" not in names
+    assert bad_category is None
 
 
 @pytest.mark.asyncio

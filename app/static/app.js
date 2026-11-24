@@ -295,7 +295,7 @@ async function refreshStaged() {
   let colId = $("importCollection").value;
   if (!colId) { $("stagedCount").textContent = ""; return; }
   if (colId === "__auto__") {
-    const books = state.collections.find((c) => c.name === "Computer Books");
+    const books = state.collections.find((c) => c.name === "Informática");
     if (!books) return;
     colId = books.id;
   }
@@ -1066,7 +1066,7 @@ async function loadSettingsTab() {
   await loadModels(false);
 }
 async function loadBookCategories() {
-  const books = state.collections.find((c) => c.name === "Computer Books");
+  const books = state.collections.find((c) => c.name === "Informática");
   if (!books) return;
   try {
     const data = await api(`/api/categories?collection_id=${books.id}`);
@@ -1087,7 +1087,7 @@ async function loadBookCategories() {
 }
 
 async function createBookCategory() {
-  const books = state.collections.find((c) => c.name === "Computer Books");
+  const books = state.collections.find((c) => c.name === "Informática");
   const name = $("newCategoryName")?.value.trim();
   const description = $("newCategoryDescription")?.value.trim() || "";
   if (!books || !name) return toast("Enter a category name", true);
@@ -1112,7 +1112,7 @@ async function renameBookCategory(id, current) {
 }
 
 async function deleteBookCategory(id, name) {
-  if (!(await askAction("Delete category", `Delete '${name}'? Its books remain in Computer Books as Uncategorized.`, "Delete", true))) return;
+  if (!(await askAction("Delete category", `Delete '${name}'? Its books remain in Informática as Uncategorized.`, "Delete", true))) return;
   try {
     await api(`/api/categories/${id}`, { method: "DELETE" });
     await loadBookCategories();

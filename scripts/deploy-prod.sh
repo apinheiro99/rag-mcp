@@ -104,6 +104,44 @@ wait_app_ready() {
   return 1
 }
 
+
+wait_system_quiescent() {
+  required="${RAG_DEPLOY_QUIESCENT_CHECKS:-3}"
+  attempts="${RAG_DEPLOY_QUIESCENT_ATTEMPTS:-60}"
+  interval="${RAG_DEPLOY_QUIESCENT_INTERVAL_SECONDS:-2}"
+  consecutive=0
+  for attempt in $(seq 1 "$attempts"); do
+    health_json="$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)"
+    idle=false
+    if [ -n "$health_json" ]; then
+      idle="$(printf '%s' "$health_json" | python3 -c '
+import json,sys
+h=json.load(sys.stdin)
+idle=(
+    h.get("status")=="ok"
+    and not h.get("worker",{}).get("current_document")
+    and not h.get("classification_worker",{}).get("current_document")
+    and not h.get("source_worker",{}).get("current_source")
+    and not h.get("graph_worker",{}).get("current_document")
+    and int(h.get("model_runtime",{}).get("queued",0) or 0)==0
+    and not h.get("model_runtime",{}).get("current_job")
+)
+print("true" if idle else "false")
+' 2>/dev/null || echo false)"
+    fi
+    if [ "$idle" = true ]; then
+      consecutive=$((consecutive + 1))
+      if [ "$consecutive" -ge "$required" ]; then
+        return 0
+      fi
+    else
+      consecutive=0
+    fi
+    sleep "$interval"
+  done
+  return 1
+}
+
 ROLLBACK_ARMED=false
 rollback_on_failure() {
   status=$?
@@ -137,6 +175,9 @@ ROLLBACK_ARMED=true
 docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
 wait_app_ready "$CI_COMMIT_SHA" || { echo "application readiness failed: $HEALTH_URL did not report commit $CI_COMMIT_SHA" >&2; exit 1; }
 
+# Data migrations are explicit deploy steps, never application-startup side effects.
+docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app   python /srv/rag/scripts/migrate_library_taxonomy.py
+
 if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   TUNNEL_READY=false
   for attempt in $(seq 1 30); do
@@ -149,12 +190,18 @@ if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   [ "$TUNNEL_READY" = true ] || { echo "secure MCP tunnel did not become ready" >&2; exit 1; }
 fi
 
+wait_system_quiescent || {
+  echo "system did not reach a stable idle state before performance validation" >&2
+  exit 1
+}
+
 EVAL_ARGS=(
   python /srv/rag/scripts/evaluate_retrieval.py
   --url http://127.0.0.1:8000/mcp
   --cases /srv/rag/examples/evaluation/retrieval.json
   --output /tmp/rag-retrieval-eval.json
   --k 5 --min-recall 0.80 --min-mrr 0.60 --max-avg-ms 1500
+  --warmup-rounds "${RAG_DEPLOY_WARMUP_ROUNDS:-1}"
 )
 if [ -n "${RAG_API_TOKEN:-}" ]; then
   EVAL_ARGS+=(--bearer-token "$RAG_API_TOKEN")
