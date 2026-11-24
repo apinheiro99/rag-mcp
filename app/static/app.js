@@ -265,7 +265,7 @@ function uploadFiles(items) {
     await refreshStaged(); await loadCollections();
     const parts = [];
     if (data.queued && data.route_mode === "manual_destination") parts.push(`${data.queued} queued for ingestion in ${data.destination_collection} (manual destination)`);
-    if (data.queued && data.route_mode === "automatic_classification") parts.push(`${data.queued} queued for ingestion; AI classification follows indexing`);
+    if (data.queued && data.route_mode === "automatic_classification") parts.push(`${data.queued} queued for ingestion; embedding classification follows indexing`);
     if (data.auto_classifying) parts.push(`${data.auto_classifying} automatic classification job(s)`);
     else if (data.staged) parts.push(`${data.staged} awaiting configuration`);
     if (data.duplicates) parts.push(`${data.duplicates} duplicate(s) skipped`);
@@ -647,13 +647,13 @@ function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout
 function docsPage(dir) { state.docsOffset = Math.max(0, state.docsOffset + dir * state.docsLimit); loadDocuments(); }
 function classificationSummary(d) {
   const queued = d.meta?.auto_classify && !d.auto_suggestion;
-  if (queued) return `<span class="badge pending">AI queued</span>`;
+  if (queued) return `<span class="badge pending">Classification queued</span>`;
   const s = d.auto_suggestion;
   if (!s) return `<span class="muted small">—</span>`;
-  if (s.status === "classification_error") return `<span class="small" style="color:var(--red)">AI error · ${esc(s.error || "")}</span>`;
+  if (s.status === "classification_error") return `<span class="small" style="color:var(--red)">Classification error · ${esc(s.error || "")}</span>`;
   const dest = s.routed_to || s.existing_collection || s.proposed_collection?.name || "review";
   const confidence = Math.round((Number(s.confidence) || 0) * 100);
-  const prefix = s.auto_applied ? "AI ✓" : "AI review";
+  const prefix = s.auto_applied ? "Classified ✓" : "Review";
   return `<span class="small ${s.auto_applied ? "" : "muted"}">${prefix} · ${esc(dest)} · ${confidence}%</span>`;
 }
 function updateDocsSelectionUI() {
@@ -763,7 +763,7 @@ async function loadDocuments(){
     state.currentDocIds = data.items.map((d) => d.id);
     state.docsHasPendingAI = data.items.some((d) => d.meta?.auto_classify && !d.auto_suggestion);
     $("docsTable").innerHTML = `<table><thead><tr>
-      <th></th><th>Document</th><th>Collection</th><th>Status</th><th>AI classification</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
+      <th></th><th>Document</th><th>Collection</th><th>Status</th><th>Classification</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
     </tr></thead><tbody>` + data.items.map((d) => {
       const pct = d.chunks_total ? Math.round((d.chunks_embedded / d.chunks_total) * 100) : 0;
       const selected = state.selectedDocs.has(d.id) ? "checked" : "";
