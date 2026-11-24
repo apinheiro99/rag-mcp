@@ -976,6 +976,9 @@ async function doSearch() {
         <span>rerank <b>${Math.round(Number(r.rerank?.duration_ms || 0))} ms</b></span>
         <span>hybrid <b>${r.retrieval?.hybrid ? "yes" : "no"}</b></span>
         <span>lexical fallback <b>${esc(r.retrieval?.lexical_skipped_reason || (r.retrieval?.hybrid ? "used" : "—"))}</b></span>
+        <span>usefulness <b>${Number(r.retrieval?.usefulness?.score || 0).toFixed(3)}</b></span>
+        <span>top-k <b>${r.retrieval?.effective_top_k ?? "—"}/${r.retrieval?.requested_top_k ?? "—"}</b></span>
+        <span>context <b>~${r.retrieval?.token_cost?.returned_context_tokens ?? 0} tokens</b></span>
       </div>`;
     $("evidenceGraph").classList.remove("hidden");
     const edges = graph.edges || [];
@@ -998,6 +1001,7 @@ async function doSearch() {
         <div class="result-loc">${esc(x.collection)}${x.location_label ? " · " + esc(x.location_label) : ""} · chunk #${x.chunk_seq}</div>
         <div class="result-content">${esc(x.content)}</div>
         <div class="result-meta">doc: ${esc(x.document)} · id: <code>${esc(x.document_id)}</code>${x.metadata?.title ? " · " + esc(x.metadata.title) : ""}</div>
+        <div class="result-meta">why: ${esc(x.selection?.reason || "retrieval ranking")}</div>
       </div>`).join("");
     await loadSearchMetrics();
   } catch (e) { $("searchResults").innerHTML = ""; toast(e.message, true); }
@@ -1017,6 +1021,9 @@ async function loadSearchMetrics() {
       `<span>embedding <b>${s.avg_embedding_ms ?? "—"} ms</b></span>`,
       `<span>DB <b>${s.avg_db_ms ?? "—"} ms</b></span>`,
       `<span>average top score <b>${s.avg_top_score ?? "—"}</b></span>`,
+      `<span>usefulness <b>${s.avg_usefulness_score ?? "—"}</b></span>`,
+      `<span>model input <b>~${s.avg_model_input_tokens ?? "—"} tokens</b></span>`,
+      `<span>returned context <b>~${s.avg_returned_context_tokens ?? "—"} tokens</b></span>`,
     ];
     let html = `<div class="row wrap">${parts.join("")}</div>`;
     if (recent.length) {

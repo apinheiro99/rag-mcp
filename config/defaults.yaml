@@ -36,6 +36,13 @@ search:
   adaptive_enabled: true
   adaptive_min_rerank_score: 0.45
   adaptive_candidate_limit: 24
+  adaptive_top_k_enabled: true
+  adaptive_top_k_min: 3
+  adaptive_top_k_max: 8
+  adaptive_top_k_min_score: 0.55
+  adaptive_top_k_gap: 0.18
+  usefulness_min_score: 0.55
+  usefulness_min_content_tokens: 40
   binary_hnsw_enabled: true
   binary_candidate_multiplier: 8
   hnsw_ef_search: 64        # qualidade/velocidade do índice HNSW

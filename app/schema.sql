@@ -134,6 +134,10 @@ CREATE INDEX IF NOT EXISTS chunks_content_english_fts_idx
 ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS dense_ms DOUBLE PRECISION;
 ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS lexical_ms DOUBLE PRECISION;
 ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS heading_ms DOUBLE PRECISION;
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS usefulness_score DOUBLE PRECISION;
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS effective_top_k INT;
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS estimated_model_input_tokens INT;
+ALTER TABLE retrieval_events ADD COLUMN IF NOT EXISTS returned_context_tokens INT;
 
 -- Persistent CPU evidence graph: deterministic named-concept mentions per chunk.
 CREATE TABLE IF NOT EXISTS graph_mentions (
