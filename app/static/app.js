@@ -15,6 +15,7 @@ let state = {
   collections: [], sources: [], events: [], models: [], settings: {}, effective: null,
   mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
   pollTick: 0, lastActive: 0, uploading: false,
+  selectedDocs: new Set(), currentDocIds: [], docsHasPendingAI: false, activeTab: "dashboard",
 };
 
 /* ---------------- infra ---------------- */
@@ -46,7 +47,11 @@ const fmtBytes = (n) => { if (!n && n !== 0) return "—"; const u = ["B", "KB",
 const fmtDate = (s) => s ? new Date(s).toLocaleString("en-US", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
 
-function showTab(name) {
+function showTab(name, { persist = true } = {}) {
+  const valid = ["dashboard", "import", "documents", "search", "settings"];
+  if (!valid.includes(name)) name = "dashboard";
+  state.activeTab = name;
+  if (persist) localStorage.setItem("rag_active_tab", name);
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   if (name === "documents") loadDocuments();
@@ -70,7 +75,7 @@ function fillCollectionSelects() {
   const prev = imp.value;
   const autoOption = state.settings.llm_model
     ? `<option value="__auto__">✨ Automatic classification</option>`
-    : "";
+    : `<option value="__auto__" disabled>✨ Automatic classification — configure LLM first</option>`;
   imp.innerHTML = autoOption + (opts || `<option value="">— create a collection —</option>`);
   if (prev === "__auto__" && state.settings.llm_model) imp.value = prev;
   else if (prev && state.collections.some((c) => c.id === prev)) imp.value = prev;
@@ -230,8 +235,9 @@ function uploadFiles(items) {
     renderUploadResults(data);
     await refreshStaged(); await loadCollections();
     const parts = [];
-    if (data.queued) parts.push(`${data.queued} queued automatically`);
-    if (data.auto_classifying) parts.push(`${data.auto_classifying} queued for automatic classification`);
+    if (data.queued && data.route_mode === "manual_destination") parts.push(`${data.queued} queued for ingestion in ${data.destination_collection} (manual destination)`);
+    if (data.queued && data.route_mode === "automatic_classification") parts.push(`${data.queued} queued for ingestion; AI classification follows indexing`);
+    if (data.auto_classifying) parts.push(`${data.auto_classifying} automatic classification job(s)`);
     else if (data.staged) parts.push(`${data.staged} awaiting configuration`);
     if (data.duplicates) parts.push(`${data.duplicates} duplicate(s) skipped`);
     if (data.ignored_empty) parts.push(`${data.ignored_empty} empty file(s) skipped`);
@@ -557,6 +563,61 @@ async function deleteSource(id) {
 let docsDebounce = null;
 function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout(loadDocuments, 350); }
 function docsPage(dir) { state.docsOffset = Math.max(0, state.docsOffset + dir * state.docsLimit); loadDocuments(); }
+function classificationSummary(d) {
+  const queued = d.meta?.auto_classify && !d.auto_suggestion;
+  if (queued) return `<span class="badge pending">AI queued</span>`;
+  const s = d.auto_suggestion;
+  if (!s) return `<span class="muted small">—</span>`;
+  if (s.status === "classification_error") return `<span class="small" style="color:var(--red)">AI error · ${esc(s.error || "")}</span>`;
+  const dest = s.routed_to || s.existing_collection || s.proposed_collection?.name || "review";
+  const confidence = Math.round((Number(s.confidence) || 0) * 100);
+  const prefix = s.auto_applied ? "AI ✓" : "AI review";
+  return `<span class="small ${s.auto_applied ? "" : "muted"}">${prefix} · ${esc(dest)} · ${confidence}%</span>`;
+}
+function updateDocsSelectionUI() {
+  const count = state.selectedDocs.size;
+  const label = $("docsSelectedCount");
+  const btn = $("btnBulkClassifySelected");
+  if (label) label.textContent = `${count} selected`;
+  if (btn) btn.disabled = count === 0;
+  const page = $("docsSelectPage");
+  if (page) {
+    const ids = state.currentDocIds || [];
+    page.checked = ids.length > 0 && ids.every((id) => state.selectedDocs.has(id));
+    page.indeterminate = ids.some((id) => state.selectedDocs.has(id)) && !page.checked;
+  }
+}
+function toggleDocSelection(id, checked) {
+  if (checked) state.selectedDocs.add(id); else state.selectedDocs.delete(id);
+  updateDocsSelectionUI();
+}
+function toggleDocsPage(checked) {
+  for (const id of state.currentDocIds || []) {
+    if (checked) state.selectedDocs.add(id); else state.selectedDocs.delete(id);
+  }
+  document.querySelectorAll(".doc-select").forEach((el) => { el.checked = checked; });
+  updateDocsSelectionUI();
+}
+async function queueBulkClassification(body, label) {
+  try {
+    const r = await api("/api/documents/classify-bulk", { method: "POST", body });
+    state.selectedDocs.clear();
+    updateDocsSelectionUI();
+    await loadDocuments();
+    toast(r.queued ? `${r.queued} document(s) queued for AI reclassification` : `No indexed documents matched ${label}`);
+  } catch (e) { toast(e.message, true); }
+}
+async function bulkClassifySelected() {
+  const ids = [...state.selectedDocs];
+  if (!ids.length) return;
+  await queueBulkClassification({ document_ids: ids }, "the selection");
+}
+async function bulkClassifyFiltered() {
+  const collectionId = $("docFilterCollection").value || null;
+  const q = $("docSearch").value.trim() || null;
+  const scope = collectionId || q ? "the current filters" : "the entire indexed library";
+  await queueBulkClassification({ all_filtered: true, collection_id: collectionId, q }, scope);
+}
 async function loadDocuments() {
   const params = new URLSearchParams({ limit: state.docsLimit, offset: state.docsOffset });
   if ($("docFilterCollection").value) params.set("collection_id", $("docFilterCollection").value);
@@ -567,14 +628,19 @@ async function loadDocuments() {
     $("docsTotal").textContent = `${data.total} document(s) · page ${Math.floor(state.docsOffset / state.docsLimit) + 1}`;
     $("docsPrev").disabled = state.docsOffset === 0;
     $("docsNext").disabled = state.docsOffset + state.docsLimit >= data.total;
+    state.currentDocIds = data.items.map((d) => d.id);
+    state.docsHasPendingAI = data.items.some((d) => d.meta?.auto_classify && !d.auto_suggestion);
     $("docsTable").innerHTML = `<table><thead><tr>
-      <th>Document</th><th>Collection</th><th>Status</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
+      <th></th><th>Document</th><th>Collection</th><th>Status</th><th>AI classification</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
     </tr></thead><tbody>` + data.items.map((d) => {
       const pct = d.chunks_total ? Math.round((d.chunks_embedded / d.chunks_total) * 100) : 0;
+      const selected = state.selectedDocs.has(d.id) ? "checked" : "";
       return `<tr>
+        <td><input type="checkbox" class="doc-select" ${selected} onchange="toggleDocSelection('${d.id}', this.checked)"></td>
         <td><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></td>
         <td>${esc(d.collection)}</td>
         <td>${badge(d.status)}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
+        <td>${classificationSummary(d)}</td>
         <td>${d.chunks_total ? `<span class="mini-progress"><div style="width:${pct}%"></div></span> <span class="small muted">${d.chunks_embedded}/${d.chunks_total}</span>` : "—"}</td>
         <td class="small muted">${fmtBytes(d.size_bytes)}</td>
         <td class="small muted">${fmtDate(d.updated_at)}</td>
@@ -589,6 +655,7 @@ async function loadDocuments() {
         </div></td>
       </tr>`;
     }).join("") + `</tbody></table>`;
+    updateDocsSelectionUI();
   } catch (e) { toast(e.message, true); }
 }
 async function retryDoc(id) { try { await api(`/api/documents/${id}/retry`, { method: "POST" }); toast("Document requeued"); loadDocuments(); } catch (e) { toast(e.message, true); } }
@@ -854,6 +921,11 @@ async function saveOverrides() {
   } catch (e) { $("overridesMsg").innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`; }
 }
 
+async function pollDocumentsClassification() {
+  if (state.activeTab !== "documents" || !state.docsHasPendingAI) return;
+  await loadDocuments();
+}
+
 /* ---------------- dev live reload ---------------- */
 let devReloadToken = null;
 async function pollDevReload() {
@@ -885,7 +957,9 @@ async function pollDevReload() {
     refreshStaged();
     pollStatus();
     pollHealth();
+    showTab(localStorage.getItem("rag_active_tab") || "dashboard", { persist: false });
     setInterval(pollStatus, 1500);
+    setInterval(pollDocumentsClassification, 2000);
     setInterval(pollHealth, 60000);
     setInterval(() => loadModels(false), 10 * 60 * 1000);
   } catch (e) {

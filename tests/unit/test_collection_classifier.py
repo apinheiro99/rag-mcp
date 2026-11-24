@@ -1,6 +1,6 @@
 import pytest
 
-from app.collection_classifier import parse_json_object, validate_classification
+from app.collection_classifier import parse_json_object, representative_sample, validate_classification
 
 COLLECTIONS = [
     {"name": "Python", "description": "Python books", "doc_count": 4},
@@ -37,3 +37,16 @@ def test_validate_promotes_duplicate_proposal_to_existing():
     }, COLLECTIONS)
     assert result["existing_collection"] == "Python"
     assert result["proposed_collection"] is None
+
+
+def test_representative_sample_spreads_across_document():
+    text = "BEGIN_MARKER " + ("a" * 3000) + " MIDDLE_MARKER " + ("b" * 3000) + " END_MARKER"
+    sample = representative_sample(text, 900)
+    assert "BEGIN_MARKER" in sample
+    assert "MIDDLE_MARKER" in sample
+    assert "END_MARKER" in sample
+    assert "[BEGIN]" in sample and "[MIDDLE]" in sample and "[END]" in sample
+
+
+def test_representative_sample_returns_short_text_unchanged():
+    assert representative_sample("short content", 900) == "short content"

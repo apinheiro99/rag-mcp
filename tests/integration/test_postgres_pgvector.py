@@ -1370,3 +1370,52 @@ async def test_classification_runtime_queues_llm_and_keeps_profile_resident(live
     assert captured["requirements"][0].model == "google/gemma-4-12b-qat"
     assert captured["requirements"][0].context_length == 8192
     assert captured["release_after"] is False
+
+
+@pytest.mark.asyncio
+async def test_bulk_classification_queues_only_ready_documents(live_db, monkeypatch):
+    import app.api as api_module
+
+    class FakeSettings:
+        async def get(self, key, default=None):
+            return "google/gemma-test" if key == "llm_model" else default
+
+    monkeypatch.setattr(api_module, "db", live_db)
+    monkeypatch.setattr(api_module, "settings", FakeSettings())
+
+    collection_id = uuid.uuid4()
+    ready_id = uuid.uuid4()
+    pending_id = uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO collections(id,name,ingest_config) VALUES (%s,%s,'{}'::jsonb)",
+            (collection_id, f"Bulk-{collection_id}"),
+        )
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status,auto_suggestion,meta)
+               VALUES (%s,%s,'ready.txt','ready.txt','blobs/ready',%s,10,'ready','{"confidence":0.5}'::jsonb,'{"auto_classify_attempts":2}'::jsonb)""",
+            (ready_id, collection_id, "d" * 64),
+        )
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,content_sha256,size_bytes,status,meta)
+               VALUES (%s,%s,'pending.txt','pending.txt','blobs/pending',%s,10,'pending','{}'::jsonb)""",
+            (pending_id, collection_id, "e" * 64),
+        )
+
+    result = await api_module.classify_documents_bulk(
+        api_module.BulkClassifyRequest(all_filtered=True, collection_id=str(collection_id))
+    )
+    assert result["queued"] == 1
+    assert result["document_ids"] == [str(ready_id)]
+
+    async with live_db.pool.connection() as conn:
+        ready = await (await conn.execute(
+            "SELECT auto_suggestion,meta FROM documents WHERE id=%s", (ready_id,)
+        )).fetchone()
+        pending = await (await conn.execute(
+            "SELECT meta FROM documents WHERE id=%s", (pending_id,)
+        )).fetchone()
+    assert ready["auto_suggestion"] is None
+    assert ready["meta"]["auto_classify"] is True
+    assert "auto_classify_attempts" not in ready["meta"]
+    assert pending["meta"].get("auto_classify") is not True
