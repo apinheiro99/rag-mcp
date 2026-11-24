@@ -60,7 +60,6 @@ async def wait_ready(url: str, timeout_seconds: float) -> None:
 async def stress(args: argparse.Namespace) -> dict:
     await wait_ready(args.url, args.startup_timeout)
     queries = json.loads(Path(args.queries).read_text()) if args.queries else DEFAULT_QUERIES
-    expanded = [queries[i % len(queries)] for i in range(args.requests)]
     semaphore = asyncio.Semaphore(args.concurrency)
     rows: list[dict] = []
     headers = {"Authorization": f"Bearer {args.bearer_token}"} if args.bearer_token else None
@@ -105,7 +104,21 @@ async def stress(args: argparse.Namespace) -> dict:
                         })
 
             started = time.perf_counter()
-            await asyncio.gather(*(one(i, q) for i, q in enumerate(expanded)))
+            if args.duration_seconds > 0:
+                deadline = time.monotonic() + args.duration_seconds
+                counter = 0
+
+                async def soak_worker(worker_id: int) -> None:
+                    nonlocal counter
+                    while time.monotonic() < deadline:
+                        index = counter
+                        counter += 1
+                        await one(index, queries[index % len(queries)])
+
+                await asyncio.gather(*(soak_worker(i) for i in range(args.concurrency)))
+            else:
+                expanded = [queries[i % len(queries)] for i in range(args.requests)]
+                await asyncio.gather(*(one(i, q) for i, q in enumerate(expanded)))
             total_wall_ms = (time.perf_counter() - started) * 1000
 
     ok = [row for row in rows if row["ok"]]
@@ -131,11 +144,34 @@ async def stress(args: argparse.Namespace) -> dict:
         "avg_embedding_ms": round(statistics.mean(row["embedding_ms"] for row in ok), 2) if ok else 0,
         "avg_rerank_ms": round(statistics.mean(row["rerank_ms"] for row in ok), 2) if ok else 0,
     }
-    output = {"summary": summary, "errors": [row for row in rows if not row["ok"]]}
+    failures = []
+    error_rate = (summary["errors"] / summary["requests"]) if summary["requests"] else 1.0
+    if error_rate > args.max_error_rate:
+        failures.append(f"error_rate {error_rate:.4f} > {args.max_error_rate:.4f}")
+    if summary["latency_ms"]["p99"] > args.max_p99_ms:
+        failures.append(f"p99 {summary['latency_ms']['p99']:.1f}ms > {args.max_p99_ms:.1f}ms")
+    if summary["throughput_rps"] < args.min_throughput_rps:
+        failures.append(f"throughput {summary['throughput_rps']:.2f} < {args.min_throughput_rps:.2f} req/s")
+    if summary["zero_results"]:
+        failures.append(f"zero_results {summary['zero_results']} > 0")
+    if summary["trace_ids"] != summary["success"]:
+        failures.append("missing trace_id on one or more successful requests")
+
+    output = {
+        "summary": summary,
+        "gates": {
+            "max_error_rate": args.max_error_rate,
+            "max_p99_ms": args.max_p99_ms,
+            "min_throughput_rps": args.min_throughput_rps,
+            "passed": not failures,
+            "failures": failures,
+        },
+        "errors": [row for row in rows if not row["ok"]],
+    }
     if args.output:
         Path(args.output).write_text(json.dumps(output, indent=2))
     print(json.dumps(output, indent=2))
-    if summary["errors"] or summary["zero_results"]:
+    if failures:
         raise SystemExit(2)
 
 
@@ -143,6 +179,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True)
     parser.add_argument("--requests", type=int, default=64)
+    parser.add_argument("--duration-seconds", type=float, default=0, help="soak mode when > 0")
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=30)
@@ -150,6 +187,9 @@ def main() -> None:
     parser.add_argument("--queries")
     parser.add_argument("--output")
     parser.add_argument("--bearer-token")
+    parser.add_argument("--max-error-rate", type=float, default=0.0)
+    parser.add_argument("--max-p99-ms", type=float, default=float("inf"))
+    parser.add_argument("--min-throughput-rps", type=float, default=0.0)
     asyncio.run(stress(parser.parse_args()))
 
 
