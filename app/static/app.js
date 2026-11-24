@@ -524,30 +524,69 @@ async function loadCollectionSources() {
         ? `last ${fmtDate(s.last_sync_at)} · +${stats.new || 0} ~${stats.changed || 0} -${stats.deleted || 0}`
         : "not synced yet";
       return `<div class="upload-item">
-        <span><b>${esc(s.collection)}</b> · <code>${esc(s.path)}</code><br><span class="muted small">${summary}${s.last_error ? ` · error: ${esc(s.last_error)}` : ""}</span></span>
+        <span><b>${esc(s.collection)}</b>${s.category ? ` · ${esc(s.category)}` : ""} · <code>${esc(s.path)}</code><br><span class="muted small">${summary}${s.last_error ? ` · error: ${esc(s.last_error)}` : ""}</span></span>
         <span class="row" style="margin:0">
           <span class="pill">${s.enabled ? "ON" : "OFF"} · ${formatInterval(Number(s.interval_seconds))}</span>
           <button class="btn mini" onclick="syncSource('${s.id}')">Sync now</button>
           <button class="btn mini" onclick="editSource('${s.id}')">Edit</button>
+          <button class="btn mini" onclick="cloneSource('${s.id}')">Clone</button>
           <button class="btn mini danger" onclick="deleteSource('${s.id}')">Delete</button>
         </span>
       </div>`;
     }).join("") + `</div>` : `<p class="muted">No directory sources configured.</p>`;
   } catch (e) { $("sourcesList").textContent = e.message; }
 }
-function openAddSource() {
-  if (!state.collections.length) return toast("Create a collection first", true);
-  const collectionOptions = state.collections.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
-  const defaultInterval = state.effective?.sources?.default_interval_seconds;
-  openModal("Add directory source", `
+async function ensureSourceCategories() {
+  const data = await api("/api/categories");
+  state.categories = data.categories || [];
+}
+
+function sourceCollectionOptions(selectedId) {
+  return state.collections.map((c) =>
+    `<option value="${esc(c.id)}" ${c.id === selectedId ? "selected" : ""}>${esc(c.name)}</option>`
+  ).join("");
+}
+
+function sourceCategoryOptions(collectionId, selectedId) {
+  const categories = state.categories.filter((c) => c.collection_id === collectionId);
+  return `<option value="">Uncategorized / not applicable</option>` + categories.map((c) =>
+    `<option value="${esc(c.id)}" ${c.id === selectedId ? "selected" : ""}>${esc(c.name)}</option>`
+  ).join("");
+}
+
+function refreshSourceCategorySelect(collectionSelectId, categorySelectId, selectedId = "") {
+  const collectionId = $(collectionSelectId)?.value || "";
+  const select = $(categorySelectId);
+  if (!select) return;
+  select.innerHTML = sourceCategoryOptions(collectionId, selectedId);
+}
+
+async function openAddSource(templateId = null) {
+  if (!state.collections.length) return toast("Collections are not loaded", true);
+  await ensureSourceCategories();
+  const template = templateId ? state.sources.find((x) => x.id === templateId) : null;
+  const collectionId = template?.collection_id || state.collections[0]?.id || "";
+  const defaultInterval = template?.interval_seconds || state.effective?.sources?.default_interval_seconds;
+  openModal(template ? "Clone directory source" : "Add directory source", `
     <div class="form-grid">
-      <label>Collection<select id="sourceCollection">${collectionOptions}</select></label>
+      <label>Collection<select id="sourceCollection" onchange="refreshSourceCategorySelect('sourceCollection','sourceCategory')">${sourceCollectionOptions(collectionId)}</select></label>
+      <label>Category<select id="sourceCategory">${sourceCategoryOptions(collectionId, template?.category_id || "")}</select></label>
+      <label>Type<select id="sourceType">
+        <option value="directory" ${template?.source_type !== "repository" ? "selected" : ""}>Directory</option>
+        <option value="repository" ${template?.source_type === "repository" ? "selected" : ""}>Repository</option>
+      </select></label>
       <label>Interval<select id="sourceInterval">${sourceIntervalOptions(defaultInterval)}</select></label>
     </div>
-    <label>Path visible inside RAG container<input id="sourcePath" type="text" placeholder="/sources/project"></label>
-    <label>Extra exclude patterns (one per line)<textarea id="sourceExcludes" rows="4" placeholder="build/**&#10;dist/**"></textarea></label>
-    <button class="btn primary" onclick="createSource()">Create source</button>`);
+    <label>Path visible inside RAG container<input id="sourcePath" type="text" value="${esc(template?.path || "")}" placeholder="/sources/project"></label>
+    <label>Extra exclude patterns (one per line)<textarea id="sourceExcludes" rows="5" placeholder="build/**&#10;dist/**">${esc((template?.exclude_patterns || []).join("\n"))}</textarea></label>
+    <label class="check"><input id="sourceEnabled" type="checkbox" ${template?.enabled === false ? "" : "checked"}> enabled</label>
+    <button class="btn primary" onclick="createSource()">${template ? "Create clone" : "Create source"}</button>`);
 }
+
+function cloneSource(id) {
+  return openAddSource(id);
+}
+
 async function createSource() {
   try {
     const collectionId = $("sourceCollection").value;
@@ -555,6 +594,9 @@ async function createSource() {
       path: $("sourcePath").value.trim(),
       interval_seconds: Number($("sourceInterval").value),
       exclude_patterns: $("sourceExcludes").value.split("\n").map((x) => x.trim()).filter(Boolean),
+      enabled: $("sourceEnabled").checked,
+      source_type: $("sourceType").value,
+      category_id: $("sourceCategory").value || null,
     };
     await api(`/api/collections/${collectionId}/sources`, { method: "POST", body });
     closeModal();
@@ -562,21 +604,44 @@ async function createSource() {
     toast("Directory source created; first sync queued");
   } catch (e) { toast(e.message, true); }
 }
-function editSource(id) {
-  const s = state.sources.find((x) => x.id === id);
-  if (!s) return;
+
+async function editSource(id) {
+  const src = state.sources.find((x) => x.id === id);
+  if (!src) return;
+  await ensureSourceCategories();
   openModal("Edit directory source", `
-    <label>Path<input id="sourceEditPath" type="text" value="${esc(s.path)}"></label>
     <div class="form-grid">
-      <label>Interval<select id="sourceEditInterval">${sourceIntervalOptions(s.interval_seconds)}</select></label>
-      <label class="check"><input id="sourceEditEnabled" type="checkbox" ${s.enabled ? "checked" : ""}> enabled</label>
+      <label>Collection<select id="sourceEditCollection" onchange="refreshSourceCategorySelect('sourceEditCollection','sourceEditCategory')">${sourceCollectionOptions(src.collection_id)}</select></label>
+      <label>Category<select id="sourceEditCategory">${sourceCategoryOptions(src.collection_id, src.category_id || "")}</select></label>
+      <label>Type<select id="sourceEditType">
+        <option value="directory" ${src.source_type !== "repository" ? "selected" : ""}>Directory</option>
+        <option value="repository" ${src.source_type === "repository" ? "selected" : ""}>Repository</option>
+      </select></label>
+      <label>Interval<select id="sourceEditInterval">${sourceIntervalOptions(src.interval_seconds)}</select></label>
     </div>
-    <label>Extra exclude patterns (one per line)<textarea id="sourceEditExcludes" rows="4">${esc((s.exclude_patterns || []).join("\n"))}</textarea></label>
+    <div class="row"><button class="btn mini" onclick="renameSelectedSourceCategory()">Rename selected category</button></div>
+    <label>Path<input id="sourceEditPath" type="text" value="${esc(src.path)}"></label>
+    <label>Extra exclude patterns (one per line)<textarea id="sourceEditExcludes" rows="5">${esc((src.exclude_patterns || []).join("\n"))}</textarea></label>
+    <label class="check"><input id="sourceEditEnabled" type="checkbox" ${src.enabled ? "checked" : ""}> enabled</label>
     <button class="btn primary" onclick="saveSource('${id}')">Save</button>`);
 }
+
+async function renameSelectedSourceCategory() {
+  const categoryId = $("sourceEditCategory")?.value;
+  if (!categoryId) return toast("Select a category first", true);
+  const category = state.categories.find((c) => c.id === categoryId);
+  if (!category) return;
+  await renameBookCategory(category.id, category.name);
+  await ensureSourceCategories();
+  refreshSourceCategorySelect("sourceEditCollection", "sourceEditCategory", categoryId);
+}
+
 async function saveSource(id) {
   try {
     await api(`/api/collection-sources/${id}`, { method: "PATCH", body: {
+      collection_id: $("sourceEditCollection").value,
+      category_id: $("sourceEditCategory").value || null,
+      source_type: $("sourceEditType").value,
       path: $("sourceEditPath").value.trim(),
       interval_seconds: Number($("sourceEditInterval").value),
       enabled: $("sourceEditEnabled").checked,
@@ -584,9 +649,11 @@ async function saveSource(id) {
     }});
     closeModal();
     await loadCollectionSources();
+    await loadCollections();
     toast("Directory source updated");
   } catch (e) { toast(e.message, true); }
 }
+
 async function syncSource(id) {
   try {
     toast("Syncing directory source…");
