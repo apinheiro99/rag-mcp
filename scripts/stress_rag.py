@@ -9,6 +9,8 @@ import statistics
 import time
 from pathlib import Path
 
+import httpx
+
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
@@ -39,7 +41,24 @@ def percentile(values: list[float], p: float) -> float:
     return ordered[min(len(ordered) - 1, round((len(ordered) - 1) * p))]
 
 
+async def wait_ready(url: str, timeout_seconds: float) -> None:
+    health_url = url.rsplit('/mcp', 1)[0] + '/api/health'
+    deadline = time.monotonic() + timeout_seconds
+    last_error = None
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        while time.monotonic() < deadline:
+            try:
+                response = await client.get(health_url)
+                if response.status_code == 200 and response.json().get('status') == 'ok':
+                    return
+            except Exception as exc:
+                last_error = exc
+            await asyncio.sleep(1)
+    raise RuntimeError(f'target did not become ready within {timeout_seconds:.0f}s: {last_error}')
+
+
 async def stress(args: argparse.Namespace) -> dict:
+    await wait_ready(args.url, args.startup_timeout)
     queries = json.loads(Path(args.queries).read_text()) if args.queries else DEFAULT_QUERIES
     expanded = [queries[i % len(queries)] for i in range(args.requests)]
     semaphore = asyncio.Semaphore(args.concurrency)
@@ -127,6 +146,7 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--startup-timeout", type=float, default=60)
     parser.add_argument("--queries")
     parser.add_argument("--output")
     parser.add_argument("--bearer-token")
