@@ -1,4 +1,4 @@
-from app.search import fuse_rankings
+from app.search import canonical_clause, fuse_rankings
 from scripts.evaluate_retrieval import evaluate
 
 
@@ -43,3 +43,10 @@ def test_lexical_fallback_threshold_boundaries():
 
     one_short=[{"score":.99} for _ in range(7)]
     assert should_apply_lexical(one_short,8,cfg)==(True,None)
+
+
+def test_canonical_clause_hides_superseded_unless_document_is_explicit():
+    from app.search_filters import SearchFilters
+
+    assert canonical_clause(SearchFilters()) == " AND d.superseded_by IS NULL"
+    assert canonical_clause(SearchFilters(document_ids=["11111111-1111-1111-1111-111111111111"])) == ""

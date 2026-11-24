@@ -66,3 +66,9 @@ def test_document_bulk_actions_and_dialogs_are_available():
 def test_runtime_branding_assets_are_documented():
     for name in ("rag-mcp-lockup.png", "rag-mcp-icon.png", "rag-mcp-background.png"):
         assert (ROOT / "docs/screens" / name).read_bytes() == (ROOT / "app/static/branding" / name).read_bytes()
+
+
+def test_api_exposes_document_supersession_governance():
+    api = Path("app/api.py").read_text()
+    assert '"/documents/{doc_id}/supersede"' in api
+    assert "superseded_by" in api

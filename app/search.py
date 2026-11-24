@@ -66,6 +66,11 @@ async def _resolve_collections(
     return [r for r in rows if r["embedding_model"] and r["embedding_dim"]]
 
 
+def canonical_clause(filters: SearchFilters) -> str:
+    """Hide superseded documents unless the caller explicitly names document ids."""
+    return "" if filters.document_ids else " AND d.superseded_by IS NULL"
+
+
 async def _search_group(
     *,
     query: str,
@@ -96,6 +101,7 @@ async def _search_group(
     col_ids = [str(c["id"]) for c in group_cols]
     filter_sql, filter_params = filters.sql()
     where_filter = f" AND {filter_sql}" if filter_sql else ""
+    canonical = canonical_clause(filters)
 
     t0 = time.perf_counter()
     async with db.pool.connection() as conn:
@@ -118,7 +124,7 @@ async def _search_group(
                         FROM {table} v
                         JOIN chunks c ON c.id=v.chunk_id
                         JOIN documents d ON d.id=c.document_id
-                        WHERE c.collection_id=ANY(%s::uuid[]) AND d.status='ready' AND c.embedded
+                        WHERE c.collection_id=ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{canonical}
                         ORDER BY binary_quantize(v.embedding)::bit({dim})
                             <~> binary_quantize(%s::{coltype})::bit({dim})
                         LIMIT %s
@@ -147,7 +153,7 @@ async def _search_group(
                         JOIN chunks c ON c.id = v.chunk_id
                         JOIN documents d ON d.id = c.document_id
                         JOIN collections col ON col.id = c.collection_id
-                        WHERE c.collection_id = ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{where_filter}
+                        WHERE c.collection_id = ANY(%s::uuid[]) AND d.status='ready' AND c.embedded{canonical}{where_filter}
                         ORDER BY v.embedding <=> %s::{coltype}
                         LIMIT %s""",
                     (lit, col_ids, *filter_params, lit, top_k),
@@ -192,6 +198,7 @@ def fuse_rankings(rankings: list[list[dict]], rank_constant: int) -> list[dict]:
 async def _lexical_search(query, cols, filters, limit):
     filter_sql, params = filters.sql()
     extra = f" AND {filter_sql}" if filter_sql else ""
+    canonical = canonical_clause(filters)
     async with db.pool.connection() as conn:
         cur = await conn.execute(
             f"""SELECT c.id AS chunk_id, c.seq, c.content, c.loc,
@@ -203,7 +210,7 @@ async def _lexical_search(query, cols, filters, limit):
                 CROSS JOIN (SELECT to_tsquery('english', string_agg(quote_literal(lexeme), ' | ')) AS term
                             FROM unnest(tsvector_to_array(to_tsvector('english', %s))) AS t(lexeme)) q
                 WHERE c.collection_id = ANY(%s::uuid[]) AND c.embedded
-                  AND d.status='ready'
+                  AND d.status='ready'{canonical}
                   AND to_tsvector('english', c.content) @@ q.term {extra}
                 ORDER BY lexical_score DESC, c.id LIMIT %s""",
             (query, [str(c["id"]) for c in cols], *params, limit),

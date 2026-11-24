@@ -824,6 +824,47 @@ async def classify_documents_bulk(body: BulkClassifyRequest):
     return {"queued": len(ids), "document_ids": ids}
 
 
+
+
+class DocSupersede(BaseModel):
+    replacement_document_id: str | None = None
+
+
+@router.post("/documents/{doc_id}/supersede")
+async def supersede_document(doc_id: str, body: DocSupersede):
+    doc_id = _uuid(doc_id)
+    replacement = _uuid(body.replacement_document_id) if body.replacement_document_id else None
+    if replacement == doc_id:
+        raise HTTPException(400, "document cannot supersede itself")
+    async with db.pool.connection() as conn:
+        cur = await conn.execute("SELECT id, filename FROM documents WHERE id=%s", (doc_id,))
+        doc = await cur.fetchone()
+        if not doc:
+            raise HTTPException(404, "document not found")
+        replacement_doc = None
+        if replacement:
+            cur = await conn.execute(
+                "SELECT id, filename, status FROM documents WHERE id=%s", (replacement,)
+            )
+            replacement_doc = await cur.fetchone()
+            if not replacement_doc:
+                raise HTTPException(404, "replacement document not found")
+            if replacement_doc["status"] != "ready":
+                raise HTTPException(400, "replacement document must be ready")
+        await conn.execute(
+            "UPDATE documents SET superseded_by=%s, updated_at=now() WHERE id=%s",
+            (replacement, doc_id),
+        )
+    await db.event(
+        f"Canonicality: {doc['filename']} "
+        + (f"superseded by {replacement_doc['filename']}" if replacement_doc else "restored as active")
+    )
+    return {
+        "document_id": doc_id,
+        "superseded_by": replacement,
+        "replacement_filename": replacement_doc["filename"] if replacement_doc else None,
+    }
+
 class DocMove(BaseModel):
     target_collection_id: str
 
