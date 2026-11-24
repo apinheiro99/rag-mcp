@@ -485,7 +485,7 @@ async def semantic_search(
             rerank_ms = (time.perf_counter() - rerank_started) * 1000 if rcfg.get("enabled") and rerank_pool else 0.0
             return reranked[:top_k], rerank_pool, rerank_ms, rerank_error
 
-        await runtime_scheduler.ensure_resident(client, requirements)
+        await runtime_scheduler.ensure_resident(client, requirements, exact=True)
         ranked_results, rerank_pool, rerank_ms, rerank_error = await execute_search_pipeline()
         effective_top_k, adaptive_top_k = choose_adaptive_top_k(
             ranked_results, top_k, scfg, explicit=explicit_top_k
