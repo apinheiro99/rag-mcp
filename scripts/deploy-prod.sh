@@ -82,6 +82,9 @@ docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
 HEALTH_URL="http://127.0.0.1:${RAG_PORT:-8000}/api/health"
 for attempt in $(seq 1 30); do
   if curl -fsS "$HEALTH_URL" >/dev/null; then
+    if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
+      docker exec "${RAG_TUNNEL_CONTAINER_NAME:-rag-mcp-tunnel}" /usr/local/bin/tunnel-client health --port 8080 --require-control-plane-poll >/dev/null
+    fi
     exit 0
   fi
   sleep 2
