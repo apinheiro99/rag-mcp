@@ -55,3 +55,23 @@ async def test_persistent_graph_skips_when_materialization_is_missing(monkeypatc
     assert graph["available"] is False
     assert graph["reason"] == "graph_not_materialized_yet"
     assert graph["edges"] == []
+
+@pytest.mark.asyncio
+async def test_graph_worker_survives_iteration_failure(monkeypatch):
+    import asyncio
+    import app.graph_retrieval as gr
+
+    worker = gr.GraphWorker(poll_interval=0.001)
+    calls = {"n": 0}
+
+    async def boom():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        worker._stop.set()
+        return None
+
+    monkeypatch.setattr(worker, "_next_stale_document", boom)
+    worker._stop = asyncio.Event()
+    await asyncio.wait_for(worker._run(), timeout=0.1)
+    assert calls["n"] >= 2
