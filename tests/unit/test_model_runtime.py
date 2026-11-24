@@ -127,16 +127,17 @@ async def test_release_after_unloads_profile_even_when_operation_fails():
         await scheduler.stop()
 
 @pytest.mark.asyncio
-async def test_ensure_resident_loads_missing_without_unloading_extra_models():
+async def test_ensure_resident_exact_evicts_models_outside_profile():
     scheduler = ModelRuntimeScheduler()
-    client = FakeClient(["embedding", "other"])
+    client = FakeClient(["embedding", "gemma"])
     try:
         await scheduler.ensure_resident(
             client,
             [ModelRequirement("embedding"), ModelRequirement("reranker", 8192)],
+            exact=True,
         )
-        assert client.loaded == {"embedding", "other", "reranker"}
-        assert ("unload", "other") not in client.calls
+        assert client.loaded == {"embedding", "reranker"}
+        assert ("unload", "gemma") in client.calls
         assert ("load", "reranker", 8192) in client.calls
     finally:
         await scheduler.stop()

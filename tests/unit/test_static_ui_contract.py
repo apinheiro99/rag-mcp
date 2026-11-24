@@ -69,10 +69,11 @@ def test_runtime_branding_assets_are_documented():
         assert (ROOT / "docs/screens" / name).read_bytes() == (ROOT / "app/static/branding" / name).read_bytes()
 
 
-def test_api_exposes_document_supersession_governance():
+def test_api_does_not_expose_document_supersession():
     api = Path("app/api.py").read_text()
-    assert '"/documents/{doc_id}/supersede"' in api
-    assert "superseded_by" in api
+    schema = Path("app/schema.sql").read_text()
+    assert '"/documents/{doc_id}/supersede"' not in api
+    assert "superseded_by UUID" not in schema
 
 
 def test_dashboard_exposes_background_runtime_state():
@@ -91,10 +92,11 @@ def test_search_ui_exposes_trace_and_evidence_graph():
     assert "trace_id" in js
 
 
-def test_documents_ui_exposes_supersession_controls():
+def test_documents_ui_uses_delete_not_supersession_controls():
     js = Path("app/static/app.js").read_text()
-    assert "openSupersedeDoc" in js
-    assert "/supersede" in js
+    assert "openSupersedeDoc" not in js
+    assert "/supersede" not in js
+    assert "deleteDoc" in js
 
 def test_search_ui_exposes_usefulness_cost_topk_and_selection_reason():
     js = Path("app/static/app.js").read_text()
@@ -126,3 +128,32 @@ def test_directory_sources_support_target_category_edit_and_clone():
     assert "renameSelectedSourceCategory" in js
     assert "category_id:" in js
     assert "source_type:" in js
+
+
+def test_classify_applies_directly_without_success_modal():
+    js = Path("app/static/app.js").read_text()
+    start = js.index("async function classifyDoc")
+    end = js.index("\nasync function deleteDoc", start)
+    block = js[start:end]
+    assert "Categorized as" in block
+    assert 'openModal("Category not found"' in block
+    success_start = block.index("if (existing && r.auto_applied)")
+    success_end = block.index("return;", success_start)
+    success_branch = block[success_start:success_end]
+    assert "openModal" not in success_branch
+
+
+def test_manual_classify_route_uses_same_ready_classification_runtime_as_worker():
+    api = Path("app/api.py").read_text()
+    runtime = Path("app/classification_runtime.py").read_text()
+    route_start = api.index('async def classify_document_route')
+    route_end = api.index('class BulkClassifyRequest', route_start)
+    route = api[route_start:route_end]
+    assert "classify_ready_document(doc_id, model)" in route
+    assert "await classify_ready_document(self.current_document)" in runtime
+
+
+def test_classification_decision_endpoint_is_removed():
+    api = Path("app/api.py").read_text()
+    assert "classification-decision" not in api
+    assert "ClassificationDecision" not in api

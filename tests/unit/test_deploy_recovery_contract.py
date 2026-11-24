@@ -49,3 +49,26 @@ def test_taxonomy_migration_refreshes_postgres_planner_statistics():
     assert '("collections", "documents", "chunks")' in migration
     assert "ANALYZE {table}" in migration
     assert "await refresh_planner_statistics(db)" in migration
+
+
+def test_deploy_pauses_background_workers_for_benchmark_and_restores_state():
+    script = Path("scripts/deploy-prod.sh").read_text()
+    pause = script.index("pause_background_workers")
+    drain = script.index("wait_system_quiescent ||")
+    evaluation = script.index("exec -T app " + '"' + "$" + "{EVAL_ARGS[@]}" + '"')
+    restore = script.index("restore_background_workers", evaluation)
+    assert pause < drain < evaluation < restore
+    assert "/api/runtime/deploy-pause" in script
+    assert "/api/runtime/deploy-resume" in script
+    assert "RAG_DEPLOY_QUIESCENT_ATTEMPTS:-300" in script
+
+
+def test_all_background_workers_honor_global_pause():
+    for filename in (
+        "app/ingest.py",
+        "app/classification_runtime.py",
+        "app/source_sync.py",
+        "app/graph_retrieval.py",
+    ):
+        source = Path(filename).read_text()
+        assert "settings.workers_paused()" in source

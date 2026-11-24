@@ -107,7 +107,7 @@ wait_app_ready() {
 
 wait_system_quiescent() {
   required="${RAG_DEPLOY_QUIESCENT_CHECKS:-3}"
-  attempts="${RAG_DEPLOY_QUIESCENT_ATTEMPTS:-60}"
+  attempts="${RAG_DEPLOY_QUIESCENT_ATTEMPTS:-300}"
   interval="${RAG_DEPLOY_QUIESCENT_INTERVAL_SECONDS:-2}"
   consecutive=0
   for attempt in $(seq 1 "$attempts"); do
@@ -142,10 +142,25 @@ print("true" if idle else "false")
   return 1
 }
 
+DEPLOY_PAUSE_ACTIVE=false
+
+pause_background_workers() {
+  curl -fsS -X POST "${HEALTH_URL%/api/health}/api/runtime/deploy-pause" >/dev/null
+  DEPLOY_PAUSE_ACTIVE=true
+}
+
+restore_background_workers() {
+  if [ "$DEPLOY_PAUSE_ACTIVE" = true ]; then
+    curl -fsS -X POST "${HEALTH_URL%/api/health}/api/runtime/deploy-resume" >/dev/null 2>&1 || true
+    DEPLOY_PAUSE_ACTIVE=false
+  fi
+}
+
 ROLLBACK_ARMED=false
 rollback_on_failure() {
   status=$?
   trap - EXIT
+  restore_background_workers
   if [ "$status" -eq 0 ] || [ "$ROLLBACK_ARMED" != true ]; then
     exit "$status"
   fi
@@ -174,6 +189,7 @@ ROLLBACK_ARMED=true
 
 docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" up -d --build
 wait_app_ready "$CI_COMMIT_SHA" || { echo "application readiness failed: $HEALTH_URL did not report commit $CI_COMMIT_SHA" >&2; exit 1; }
+pause_background_workers
 
 # Data migrations are explicit deploy steps, never application-startup side effects.
 docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app   python -m app.migrate_library_taxonomy
@@ -191,7 +207,7 @@ if [ -n "${RAG_TUNNEL_BINARY:-}" ] && [ -n "${RAG_TUNNEL_DIR:-}" ]; then
 fi
 
 wait_system_quiescent || {
-  echo "system did not reach a stable idle state before performance validation" >&2
+  echo "in-flight background work did not drain while workers were paused" >&2
   exit 1
 }
 
@@ -207,6 +223,7 @@ if [ -n "${RAG_API_TOKEN:-}" ]; then
   EVAL_ARGS+=(--bearer-token "$RAG_API_TOKEN")
 fi
 docker compose --env-file "$RUNTIME_ENV" "${COMPOSE_ARGS[@]}" exec -T app "${EVAL_ARGS[@]}"
+restore_background_workers
 printf '%s\n' "$CI_COMMIT_SHA" > "$LAST_GOOD_FILE"
 ROLLBACK_ARMED=false
 trap - EXIT

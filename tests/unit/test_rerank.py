@@ -82,7 +82,7 @@ def test_select_rerank_strategy_uses_qwen_binary_for_qwen3_rerankers(model):
 
 
 def test_select_rerank_strategy_keeps_generic_json_for_gemma():
-    assert select_rerank_strategy("google/gemma-4-12b-qat") == "generic_json"
+    assert select_rerank_strategy("generic-reranker-model") == "generic_json"
 
 
 def test_qwen_yes_probability_handles_yes_variants():

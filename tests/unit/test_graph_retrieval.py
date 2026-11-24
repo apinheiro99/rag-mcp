@@ -64,6 +64,10 @@ async def test_graph_worker_survives_iteration_failure(monkeypatch):
     worker = gr.GraphWorker()
     calls = {"n": 0}
 
+    async def not_paused():
+        return False
+    monkeypatch.setattr(gr.settings, "workers_paused", not_paused)
+
     async def boom():
         calls["n"] += 1
         if calls["n"] == 1:

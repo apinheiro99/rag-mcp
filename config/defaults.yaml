@@ -49,14 +49,13 @@ search:
 
 rerank:
   enabled: true
-  model: google/gemma-4-12b-qat
-  mode: switch
+  model: qwen3-reranker-4b
+  mode: resident
   candidate_multiplier: 2
   max_candidates: 8
   context_length: 8192
   temperature: 0.0
   reasoning_effort: none
-  seed: 42
   seed: 42
   max_tokens: 1200
   timeout: 20
@@ -87,7 +86,9 @@ classification:
   auto_apply_existing: true
   embedding_match_threshold: 0.55
   embedding_margin_threshold: 0.03
-  llm_fallback_enabled: true
+  rerank_fallback_enabled: true
+  rerank_match_threshold: 0.55
+  rerank_margin_threshold: 0.05
   max_attempts: 3
   retry_backoff_seconds: [60, 300, 1800]
 

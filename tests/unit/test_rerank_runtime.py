@@ -9,7 +9,7 @@ async def test_rerank_runtime_fails_open_to_vector_candidates(monkeypatch):
     async def fake_get(key, default=None):
         return "broken-model" if key == "reranker_model" else default
 
-    async def fake_ensure(client, requirements):
+    async def fake_ensure(client, requirements, *, exact=False):
         raise RuntimeError("reranker unavailable")
 
     monkeypatch.setattr("app.rerank_runtime.settings.get", fake_get)
@@ -35,8 +35,9 @@ async def test_rerank_runtime_requests_embedding_plus_selected_reranker(monkeypa
     async def fake_get(key, default=None):
         return "qwen3-reranker-4b" if key == "reranker_model" else default
 
-    async def fake_ensure(client, requirements):
+    async def fake_ensure(client, requirements, *, exact=False):
         captured["requirements"] = requirements
+        captured["exact"] = exact
 
     async def fake_rerank(query, candidates, config, client):
         return candidates
@@ -57,6 +58,7 @@ async def test_rerank_runtime_requests_embedding_plus_selected_reranker(monkeypa
         ModelRequirement("text-embedding-qwen3-embedding-8b", 8192),
         ModelRequirement("qwen3-reranker-4b", 8192),
     ]
+    assert captured["exact"] is True
 
 
 @pytest.mark.asyncio
