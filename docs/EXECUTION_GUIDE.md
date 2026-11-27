@@ -304,6 +304,13 @@ Execução com `top_k=20` em todos os 12 casos de `examples/evaluation/retrieval
 
 Decisão: retrieval/hybrid/adaptive/decomposition estão funcionalmente aprovados para este ciclo; próximos ajustes só com miss reproduzível ou evidência de regressão.
 
+Pipeline checkpoint 26/11/2026:
+
+- 724: SUCCESS;
+- 725: SUCCESS;
+- 726: SUCCESS;
+- 727 (`0aa4198`, `main`): validate/tag/release/publish verdes; deploy pendente no momento deste checkpoint.
+
 ## 7. Auditoria independente — triagem
 
 A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
@@ -337,11 +344,11 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 
 ### Não alterar sem decisão/medição explícita
 
-- [ ] AUD-017 — rollback/migração.
-- [ ] AUD-020 — thresholds P95/P99.
+- [x] AUD-017 — deploy atual já possui rollback automático para último commit saudável, migração explícita fora do startup e testes de contrato; finding original está obsoleto no HEAD atual.
+- [ ] AUD-020 — métricas P95/P99 existem, mas não há SLO/threshold aprovado; **não definir número sem decisão explícita do usuário**.
 - [x] AUD-021 — `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` medido no PostgreSQL isolado do CI. Pipeline 725: planning 2.005 ms, execution 3.775 ms; plano `Limit -> Sort -> Nested Loop -> Bitmap Heap Scan -> Bitmap Index Scan -> Index Scan`, usando `chunks_collection_idx` e `documents_graph_stale_idx`. Fixture pequeno não escolheu o GIN FTS; **nenhuma mudança de índice** sem evidência de workload real.
-- [ ] AUD-005 — retenção/redaction de queries.
-- [ ] AUD-023 — fallback de senha DB.
+- [ ] AUD-005 — ainda real: `retrieval_events.query_text` grava query completa e não há retenção automática. Envolve política de privacidade/retention; não alterar sem decisão explícita.
+- [ ] AUD-023 — ainda real: `app/config.py` usa fallback `POSTGRES_PASSWORD=rag` quando não há `RAG_DSN`; compose PROD exige senha e deploy gera uma, então o risco é principalmente fora do compose/ambientes locais. Exige decisão de compatibilidade antes de remover fallback.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.
 
 ## 7.1 Contrato de CI/release
