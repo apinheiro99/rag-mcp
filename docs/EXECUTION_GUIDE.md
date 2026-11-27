@@ -90,6 +90,14 @@ Regra reforçada por André em 26/11/2026:
 - header/topo deve seguir a composição da referência, inclusive escala de título/subtítulo/status;
 - única exceção continua sendo o fundo: manter `app/static/branding/rag-mcp-background.png`.
 
+Pipeline/UI checkpoint 26/11/2026:
+
+- pipeline 692 (`ec66701`, branch `fix/ui-dashboard-literal`): **FAILED**;
+- pipeline 693 (`f849bf2`, `main`): **SUCCESS**;
+- aprovação visual **não concedida**; o Dashboard ainda diverge da referência.
+
+Regra de execução a partir deste ponto: abrir e medir `docs/screens/02_dashboard.png` diretamente e tratar cada elemento como contrato visual, sem inferência. A referência original mede **1672×941 px**. Medidas observadas para o Dashboard: sidebar ~214 px; divisor/header ~98 px; linha de KPIs ~115 px; painéis operacionais ~300 px; painel Model Runtime ~310 px. Não compactar nem expandir por preferência própria.
+
 Checkpoint Dashboard 26/11/2026:
 
 - [x] KPI cards compactados para a densidade vertical da referência;
