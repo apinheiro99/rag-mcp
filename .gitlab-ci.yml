@@ -126,16 +126,30 @@ ci-tag-red:
     - if: '$CI_PIPELINE_SOURCE == "push"'
       when: on_failure
 
-"Release Gate":
+"Build Release":
   stage: release
-  image: alpine:3.21
+  image: python:3.13-bookworm
   before_script: []
+  needs:
+    - "Secret Scan"
+    - "Public Surface"
+    - "Static Checks"
+    - "Unit"
+    - "Regression"
+    - "Integration"
+    - "ci-tag-green"
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$CI_PIPELINE_SOURCE == "push"'
   script:
-    - 'echo "Validated commit ${CI_COMMIT_SHA} is eligible to continue through the release stage."'
+    - VERSION="v$(date -u -d "$CI_PIPELINE_CREATED_AT" +%Y.%m).$(printf "%06d" "$CI_PIPELINE_IID")"; export VERSION
+    - mkdir -p release
+    - python3 scripts/build_release.py --version "$VERSION" --commit "$CI_COMMIT_SHA" --output release
+  artifacts:
+    expire_in: 14 days
+    paths:
+      - release/
 
 "Publish GitHub":
   stage: publish
@@ -150,7 +164,8 @@ ci-tag-red:
     - "Regression"
     - "Integration"
     - "ci-tag-green"
-    - "Release Gate"
+    - job: "Build Release"
+      artifacts: false
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
@@ -186,7 +201,10 @@ ci-tag-red:
   before_script: []
   interruptible: false
   needs:
-    - "Publish GitHub"
+    - job: "Build Release"
+      artifacts: true
+    - job: "Publish GitHub"
+      artifacts: false
   script:
     - export RAG_TUNNEL_BINARY="$HOME/rag-prod/bin/tunnel-client"
     - export RAG_TUNNEL_DIR="$HOME/rag-prod/tunnel"
