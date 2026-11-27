@@ -71,7 +71,9 @@ class Env:
         port = _env_int("POSTGRES_PORT", 5432)
         db = _env("POSTGRES_DB", "rag")
         user = _env("POSTGRES_USER", "rag")
-        password = _env("POSTGRES_PASSWORD", "rag")
+        password = _env("POSTGRES_PASSWORD", "")
+        if not password:
+            raise RuntimeError("POSTGRES_PASSWORD must be set when RAG_DSN is not configured")
         return make_conninfo(host=host, port=port, dbname=db, user=user, password=password)
 
     @property
