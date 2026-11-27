@@ -466,22 +466,38 @@ function statusRow(label, ok, detail = "") {
   </div>`;
 }
 
+function refIcon(kind, extra = "") {
+  const cls = `ref-svg ${extra}`.trim();
+  const icons = {
+    cube: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 20 7.2v9.6L12 21.2 4 16.8V7.2L12 2.8Z"/><path d="m4 7.2 8 4.5 8-4.5M12 11.7v9.5"/></svg>`,
+    document: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3v14H6z"/><path d="M15 3.5v4h4M9 11h6M9 14.5h6M9 18h4.5"/></svg>`,
+    check: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.3 2.4 4.9-5.2"/></svg>`,
+    queue: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="4" rx="1.3"/><rect x="4" y="11" width="16" height="4" rx="1.3"/><rect x="4" y="17" width="16" height="2" rx="1"/></svg>`,
+    search: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.1 15.1 5 5"/></svg>`,
+    chunks: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>`,
+    chip: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 9h6v6H9zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>`,
+    rerank: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h10M5 17h7"/><path d="m17 11 2 2 3-4"/></svg>`,
+    classify: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.2"/><circle cx="17" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/><path d="M8.9 8.2 10.9 15M15.1 8.2 13.1 15M9.2 7h5.6"/></svg>`,
+  };
+  return icons[kind] || icons.cube;
+}
+
 function renderDashboardOverview(h = state.health) {
   const totals = dashboardTotals();
   const stats = $("dashboardStats");
   if (stats) {
     const queries = Number(state.searchSummary?.queries || 0);
     const items = [
-      ["◇", totals.collections, "Collections"],
-      ["▤", totals.documents.toLocaleString(), "Documents"],
-      ["✓", totals.ready.toLocaleString(), "Ready"],
-      ["≋", totals.queue.toLocaleString(), "Queue"],
-      ["⌕", queries.toLocaleString(), "Search Requests", "24h"],
-      ["⠿", totals.chunks.toLocaleString(), "Chunks"],
+      ["cube", totals.collections, "Collections"],
+      ["document", totals.documents.toLocaleString(), "Documents"],
+      ["check", totals.ready.toLocaleString(), "Ready"],
+      ["queue", totals.queue.toLocaleString(), "Queue"],
+      ["search", queries.toLocaleString(), "Search Requests", "24h"],
+      ["chunks", totals.chunks.toLocaleString(), "Chunks"],
     ];
     stats.innerHTML = items.map(([icon, value, label, sub]) => `
       <div class="card kpi-card">
-        <span class="kpi-icon">${icon}</span>
+        <span class="kpi-icon">${refIcon(icon)}</span>
         <div><div class="kpi-value">${value}</div><div class="kpi-label">${label}${sub ? `<span>${sub}</span>` : ""}</div></div>
       </div>`).join("");
   }
@@ -531,13 +547,13 @@ function renderDashboardOverview(h = state.health) {
     const embedding = state.settings.embedding_model || "Not configured";
     const reranker = state.settings.reranker_model || state.effective?.rerank?.model || "Not configured";
     const cards = [
-      ["◇","Embedding Model",embedding,loaded.has(embedding) ? "In Use" : "Configured"],
-      ["◇","Reranker",reranker,loaded.has(reranker) ? "In Use" : "Configured"],
-      ["✧","Classification","Embedding + Reranker","Existing categories only"],
-      ["□","Resident-Model Behavior","Exact resident profile","Embedding + reranker"],
+      ["cube","Embedding Model",embedding,loaded.has(embedding) ? "In Use" : "Configured"],
+      ["rerank","Reranker",reranker,loaded.has(reranker) ? "In Use" : "Configured"],
+      ["classify","Classification","Embedding + Reranker","Existing categories only"],
+      ["chip","Resident-Model Behavior","Exact resident profile","Embedding + reranker"],
     ];
     runtime.innerHTML = cards.map(([icon,label,value,status]) => `
-      <div class="model-card"><div class="model-card-head"><span>${icon}</span><b>${esc(label)}</b><em>${esc(status)}</em></div><strong>${esc(value)}</strong></div>`).join("");
+      <div class="model-card"><div class="model-card-head"><span class="model-icon">${refIcon(icon)}</span><b>${esc(label)}</b><em>${esc(status)}</em></div><strong>${esc(value)}</strong></div>`).join("");
   }
 
   const system = $("systemServerGrid");
