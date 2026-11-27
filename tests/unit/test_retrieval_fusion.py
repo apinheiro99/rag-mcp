@@ -299,3 +299,12 @@ def test_title_only_query_uses_metadata_without_forcing_full_lexical_search():
     assert should_apply_lexical(query, dense, 8, cfg, intent=intent) == (
         False, "dense_sufficient"
     )
+
+
+@pytest.mark.parametrize("requested, configured_max, expected", [(1, 8, 1), (2, 8, 2), (5, 2, 2)])
+def test_adaptive_top_k_never_exceeds_ceiling(requested, configured_max, expected):
+    cfg = {"adaptive_top_k_enabled": True, "adaptive_top_k_min": 3,
+           "adaptive_top_k_max": configured_max}
+    rows = [{"rerank_score": .99}] * 8
+    chosen, _ = choose_adaptive_top_k(rows, requested, cfg, explicit=True)
+    assert chosen == expected

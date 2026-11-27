@@ -325,8 +325,10 @@ def choose_adaptive_top_k(rows: list[dict], requested_top_k: int, scfg: dict, *,
         or (explicit and not allow_below_explicit)
     ):
         return min(requested_top_k, len(rows)), {"enabled": False, "reason": "explicit_or_disabled"}
-    lo = max(1, int(scfg.get("adaptive_top_k_min", 3)))
-    hi = max(lo, min(requested_top_k, int(scfg.get("adaptive_top_k_max", requested_top_k))))
+    hi = max(0, min(requested_top_k, int(scfg.get("adaptive_top_k_max", requested_top_k))))
+    if not hi:
+        return 0, {"enabled": True, "reason": "zero_ceiling"}
+    lo = min(hi, max(1, int(scfg.get("adaptive_top_k_min", 3))))
     threshold = float(scfg.get("adaptive_top_k_min_score", 0.55))
     gap = float(scfg.get("adaptive_top_k_gap", 0.18))
     scores = [_score_for_utility(row) for row in rows[:hi]]

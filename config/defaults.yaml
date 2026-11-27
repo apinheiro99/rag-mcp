@@ -21,7 +21,7 @@ ingest:
   strip_whitespace: true    # normaliza espaços/linhas em branco na extração
 
 search:
-  top_k: 8                  # nº de trechos retornados por padrão
+  top_k: 8                  # teto padrão; adaptive top_k pode retornar menos
   max_top_k: 50             # teto aceito pela API/MCP
   min_score: 0.0            # score mínimo (cosseno, 0..1)
   hybrid_enabled: true

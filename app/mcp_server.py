@@ -82,7 +82,7 @@ def create_mcp() -> FastMCP:
             source_paths: restringe ao caminho original exato.
             chapters: restringe ao capítulo exato salvo no chunk.
             pages: restringe a páginas específicas de PDF.
-            top_k: número de trechos retornados.
+            top_k: máximo de trechos retornados; com adaptive top_k ativo, o resultado pode conter menos trechos.
             min_score: relevância mínima 0..1 (cosseno).
 
         Returns:

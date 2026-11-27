@@ -147,7 +147,7 @@ Estado:
 - [x] adicionados testes de regressão;
 - [x] 18 testes de retrieval-fusion passam;
 - [ ] rodar suíte relevante completa;
-- [ ] documentar contrato MCP/API como teto;
+- [x] documentar contrato MCP/API como teto;
 - [ ] commit/push isolado.
 
 ### 5.3 Query decomposition
@@ -255,7 +255,7 @@ Estado atual:
 
 1. [x] terminar e validar branch de UI `feat/ui-match-docs-screens`;
 2. [x] commit/push da UI sem misturar retrieval;
-3. [ ] voltar à branch `fix/retrieval-eval-followup`;
+3. [x] voltar à branch `fix/retrieval-eval-followup`;
 4. [ ] concluir adaptive top_k + documentação;
 5. [ ] rodar avaliação avançada real;
 6. [ ] corrigir apenas misses comprovados do hybrid/decomposition;
