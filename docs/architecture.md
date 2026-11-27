@@ -73,25 +73,53 @@ A KB privada pode conter credenciais operacionais. No modelo deste projeto elas 
 
 ```mermaid
 flowchart LR
-    C[ChatGPT / Claude / Clients] -->|HTTP API / MCP| API[RAG API / FastAPI]
-    UI[Web UI] --> API
-    API --> ING[Ingestion Worker]
-    API --> SEARCH[Semantic Search]
-    ING --> DB[(PostgreSQL + pgvector)]
+    subgraph Clients
+        GPT[ChatGPT / OpenAI surfaces]
+        RESP[Responses API / Codex]
+        CLAUDE[Claude Code]
+        REST[REST / other MCP clients]
+    end
+
+    subgraph OpenAI_transport[OpenAI transport]
+        OT[Secure MCP Tunnel endpoint]
+    end
+
+    subgraph Private_runtime[Private RAG network]
+        TC[tunnel-client sidecar]
+        API[RAG API / FastAPI /mcp]
+        UI[Web UI]
+        ING[Ingestion Worker]
+        SEARCH[Query-aware Retrieval]
+        RR[Qwen Reranker]
+        DB[(PostgreSQL + pgvector)]
+        LMS[LM Studio]
+    end
+
+    GPT -->|tunnel-backed MCP| OT
+    RESP -->|tunnel_id| OT
+    OT --> TC
+    TC -->|http://app:8000/mcp| API
+    CLAUDE -->|direct Streamable HTTP when reachable| API
+    REST -->|HTTP API / MCP| API
+    UI --> API
+    API --> ING
+    API --> SEARCH
+    ING --> DB
     SEARCH --> DB
-    ING --> LMS[LM Studio]
+    ING --> LMS
     SEARCH --> LMS
-    SEARCH --> RR[Reranker Runtime]
+    SEARCH --> RR
     RR --> LMS
 ```
 
 Reference runtime currently observed:
 
 - local API: `http://127.0.0.1:8000`
-- LAN API: `http://192.168.1.142:8000`
+- production LAN API: `http://docker-prod01.lab:8000`
+- MCP endpoint: `http://docker-prod01.lab:8000/mcp`
 - LM Studio: `http://192.168.1.10:1234`
 
-These addresses are deployment facts, not architecture requirements.
+These addresses are deployment facts, not architecture requirements. OpenAI Secure MCP Tunnel support is implemented in the repository, but the tunnel identity/runtime credentials are operator-provisioned outside the repository.
 
 ---
 
@@ -153,7 +181,7 @@ Dimension-specific pgvector storage. Vector rows reference chunks; deleting a ch
 Operational events.
 
 ### `retrieval_events`
-Search observability including timing, candidates, result counts, score and errors.
+Search observability including timing, candidates, result counts, score and errors. Aggregated metrics expose P95/P99 latency for diagnosis; this cycle intentionally defines no arbitrary SLO gate. Query-text retention/redaction remains an explicit operator privacy policy rather than an architectural default.
 
 Derived extraction cache is not authoritative and may be deleted/rebuilt.
 
@@ -353,8 +381,13 @@ Normal retrieval uses an exact resident model profile:
 
 Reference deployment:
 
-- text-embedding-qwen3-embedding-8b;
-- qwen3-reranker-4b.
+- embedding upstream/download name: `Qwen/Qwen3-Embedding-8B`;
+- embedding LM Studio runtime ID currently observed: `text-embedding-qwen3-embedding-8b`;
+- embedding dimension: `4096`;
+- reranker upstream/download name: `Qwen/Qwen3-Reranker-4B`;
+- reranker LM Studio runtime ID currently observed: `qwen3-reranker-4b`.
+
+Operators should search these upstream model names in LM Studio Discover and choose a suitable supported quantization rather than relying on a hardcoded community GGUF filename. Runtime IDs are configuration values and may differ across installations.
 
 A generative llm_model may exist for explicitly generative/admin workflows, but
 normal search and document classification do not require it.
@@ -465,8 +498,11 @@ Tools:
 ### `rag_search`
 Semantic search with collection/source filters and source traceability. By default the MCP does not guess a collection filter: it searches all Default-search-enabled collections. Explicit collection selection is reserved for an explicit user request.
 
+### `rag_evidence_graph`
+Experimental CPU evidence graph over retrieved passages. It is fail-open and exploratory; shared named mentions are not treated as verified semantic relationships.
+
 ### `rag_search_metrics`
-Retrieval observability summary.
+Retrieval observability summary including latency percentiles such as P95/P99. These are observability values, not hardcoded SLO gates.
 
 ### `list_collections`
 Available knowledge bases with document/chunk counts.
@@ -475,6 +511,42 @@ Available knowledge bases with document/chunk counts.
 Read extracted document text, bounded by requested maximum length.
 
 MCP and HTTP search use the same underlying `semantic_search` owner.
+
+### 13.1 MCP client connectivity
+
+The server contract and the network transport are separate concerns. RAG MCP owns `/mcp`; each client must still have a network/authentication path to it.
+
+```mermaid
+flowchart TD
+    MCP[RAG MCP /mcp]
+
+    GPT[ChatGPT] --> OAI[OpenAI Secure MCP Tunnel]
+    API[Responses API / Codex] -->|tunnel_id| OAI
+    OAI --> TC[tunnel-client sidecar]
+    TC --> MCP
+
+    CC[Claude Code inside reachable network] -->|Streamable HTTP| MCP
+    EXT[External non-OpenAI client] -->|VPN / secured HTTPS / reachable network| MCP
+```
+
+**ChatGPT / OpenAI:** use OpenAI Secure MCP Tunnel for a private deployment. `deploy/tunnel.compose.yml` and `scripts/deploy-prod.sh` already support the sidecar. The remaining setup is operator-owned: create the tunnel in OpenAI Platform, associate the correct organization/workspace, provision the restricted runtime key and `tunnel-client` configuration outside Git, point the local MCP target at `http://app:8000/mcp`, and create the custom MCP connection in ChatGPT using the same `tunnel_id`. For Responses API usage, pass `tunnel_id` rather than a private `server_url`.
+
+**Claude Code:** OpenAI Secure MCP Tunnel is not a Claude transport. When Claude Code runs on a machine that can reach the RAG host, add the HTTP MCP server directly:
+
+```bash
+claude mcp add --transport http rag-mcp http://docker-prod01.lab:8000/mcp
+claude mcp list
+```
+
+When API-token protection is enabled, Claude Code also needs the `Authorization: Bearer ...` header in its local MCP configuration. Do not commit that credential. If Claude Code is outside the private network, provide a separately secured path such as VPN/WireGuard or a public HTTPS MCP endpoint with authentication.
+
+### 13.2 Sign in with ChatGPT is not MCP connectivity
+
+OpenAI's **Sign in with ChatGPT** is an OAuth/PKCE flow for eligible open-source applications. It can grant an application `chatgpt.tokens.use.direct`, after which the application calls OpenAI's public Responses API with the user's plan-backed access token. This is an **outbound inference provider**. It does not expose a local MCP server to ChatGPT and does not replace Secure MCP Tunnel.
+
+The pattern evaluated in `srbhr/Resume-Matcher` uses dynamic client registration, Authorization Code + PKCE (S256), a loopback `127.0.0.1` callback, encrypted access/refresh-token storage, `/v1/models` for the account model picker, and `/v1/responses` for inference.
+
+RAG MCP does **not** implement this provider today. Current recommendation: keep LM Studio as the core local model runtime and keep OpenAI access on the client side through MCP/Tunnel. A future ChatGPT-plan provider would only make sense as an explicitly optional fallback for generative/admin workloads; it is not required for retrieval or for ChatGPT to access the RAG.
 
 ---
 
@@ -640,9 +712,9 @@ Current optimized defaults: candidate_multiplier=2, max_candidates=8, max_chars_
 
 ## 20. Resident reranker mode
 
-Model residency is now owned by `app/model_runtime.py`, not by independent search/ingest load-unload branches. Jobs enter a bounded FIFO queue and declare the exact model profile they need. Consecutive jobs with the same profile reuse resident models; incompatible jobs trigger a controlled profile transition.
+Model residency is owned by `app/model_runtime.py`, not by independent search/ingest load-unload branches. GPU work for semantic search, ingestion embedding batches and standalone reranking uses the same bounded FIFO scheduler and declares the model profile it needs. Consecutive jobs with the same profile reuse resident models; incompatible jobs trigger a controlled profile transition.
 
-Semantic search is atomic from query embedding through pgvector retrieval and reranking, so a classification job cannot unload the reranker in the middle of an active request. Classification jobs may use a larger generative LLM and keep it resident across consecutive compatible classification jobs; the following incompatible queued job determines when the runtime transitions to another model profile.
+Semantic search is atomic from query embedding through pgvector retrieval and reranking. Ingestion yields between embedding batches so queries can interleave at queue boundaries without racing model load/unload. Normal document classification uses embeddings (with reranker fallback), not a generative LLM. Generative/admin workflows such as autoconfiguration remain separate and must not silently redefine the normal resident retrieval profile.
 
 This supersedes the older switch-vs-resident operational model while preserving the same goal: avoid unnecessary model churn without allowing concurrent callers to race over finite VRAM.
 
@@ -763,7 +835,7 @@ Viável e rápido, mas 12B foi mais rápido e não mostrou perda de qualidade no
 
 RAG MCP está operacional:
 - API local: `http://127.0.0.1:8000`
-- API LAN: `http://192.168.1.142:8000`
+- API PROD/LAN: `http://docker-prod01.lab:8000`
 - LM Studio: `http://192.168.1.10:1234`
 - PostgreSQL + pgvector
 - worker ativo
@@ -796,7 +868,7 @@ lookup by document id. The admin UI exposes Supersede/Restore controls.
 
 ### Remaining roadmap
 
-- OpenAI Secure MCP Tunnel is active in production as a Compose sidecar with deployment-owned host runtime inputs, following the REACH pattern.
+- OpenAI Secure MCP Tunnel **support is implemented** as an optional Compose sidecar with deployment-owned host runtime inputs. Operator provisioning/activation (`tunnel_id`, runtime key/config and ChatGPT association) remains an external deployment step.
 All original runtime/product roadmap items (default-search semantics, explicit error semantics, automatic classification, directory synchronization, administrative UI parity, encoding recovery, GitHub publication and production deployment) are implemented.
 
 ---
@@ -863,14 +935,19 @@ RAG_GITHUB_REPO=rag-mcp
 
 `Publish GitHub` runs on the production runner only after `Public Surface`, `Unit + Regression`, `Integration` and `ci-tag-green` succeed. The publication script sets `GIT_SSH_COMMAND` to the private Deploy Key, adds the GitHub remote and pushes the validated commit to `main` plus the green version tag.
 
-```text
-GitLab main
-  → validate
-  → green tag
-  → production runner
-  → GitHub SSH Deploy Key
-  → GitHub main + tag
+```mermaid
+flowchart TD
+    FB[Feature branch push] --> FV[Validate only]
+    FV --> MERGE[Merge when green]
+    MERGE --> MAIN[main]
+    MAIN --> MV[Validate]
+    MV --> TAG[Green version tag]
+    TAG --> REL[Build Release]
+    REL --> PUB[Publish GitHub main + tag]
+    PUB --> PROD[Deploy Production]
 ```
+
+Feature branches never create versions or deployment side effects. Failed pipelines do not create `*-fail` tags.
 
 Internal GitLab repository/tag operations may use `CI_JOB_TOKEN`; GitHub publication must not depend on `CI_JOB_TOKEN`. The publication job also **must not clone or replace `rag-private`**. Host publication material already exists persistently and is only read by the job.
 
@@ -883,7 +960,7 @@ This separation is intentional:
 ## Reference endpoints
 
 - RAG local: `http://127.0.0.1:8000`
-- RAG LAN: `http://192.168.1.142:8000`
+- RAG PROD/LAN: `http://docker-prod01.lab:8000`
 - LM Studio: `http://192.168.1.10:1234`
 
 ## MCP validation
@@ -984,7 +1061,7 @@ Ingestion settings include chunk size, overlap, minimum chunk size, strategy, em
 
 ## Network
 
-The API is currently published on host port 8000. LAN clients can use `http://192.168.1.142:8000`.
+The API is currently published on host port 8000. Production LAN clients can use `http://docker-prod01.lab:8000`.
 
 Private deployment addresses are runtime facts, not architectural requirements.
 
@@ -1101,9 +1178,12 @@ Baseline on the existing server (7 queries, k=5, no filters): known-source
 recall 0.4286, MRR 0.2619, mean latency 3249 ms, mean short passages 1.5714.
 Repeat after deployment; compare identical cases and model settings.
 
-Secure MCP Tunnel: use the existing deploy/tunnel.compose.yml sidecar. Operator
-provisions the tunnel client configuration and credentials outside the repository.
-Provide the deployment host paths through RAG_TUNNEL_BINARY and RAG_TUNNEL_DIR
-(the latter contains tunnel-client.yaml). Route only the MCP endpoint
-http://app:8000/mcp from the sidecar network. Do not commit credentials or expose
-the administrative API. Verify tools/list and a read-only rag_search after setup.
+Secure MCP Tunnel: repository support is complete but operator provisioning is
+separate. Use `deploy/tunnel.compose.yml`; provision `tunnel_id`, restricted
+runtime API key and tunnel-client configuration outside the repository. Provide
+deployment host paths through `RAG_TUNNEL_BINARY` and `RAG_TUNNEL_DIR` (the latter
+contains `tunnel-client.yaml`). Route only `http://app:8000/mcp` from the sidecar
+network. Do not commit credentials or expose the administrative API. After the
+OpenAI tunnel is created and associated with the intended workspace, verify
+`tunnel-client doctor`, sidecar readiness, MCP `tools/list`, and a read-only
+`rag_search` from the actual OpenAI client.
