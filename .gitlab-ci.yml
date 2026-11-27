@@ -11,6 +11,7 @@ image: python:3.13-bookworm
 stages:
   - validate
   - tag
+  - release
   - publish
   - deploy
 
@@ -112,7 +113,7 @@ ci-tag-green:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
       when: on_success
 
 ci-tag-red:
@@ -122,8 +123,19 @@ ci-tag-red:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
       when: on_failure
+
+"Release Gate":
+  stage: release
+  image: alpine:3.21
+  before_script: []
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+  script:
+    - 'echo "Validated commit ${CI_COMMIT_SHA} is eligible to continue through the release stage."'
 
 "Publish GitHub":
   stage: publish
@@ -138,12 +150,35 @@ ci-tag-red:
     - "Regression"
     - "Integration"
     - "ci-tag-green"
+    - "Release Gate"
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - bash scripts/publish-github.sh
+
+"Publish Gate":
+  stage: publish
+  image: alpine:3.21
+  before_script: []
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
+  script:
+    - 'echo "Branch pipeline: GitHub publication is intentionally skipped."'
+
+"Deploy Gate":
+  stage: deploy
+  image: alpine:3.21
+  before_script: []
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
+  script:
+    - 'echo "Branch pipeline: production deployment is intentionally skipped."'
 
 "Deploy Production":
   stage: deploy
