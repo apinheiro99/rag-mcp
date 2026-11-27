@@ -17,7 +17,7 @@ ingest:
   embed_max_retries: 4      # tentativas por lote antes de marcar "waiting"
   retry_backoff_base: 5     # espera (s) após falha transitória (exponencial)
   retry_backoff_max: 300    # teto do backoff (s)
-  max_file_mb: 200          # tamanho máximo por arquivo importado
+  max_file_mb: 512000       # 500 GiB por arquivo importado
   strip_whitespace: true    # normaliza espaços/linhas em branco na extração
 
 search:
