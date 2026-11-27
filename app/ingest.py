@@ -491,6 +491,13 @@ class DocumentIngestor:
             or effective["ingest"]["embed_batch_size"]
         )
         client = await settings.lmstudio_client()
+        rerank_cfg = effective.get("rerank", {})
+        context_length = int(rerank_cfg.get("context_length", 8192))
+        requirements = [ModelRequirement(model, context_length)]
+        if rerank_cfg.get("enabled") and rerank_cfg.get("mode") == "resident":
+            reranker_model = await settings.get("reranker_model", rerank_cfg.get("model"))
+            if reranker_model and reranker_model != model:
+                requirements.append(ModelRequirement(reranker_model, context_length))
 
         while not await self._should_pause():
             await self._cancel_if_requested(doc)
@@ -499,8 +506,13 @@ class DocumentIngestor:
                 await self._mark_ready(doc, model, effective)
                 return
 
-            await runtime_scheduler.ensure_resident(client, [ModelRequirement(model)])
-            vectors = await client.embed([chunk["content"] for chunk in batch], model)
+            texts = [chunk["content"] for chunk in batch]
+            vectors = await runtime_scheduler.run(
+                f"ingest-embed:{doc_id}",
+                client,
+                requirements,
+                lambda: client.embed(texts, model),
+            )
             await self._cancel_if_requested(doc)
             dim = len(vectors[0])
             table, coltype = await self._vector_table(dim)

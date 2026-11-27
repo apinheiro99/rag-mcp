@@ -29,8 +29,12 @@ async def rerank_with_runtime(
         context_length = int(cfg.get("context_length", 8192))
         requirements = [ModelRequirement(m, context_length) for m in embedding_models]
         requirements.append(ModelRequirement(model, context_length))
-        await runtime_scheduler.ensure_resident(client, requirements, exact=True)
-        ranked = await rerank_results(query, candidates, cfg, client)
+        ranked = await runtime_scheduler.run(
+            "rerank",
+            client,
+            requirements,
+            lambda: rerank_results(query, candidates, cfg, client),
+        )
         return ranked, (time.perf_counter() - started) * 1000, None
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"

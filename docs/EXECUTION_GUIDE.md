@@ -327,7 +327,12 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 - [x] AUD-015 — syncs da mesma source são serializados por `asyncio.Lock` no processo único atual; sem lock distribuído desnecessário.
 - [x] AUD-016 — reindex consulta/locka documentos ativos e retorna 409 antes de apagar chunks.
 - [x] AUD-018 — falha de enriquecimento GraphRAG é fail-open após core ingest; `graph_indexed_at` fica stale e o graph worker tenta novamente.
-- [ ] AUD-003 — scheduler existente já controla residência em search/ingest/rerank, mas validar/fechar fila única de **operações** antes de considerar resolvido; nunca criar segundo scheduler.
+- [x] AUD-003 — `runtime_scheduler.run()` existente agora é a FIFO única das operações de Search, embedding de Ingest e rerank; ingest preserva perfil residente embedding+reranker. Nenhum segundo scheduler criado.
+
+### Nota de escopo do runtime GPU
+
+- fila única fechada neste ciclo para **ingest/query/rerank**, conforme decisão já registrada;
+- autoconfig com LLM pesado continua como item separado porque descarregar o LLM e restaurar imediatamente o perfil residente embedding+reranker exige política explícita de pós-job; não misturar essa decisão neste patch.
 
 ### Não alterar sem decisão/medição explícita
 
