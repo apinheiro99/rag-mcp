@@ -478,8 +478,7 @@ async def _lexical_search(query, cols, filters, limit):
                        ts_rank_cd(to_tsvector('english', c.content), q.term) AS lexical_score
                 FROM chunks c JOIN documents d ON d.id=c.document_id
                 JOIN collections col ON col.id=c.collection_id
-                CROSS JOIN (SELECT to_tsquery('english', string_agg(quote_literal(lexeme), ' | ')) AS term
-                            FROM unnest(tsvector_to_array(to_tsvector('english', %s))) AS t(lexeme)) q
+                CROSS JOIN (SELECT plainto_tsquery('english', %s) AS term) q
                 WHERE c.collection_id = ANY(%s::uuid[]) AND c.embedded
                   AND d.status='ready'
                   AND to_tsvector('english', c.content) @@ q.term {extra}

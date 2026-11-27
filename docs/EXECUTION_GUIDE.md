@@ -129,7 +129,8 @@ Pendências:
 - [ ] rodar novamente avaliação avançada contra serviço real/PROD;
 - [ ] validar nomes de livros, termos técnicos, padrões e conceitos nomeados;
 - [ ] investigar individualmente cada caso fraco;
-- [ ] usar `EXPLAIN ANALYZE` antes de mexer em SQL/índice lexical;
+- [ ] usar `EXPLAIN ANALYZE` antes de mexer em índice lexical;
+- [x] reduzir o lexical query de OR entre todos os lexemas para `plainto_tsquery` (AND), preservando o mesmo GIN; motivação: dogfooding mostrou 0,6–3,5 s em termos amplos como `Strategy pattern`; validar no PROD antes de qualquer mudança de índice.
 - [ ] adicionar poucos testes PostgreSQL reais de lexical/hybrid;
 - [ ] não trocar heurística determinística por LLM planner sem evidência e aprovação.
 
