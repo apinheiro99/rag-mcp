@@ -275,3 +275,24 @@ def test_reference_page_subtitles_match_approved_screens():
     assert "Inspect, classify, organize, and maintain your indexed library." in js
     assert "Query the retrieval system across enabled collections." in js
     assert "Configure runtime, collection behavior, and directory sources." in js
+
+
+def test_documents_file_badges_follow_real_extensions_and_search_rows_do_not_overlap():
+    js = Path("app/static/app.js").read_text()
+    css = Path("app/static/style.css").read_text()
+    assert 'epub: "EPUB"' in js
+    assert 'azw3: "AZW3"' in js
+    assert 'py: "PY"' in js
+    assert 'json: "JSON"' in js
+    assert 'file-kind-${kind.ext}' in js
+    assert '"◇ All collections"' in js
+    assert '.search-collection-row{grid-template-columns:minmax(180px,1fr) 38px 125px}' in css
+
+
+def test_reference_pages_use_dashboard_readability_scale():
+    css = Path("app/static/style.css").read_text()
+    assert '.reference-page{font-size:15px}' in css
+    assert '.reference-page .ref-section-title h2{font-size:22px}' in css
+    assert '.documents-table th{height:44px;font-size:13px}' in css
+    assert '.search-rule-note{font-size:13px' in css
+    assert '.settings-model-row b{font-size:13px}' in css

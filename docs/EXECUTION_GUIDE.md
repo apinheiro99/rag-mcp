@@ -168,6 +168,16 @@ Settings — checklist literal de `docs/screens/06_settings.png`:
 - [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
 - [ ] validação visual final no PROD.
 
+### Revisão visual após deploy 703
+
+Feedback do usuário com screenshots reais de PROD (`1920×1032`):
+
+- Dashboard aprovado e passa a ser a **referência de escala tipográfica/legibilidade** também para as outras páginas;
+- Import, Documents, Search e Settings estavam estruturalmente próximos, mas com tipografia/controles pequenos demais e espaço morto excessivo;
+- correção obrigatória: manter fontes/controles legíveis como no Dashboard e obter densidade reduzindo padding/gaps, **nunca miniaturizando texto**;
+- Documents tinha bug real de apresentação: qualquer extensão diferente de `.md` virava `PDF`; corrigir por extensão real (`PDF`, `EPUB`, `AZW3`, `MD`, `PY`, `JSON`, `DOCX`, etc.);
+- depois desta correção, revalidar as quatro telas diretamente contra `03..06`, usando os screenshots de PROD como evidência de escala.
+
 ### Estado atual da UI
 
 - Dashboard aprovado visualmente pelo usuário após o pixel-contract.

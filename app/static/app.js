@@ -844,7 +844,7 @@ function renderDocCollectionFilter() {
   const btn = $("docCollectionFilterBtn");
   if (!panel || !btn) return;
   const active = [...state.docCollectionFilters.values()].filter((v) => v !== "neutral").length;
-  btn.textContent = active ? `Collections · ${active}` : "Collections";
+  btn.textContent = active ? `◇ Collections · ${active}` : "◇ All collections";
   panel.innerHTML = `<div class="collection-filter-head"><span>Click to cycle: include → exclude → neutral</span><button class="btn mini" type="button" onclick="clearDocCollectionFilters()">Clear</button></div>` +
     state.collections.map((c) => {
       const mode = state.docCollectionFilters.get(c.id) || "neutral";
@@ -861,6 +861,18 @@ let docsDebounce = null;
 function resetDocFilters(){state.docFilterEpoch++;state.docsOffset=0;state.selectedDocs.clear();updateDocsSelectionUI();return loadDocuments();}
 function debouncedDocs() { clearTimeout(docsDebounce); docsDebounce = setTimeout(resetDocFilters, 350); }
 function docsPage(dir) { state.docsOffset = Math.max(0, state.docsOffset + dir * state.docsLimit); loadDocuments(); }
+function documentFileKind(filename = "") {
+  const match = String(filename).toLowerCase().match(/\.([a-z0-9]+)$/);
+  const ext = match ? match[1] : "file";
+  const labels = {
+    pdf: "PDF", epub: "EPUB", azw3: "AZW3", mobi: "MOBI", md: "MD", markdown: "MD",
+    doc: "DOC", docx: "DOCX", txt: "TXT", html: "HTML", htm: "HTML", json: "JSON",
+    jsonl: "JSONL", py: "PY", js: "JS", ts: "TS", yaml: "YAML", yml: "YAML",
+    csv: "CSV", rst: "RST", tex: "TEX"
+  };
+  return { ext, label: labels[ext] || ext.toUpperCase().slice(0, 5) || "FILE" };
+}
+
 function classificationSummary(d) {
   const queued = d.meta?.auto_classify && !d.auto_suggestion;
   if (queued) return `<span class="badge pending">Category queued</span>`;
@@ -989,9 +1001,10 @@ async function loadDocuments(){
     </tr></thead><tbody>` + data.items.map((d) => {
       const pct = d.chunks_total ? Math.round((d.chunks_embedded / d.chunks_total) * 100) : 0;
       const selected = state.selectedDocs.has(d.id) ? "checked" : "";
+      const kind = documentFileKind(d.filename);
       return `<tr>
         <td><input type="checkbox" class="doc-select" ${selected} onchange="toggleDocSelection('${d.id}', this.checked)"></td>
-        <td><div class="doc-title-cell"><span class="file-kind">${d.filename.toLowerCase().endsWith(".md") ? "MD" : "PDF"}</span><div><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></div></div></td>
+        <td><div class="doc-title-cell"><span class="file-kind file-kind-${kind.ext}">${esc(kind.label)}</span><div><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></div></div></td>
         <td><span class="collection-cell">◇ ${esc(d.collection)}</span></td>
         <td>${badge(d.status)}${d.error ? `<div class="docpath" style="color:var(--red);max-width:220px">${esc(d.error.slice(0, 90))}</div>` : ""}</td>
         <td>${classificationSummary(d)}</td>
