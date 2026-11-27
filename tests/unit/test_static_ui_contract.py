@@ -247,3 +247,31 @@ def test_dashboard_pixel_contract_contains_reference_iconography_and_dimensions(
     assert 'height:115px!important' in css
     assert 'height:300px;min-height:300px' in css
     assert 'height:310px;min-height:310px' in css
+
+
+def test_remaining_reference_screens_have_pixel_contract_structure():
+    html = Path("app/static/index.html").read_text()
+    js = Path("app/static/app.js").read_text()
+    css = Path("app/static/style.css").read_text()
+    # Import
+    for token in ("import-destination-grid", "import-progress-grid", "import-config-layout", "reference-upload-results"):
+        assert token in html + css
+    # Documents
+    for token in ("documents-filter-row", "documents-bulk-row", "documents-table-wrap", "documents-pagination"):
+        assert token in html + css
+    assert 'docsLimit: 25' in js
+    # Search
+    for token in ("search-main-bar", "search-tuning-strip", "search-scope-card", "reference-ranked-list"):
+        assert token in html + js + css
+    assert "selection?.reason" in js
+    # Settings
+    for token in ("settings-runtime-layout", "settings-worker-panel", "reference-collection-behavior", "reference-sources", "reference-system"):
+        assert token in html + css
+
+
+def test_reference_page_subtitles_match_approved_screens():
+    js = Path("app/static/app.js").read_text()
+    assert "Add files, folders, and automate routing into collections." in js
+    assert "Inspect, classify, organize, and maintain your indexed library." in js
+    assert "Query the retrieval system across enabled collections." in js
+    assert "Configure runtime, collection behavior, and directory sources." in js

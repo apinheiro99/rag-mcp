@@ -64,253 +64,123 @@
   </section>
 
   <!-- ==================== IMPORT ==================== -->
-  <section id="tab-import" class="tab">
-    <div class="card">
-      <div class="card-head">
-        <h2>1 · Destination</h2>
+  <section id="tab-import" class="tab reference-page import-reference">
+    <div class="card ref-section import-destination">
+      <div class="ref-section-title"><span class="ref-section-icon">◇</span><div><h2>Destination</h2><p>Choose an existing collection or create a new one for the imported content.</p></div></div>
+      <div class="import-destination-grid">
+        <label>Collection<select id="importCollection" onchange="onImportCollectionChange()"></select></label>
+        <label>New collection<input id="importNewCollection" type="text" placeholder="e.g., Product Docs, HR Policies"></label>
+        <button class="btn ref-outline-btn" onclick="createCollection()">＋ Create Collection</button>
       </div>
-      <div class="row">
-        <label>Collection
-          <select id="importCollection" onchange="onImportCollectionChange()"></select>
-        </label>
-      </div>
-      <p class="muted small">Use <b>Automatic classification</b> for books: files enter Computer Books, then the classifier assigns an existing category when one matches; otherwise the document stays uncategorized.</p>
     </div>
 
-    <div class="card" id="importProgressCard">
-      <div class="card-head">
-        <h2>2 · Ingestion progress</h2>
-        <div>
-          <button id="importBtnPause" class="btn" onclick="pauseIngest()">Pause</button>
-          <button id="importBtnResume" class="btn primary hidden" onclick="resumeIngest()">Resume</button>
-        </div>
+    <div class="card ref-section import-progress" id="importProgressCard">
+      <div class="ref-section-title"><span class="ref-section-icon pulse-icon">⌁</span><div><h2>Ingestion Progress</h2><p>Current ingestion status and processing results.</p></div></div>
+      <div class="import-progress-grid">
+        <div class="import-status-box"><span>Status</span><strong id="importStatusLabel">Indexing</strong></div>
+        <div class="import-progress-main"><div class="row between"><span id="importIngestSummary">No active ingestion.</span><b id="importProgressPct">0%</b></div><div class="progress-wrap"><div class="progress-bar" id="importIngestBar"></div></div></div>
+        <div id="importIngestCounts" class="import-counts"></div>
+        <button id="importBtnPause" class="btn ref-outline-btn" onclick="pauseIngest()">Ⅱ Pause</button>
+        <button id="importBtnResume" class="btn ref-outline-btn hidden" onclick="resumeIngest()">▶ Resume</button>
       </div>
-      <div id="importIngestSummary" class="muted">No active ingestion.</div>
-      <div class="progress-wrap"><div class="progress-bar" id="importIngestBar"></div></div>
-      <div id="importIngestCounts" class="chips"></div>
-      <div id="importCurrentDoc" class="muted small"></div>
+      <div id="importCurrentDoc" class="muted small hidden"></div>
     </div>
-    <div class="card">
-      <div class="card-head"><h2>3 · Files</h2></div>
+
+    <div class="card ref-section import-files">
+      <div class="ref-section-title"><span class="ref-section-icon">▤</span><div><h2>Files</h2><p>Add files or folders to be ingested. Supported formats include PDF, DOCX, TXT, MD, and more.</p></div></div>
       <div id="dropzone" tabindex="0">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
-          <path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-          <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-        </svg>
-        <p><strong>Drag files or folders here</strong></p>
-        <p class="muted">or</p>
-        <div class="row center">
-          <button class="btn" onclick="document.getElementById('fileInput').click()">Select files</button>
-          <button class="btn" onclick="document.getElementById('dirInput').click()">Select folder</button>
-        </div>
-        <p class="muted small">Markdown, PDF, EPUB, TXT, HTML, DOCX, source code, and other text formats. Folders are scanned recursively; unsupported files are reported and skipped.</p>
-        <input type="file" id="fileInput" multiple hidden>
-        <input type="file" id="dirInput" webkitdirectory hidden>
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <p><strong>Drag and drop files or a folder here</strong></p><p class="muted">or choose an option below</p>
+        <div class="row center"><button class="btn primary" onclick="document.getElementById('fileInput').click()">▤ Select files</button><button class="btn" onclick="document.getElementById('dirInput').click()">□ Select folder</button></div>
+        <input type="file" id="fileInput" multiple hidden><input type="file" id="dirInput" webkitdirectory hidden>
       </div>
-      <div id="uploadResults"></div>
+      <div id="uploadResults" class="reference-upload-results"></div>
     </div>
 
-    <div class="card" id="ingestConfigCard">
-      <div class="card-head">
-        <h2>4 · Ingestion configuration</h2>
-        <span id="stagedCount" class="pill"></span>
+    <div class="card ref-section import-config" id="ingestConfigCard">
+      <div class="ref-section-title"><span class="ref-section-icon">⚙</span><div><h2>Ingestion Configuration</h2><p>Configure how imported content is classified and routed into collections.</p></div></div>
+      <div class="import-config-layout">
+        <div class="tabs-mini ref-config-tabs"><button id="modeManualBtn" class="active" onclick="setMode('manual')">◇ Manual</button><button id="modeAutoBtn" onclick="setMode('auto')">✧ Automatic (LLM)</button></div>
+        <div class="import-config-description"><span class="sparkle">✧</span><div><b>Automatic classification</b><p>Automatically classifies imported content using the configured model and routes high-confidence matches into existing categories; otherwise the document stays uncategorized.</p></div></div>
       </div>
-      <div class="tabs-mini">
-        <button id="modeManualBtn" class="active" onclick="setMode('manual')">Manual</button>
-        <button id="modeAutoBtn" onclick="setMode('auto')">Automatic configuration</button>
-      </div>
-
-      <div id="modeManual">
-        <p class="muted small">You control the parameters. Defaults come from <code>config/defaults.yaml</code> plus collection overrides.</p>
-        <div class="form-grid" id="manualForm"></div>
-      </div>
-
-      <div id="modeAuto" class="hidden">
-        <p class="muted small">An optional LM Studio model analyzes a document sample and recommends ingestion parameters. You review them before starting; category classification remains embedding + reranker.</p>
-        <div class="row">
-          <label>LLM model <select id="autoModel"></select></label>
-          <button class="btn primary" id="btnSuggest" onclick="suggestConfig()">Analyze documents</button>
-        </div>
-        <div id="suggestionBox"></div>
-      </div>
-
-      <div class="row between ingest-actions">
-        <label class="check"><input type="checkbox" id="saveAsDefault"> save as collection default</label>
-        <button class="btn primary big" id="btnStart" onclick="startIngest()">Start ingestion</button>
-      </div>
+      <div id="modeManual" class="reference-config-details"><div class="form-grid" id="manualForm"></div></div>
+      <div id="modeAuto" class="hidden reference-config-details"><div class="row"><label>LLM model <select id="autoModel"></select></label><button class="btn primary" id="btnSuggest" onclick="suggestConfig()">Analyze documents</button></div><div id="suggestionBox"></div></div>
+      <div class="row between ingest-actions reference-ingest-actions"><label class="check"><input type="checkbox" id="saveAsDefault"> save as collection default</label><span id="stagedCount" class="pill"></span><button class="btn primary big" id="btnStart" onclick="startIngest()">Start ingestion</button></div>
     </div>
-
   </section>
 
   <!-- ==================== DOCUMENTS ==================== -->
-  <section id="tab-documents" class="tab">
-    <div class="card">
-      <div class="card-head">
-        <h2>Documents</h2>
-        <div class="row">
-          <button class="btn" id="docCollectionFilterBtn" type="button" onclick="toggleDocCollectionFilter()">Collections</button>
-          <div id="docCollectionFilterPanel" class="collection-filter-panel hidden"></div>
-          <select id="docFilterStatus" onchange="resetDocFilters()">
-            <option value="">All statuses</option>
-            <option value="staged">Awaiting configuration</option>
-            <option value="pending">Queued</option>
-            <option value="extracting">Extracting</option>
-            <option value="chunking">Chunking</option>
-            <option value="embedding">Embeddings</option>
-            <option value="waiting">Waiting for LM Studio</option>
-            <option value="ready">Indexed</option>
-            <option value="error">Errors</option>
-          </select>
-          <input type="search" id="docSearch" placeholder="Filter by name/path…" oninput="debouncedDocs()">
-          <button class="btn" onclick="loadDocuments()">Refresh</button>
-        </div>
+  <section id="tab-documents" class="tab reference-page documents-reference">
+    <div class="card documents-shell">
+      <div class="documents-filter-row">
+        <div class="doc-filter-wrap"><button class="btn doc-filter-button" id="docCollectionFilterBtn" type="button" onclick="toggleDocCollectionFilter()">◇ All collections⌄</button><div id="docCollectionFilterPanel" class="collection-filter-panel hidden"></div></div>
+        <select id="docFilterStatus" onchange="resetDocFilters()"><option value="">⌁ All statuses</option><option value="staged">Awaiting configuration</option><option value="pending">Queued</option><option value="extracting">Extracting</option><option value="chunking">Chunking</option><option value="embedding">Embeddings</option><option value="waiting">Waiting for LM Studio</option><option value="ready">Indexed</option><option value="error">Errors</option></select>
+        <div class="doc-search-wrap"><span>⌕</span><input type="search" id="docSearch" placeholder="Search documents (title, content, or metadata)..." oninput="debouncedDocs()"></div>
+        <button class="btn ref-outline-btn" onclick="loadDocuments()">↻ Refresh</button>
       </div>
-      <div class="row between bulk-toolbar">
-        <label class="check"><input type="checkbox" id="docsSelectPage" onchange="toggleDocsPage(this.checked)"> select page</label>
-        <button class="btn mini" id="btnSelectFiltered" onclick="selectFilteredDocs()">Select all filtered</button>
-        <button class="btn mini" id="btnClearSelection" onclick="clearDocsSelection()" disabled>Clear selection</button>
-        <div class="row">
-          <span id="docsSelectedCount" class="muted small">0 selected</span>
-          <button class="btn" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>Reclassify</button>
-          <button class="btn" id="btnBulkMoveSelected" onclick="bulkMoveSelected()" disabled>Move</button>
-          <button class="btn" id="btnBulkReindexSelected" onclick="bulkReindexSelected()" disabled>Reindex</button>
-          <button class="btn" id="btnBulkRetrySelected" onclick="bulkRetrySelected()" disabled>Retry</button>
-          <button class="btn" id="btnBulkCancelSelected" onclick="bulkCancelSelected()" disabled>Cancel processing</button>
-          <button class="btn danger" id="btnBulkDeleteSelected" onclick="bulkDeleteSelected()" disabled>Delete</button>
-        </div>
+      <div class="documents-bulk-row">
+        <span id="docsSelectedCount" class="docs-selected-count">0 selected</span><span class="bulk-sep"></span>
+        <label class="check docs-page-select"><input type="checkbox" id="docsSelectPage" onchange="toggleDocsPage(this.checked)"> page</label>
+        <button class="btn mini hidden" id="btnSelectFiltered" onclick="selectFilteredDocs()">Select all filtered</button><button class="btn mini hidden" id="btnClearSelection" onclick="clearDocsSelection()" disabled>Clear selection</button>
+        <button class="btn bulk-action" id="btnBulkClassifySelected" onclick="bulkClassifySelected()" disabled>✧ Reclassify selected</button>
+        <button class="btn bulk-action" id="btnBulkMoveSelected" onclick="bulkMoveSelected()" disabled>□ Move</button>
+        <button class="btn bulk-action" id="btnBulkReindexSelected" onclick="bulkReindexSelected()" disabled>↻ Reindex</button>
+        <button class="btn bulk-action hidden" id="btnBulkRetrySelected" onclick="bulkRetrySelected()" disabled>Retry</button>
+        <button class="btn bulk-action hidden" id="btnBulkCancelSelected" onclick="bulkCancelSelected()" disabled>Cancel processing</button>
+        <button class="btn danger bulk-action" id="btnBulkDeleteSelected" onclick="bulkDeleteSelected()" disabled>▱ Delete</button>
       </div>
-      <div id="docsTable"></div>
-      <div class="row between">
-        <span id="docsTotal" class="muted small"></span>
-        <div class="row">
-          <button class="btn" id="docsPrev" onclick="docsPage(-1)">← Previous</button>
-          <button class="btn" id="docsNext" onclick="docsPage(1)">Next →</button>
-        </div>
-      </div>
+      <div id="docsTable" class="documents-table-wrap"></div>
+      <div class="documents-footer"><span id="docsTotal" class="muted small"></span><div class="documents-pagination"><span>Rows per page:</span><select id="docsPageSize" onchange="state.docsLimit=+this.value;state.docsOffset=0;loadDocuments()"><option selected>25</option><option>50</option><option>100</option></select><button class="btn mini" id="docsPrev" onclick="docsPage(-1)">‹</button><span id="docsPageIndicator" class="page-indicator">1</span><button class="btn mini" id="docsNext" onclick="docsPage(1)">›</button></div></div>
     </div>
   </section>
 
   <!-- ==================== SEARCH ==================== -->
-  <section id="tab-search" class="tab search-tab">
-    <div class="card search-panel">
-      <div class="search-panel-head">
-        <div><span class="eyebrow">SEMANTIC RETRIEVAL</span><h2>Search the knowledge base</h2></div>
-      </div>
-      <div class="search-query-row">
-        <input type="text" id="searchQuery" placeholder="Ask the knowledge base…" class="grow"
-               onkeydown="if(event.key==='Enter')doSearch()">
-        <button class="btn primary search-submit" onclick="doSearch()">Search</button>
-      </div>
-      <div class="search-collections" id="searchCollections"></div>
-      <div class="search-advanced-label">Advanced filters</div>
-      <div class="form-grid search-filter-grid">
-        <label>document_id <input type="text" id="searchDocumentId" placeholder="optional UUID"></label>
-        <label>author <input type="text" id="searchAuthor" placeholder="partial match"></label>
-        <label>source_path <input type="text" id="searchSourcePath" placeholder="exact path"></label>
-        <label>chapter <input type="text" id="searchChapter" placeholder="exact chapter"></label>
-        <label>page <input type="number" id="searchPage" min="1" placeholder="optional"></label>
-      </div>
-      <div class="search-tuning-row">
-        <label>top_k <input type="number" id="searchTopK" value="8" min="1" max="50"></label>
-        <label>minimum score <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05"></label>
-        <span class="muted small">No collection filter = search every collection with Default search ON.</span>
-      </div>
+  <section id="tab-search" class="tab reference-page search-reference">
+    <div class="card search-main-bar">
+      <div class="search-main-input"><span>⌕</span><input type="text" id="searchQuery" placeholder="Ask the retrieval system..." onkeydown="if(event.key==='Enter')doSearch()"><button class="search-clear" type="button" onclick="document.getElementById('searchQuery').value=''">×</button></div>
+      <button class="btn primary search-submit" onclick="doSearch()">⌕ Search</button>
     </div>
-    <div id="searchDiagnostics" class="card hidden"></div>
-    <div id="evidenceGraph" class="card hidden"></div>
-    <div id="searchResults" class="search-results">
-      <div class="search-output-grid">
-        <div id="evidencePreview" class="card evidence-preview"><p class="muted small">Run a search to preview the strongest evidence.</p></div>
-        <div id="rankedResults" class="card ranked-results"><p class="muted small">Ranked results will appear here.</p></div>
-      </div>
+    <div class="card search-tuning-strip">
+      <label><span class="search-tuning-icon">◇</span><b>Top-k ⓘ</b><input type="number" id="searchTopK" value="5" min="1" max="50"></label>
+      <label><span class="search-tuning-icon">♧</span><b>Reranker ⓘ</b><span class="toggle-pill on search-static-toggle">Enabled</span></label>
+      <label class="search-scope-control"><span class="search-tuning-icon">◎</span><b>Scope ⓘ</b><select id="searchScopeSelect"><option>Default (All enabled, except Knowledge Base)</option></select></label>
+      <input type="number" id="searchMinScore" value="0" min="0" max="1" step="0.05" class="hidden">
+      <input type="text" id="searchDocumentId" class="hidden"><input type="text" id="searchAuthor" class="hidden"><input type="text" id="searchSourcePath" class="hidden"><input type="text" id="searchChapter" class="hidden"><input type="number" id="searchPage" class="hidden">
     </div>
-    <div class="card search-observability">
-      <div class="card-head">
-        <h2>Retrieval observability</h2>
-        <button class="btn" onclick="loadSearchMetrics()">↻ Refresh</button>
-      </div>
-      <div id="searchMetrics" class="small muted">No data yet.</div>
+    <div class="card search-scope-card">
+      <div class="search-scope-copy"><div class="ref-section-title no-border"><span class="ref-section-icon">◇</span><div><h2>Collection Scope</h2><p>Control which collections are searched for this query.</p></div></div><div class="search-rule-note"><span>ⓘ</span><b>Default search rule:</b> Most collections are enabled (searched) by default, except “Knowledge Base”, which is disabled by default.</div></div>
+      <div class="search-collections-reference"><div class="search-collections-head"><b>Collections</b><span>Default for Search ⓘ</span></div><div class="search-collections" id="searchCollections"></div></div>
     </div>
+    <div id="searchDiagnostics" class="card hidden"></div><div id="evidenceGraph" class="card hidden"></div>
+    <div id="searchResults" class="search-results search-reference-results"><div class="search-output-grid"><div id="evidencePreview" class="card evidence-preview"><p class="muted small">Run a search to preview the strongest grounded evidence.</p></div><div id="rankedResults" class="card ranked-results"><p class="muted small">Ranked results will appear here.</p></div></div></div>
+    <div class="card search-observability hidden"><div class="card-head"><h2>Retrieval observability</h2><button class="btn" onclick="loadSearchMetrics()">↻ Refresh</button></div><div id="searchMetrics" class="small muted">No data yet.</div></div>
   </section>
 
   <!-- ==================== SETTINGS ==================== -->
-  <section id="tab-settings" class="tab">
-    <div class="card settings-section">
-      <div class="panel-title"><span class="panel-icon icon-cube" aria-hidden="true"></span><div><h2>Models & Runtime</h2><p>Configure models, inference behavior, and runtime execution parameters.</p></div></div>
-      <div class="settings-model-layout">
-        <div class="settings-model-list">
-          <div class="settings-field-row"><div><b>Embedding Model</b><span>Used for document and query embeddings.</span></div><select id="embeddingModel"></select></div>
-          <div class="settings-field-row"><div><b>Reranker</b><span>Used for result reranking and relevance.</span></div><select id="rerankerModel"></select></div>
-          <div class="settings-field-row"><div><b>LLM Model</b><span>Optional model for explicitly generative/automatic configuration workflows.</span></div><select id="llmModel"></select></div>
-          <div class="settings-field-row"><div><b>Resident-Model Behavior</b><span>Normal retrieval keeps embedding + reranker resident.</span></div>
-            <label class="check"><input type="checkbox" id="keepRerankerLoaded"> resident profile</label>
-          </div>
+  <section id="tab-settings" class="tab reference-page settings-reference">
+    <div class="card settings-runtime-reference">
+      <div class="ref-section-title"><span class="ref-section-icon">◇</span><div><h2>Models & Runtime</h2><p>Configure models, inference behavior, and runtime execution parameters.</p></div></div>
+      <div class="settings-runtime-layout">
+        <div class="settings-model-list reference-settings-models">
+          <div class="settings-model-row"><span class="settings-model-icon">◇</span><div><b>Embedding Model</b><small>Used for document and query embeddings.</small></div><select id="embeddingModel"></select><em id="embeddingModelState">✓ In Use</em></div>
+          <div class="settings-model-row"><span class="settings-model-icon">◇</span><div><b>Reranker (4B)</b><small>Used for result reranking and relevance.</small></div><select id="rerankerModel"></select><em id="rerankerModelState">✓ In Use</em></div>
+          <div class="settings-model-row"><span class="settings-model-icon">✧</span><div><b>Classification</b><small>Existing-category classification workflow.</small></div><select id="llmModel"></select><em id="llmModelState">Configured</em></div>
+          <div class="settings-model-row"><span class="settings-model-icon cube-line">⬡</span><div><b>Resident-Model Behavior</b><small>Model residency and latency preference.</small></div><label class="resident-display"><input type="checkbox" id="keepRerankerLoaded"> Keep loaded (resident)</label><em>∞ Always On</em></div>
         </div>
-        <div class="settings-runtime-box">
-          <label>LM Studio endpoint<input type="text" id="lmUrl" placeholder="http://192.168.1.50:1234"></label>
-          <div class="row">
-            <button class="btn" onclick="testLM()">Test connection</button>
-            <button class="btn primary" onclick="saveLM()">Save</button>
-          </div>
-          <div id="lmTestResult" class="small"></div>
-          <div class="row">
-            <button class="btn" onclick="loadModels(true)">↻ Refresh models</button>
-            <button class="btn primary" onclick="saveModels()">Save models</button>
-          </div>
-          <span id="modelsInfo" class="muted small"></span>
-        </div>
+        <div class="settings-worker-panel"><div class="settings-worker-title"><span>⚙</span><div><b>Concurrency / Worker Queue</b><small>Current processing and queue behavior.</small></div></div><div class="worker-setting-row"><span>Worker Concurrency ⓘ</span><strong id="workerConcurrencyDisplay">1</strong><small>Current active worker profile.</small></div><div class="worker-setting-row"><span>Queue Size ⓘ</span><strong id="workerQueueDisplay">0</strong><small>Current queued work.</small></div><div class="worker-setting-row"><span>Queue Policy ⓘ</span><strong>FIFO</strong><small>First in, first out.</small></div><div class="worker-auto-row"><span class="search-toggle on"></span><div><b>Automatic runtime management</b><small>Runtime follows the configured resident model profile.</small></div></div></div>
       </div>
+      <div class="settings-runtime-controls hidden"><label>LM Studio endpoint<input type="text" id="lmUrl"></label><button class="btn" onclick="testLM()">Test connection</button><button class="btn primary" onclick="saveLM()">Save</button><div id="lmTestResult"></div><button onclick="loadModels(true)">Refresh</button><button onclick="saveModels()">Save models</button><span id="modelsInfo"></span></div>
     </div>
 
-    <div class="settings-two-col">
-      <div class="card settings-section">
-        <div class="panel-title"><span class="panel-icon icon-cube" aria-hidden="true"></span><div><h2>Collection Search Behavior</h2><p>Configure which collections participate in default search.</p></div></div>
-        <div id="collectionBehaviorTable"></div>
-      </div>
-
-      <div class="card settings-section">
-        <div class="card-head">
-          <div class="panel-title"><span class="panel-icon icon-folder" aria-hidden="true"></span><div><h2>Directory Sources & Auto-Sync</h2><p>Manage document sources and synchronization cadence.</p></div></div>
-          <button class="btn primary" onclick="openAddSource()">+ Add Source</button>
-        </div>
-        <div id="sourcesList"></div>
-      </div>
+    <div class="settings-reference-middle settings-two-col">
+      <div class="card settings-section reference-collection-behavior"><div class="ref-section-title"><span class="ref-section-icon">◇</span><div><h2>Collection Search Behavior</h2><p>Configure which collections are included in default search (global search).</p></div></div><div id="collectionBehaviorTable"></div></div>
+      <div class="card settings-section reference-sources"><div class="card-head"><div class="ref-section-title no-border"><span class="ref-section-icon">□</span><div><h2>Directory Sources & Auto-Sync</h2><p>Manage document sources, synchronization cadence, and update behavior.</p></div></div><button class="btn primary" onclick="openAddSource()">＋ Add Source</button></div><div id="sourcesList"></div></div>
     </div>
 
-    <div class="card settings-section">
-      <div class="panel-title"><span class="panel-icon icon-server" aria-hidden="true"></span><div><h2>System / Server</h2><p>Core services, runtime health, and version information.</p></div></div>
-      <div id="systemServerGrid" class="system-server-grid"></div>
-    </div>
+    <div class="card settings-section reference-system"><div class="ref-section-title"><span class="ref-section-icon">▣</span><div><h2>System / Server</h2><p>Core services, runtime health, and version information.</p></div></div><div id="systemServerGrid" class="system-server-grid"></div></div>
 
-    <div class="card settings-section">
-      <div class="card-head"><div><h2>Book categories</h2><p class="muted small">Categories live inside <b>Computer Books</b>. Books are classified only into existing categories; unmatched books remain uncategorized.</p></div></div>
-      <div class="row">
-        <input type="text" id="newCategoryName" placeholder="New category (e.g. Economics)" class="grow">
-        <input type="text" id="newCategoryDescription" placeholder="Description / scope" class="grow">
-        <button class="btn primary" onclick="createBookCategory()">Add category</button>
-      </div>
-      <div id="categoriesList"></div>
-    </div>
-
-    <div class="card settings-section">
-      <div class="card-head"><h2>Processing defaults (advanced)</h2></div>
-      <p class="muted small">JSON overrides on top of <code>config/defaults.yaml</code>. Persisted in PostgreSQL.
-      Ex.: <code>{"ingest": {"chunk_size": 1200}, "search": {"top_k": 6}}</code></p>
-      <textarea id="overridesJson" rows="10" spellcheck="false"></textarea>
-      <div class="row">
-        <button class="btn primary" onclick="saveOverrides()">Save overrides</button>
-        <span id="overridesMsg" class="small"></span>
-      </div>
-    </div>
-
-    <div class="card settings-section">
-      <div class="card-head"><h2>Access</h2></div>
-      <div class="row">
-        <input type="password" id="apiTokenField" placeholder="API token (when RAG_API_TOKEN is configured)" class="grow">
-        <button class="btn" onclick="saveTokenFromField()">Save token</button>
-      </div>
-      <p class="muted small">The token stays only in this browser (localStorage) and is sent as <code>Authorization: Bearer …</code>.</p>
-      <div id="mcpInfo" class="small"></div>
+    <div class="settings-advanced-hidden hidden" aria-hidden="true"><p>Books are classified only into existing categories; unmatched books remain uncategorized.</p>
+      <input type="text" id="newCategoryName"><input type="text" id="newCategoryDescription"><button onclick="createBookCategory()">Add category</button><div id="categoriesList"></div><textarea id="overridesJson"></textarea><button onclick="saveOverrides()">Save overrides</button><span id="overridesMsg"></span><input type="password" id="apiTokenField"><div id="mcpInfo"></div>
     </div>
   </section>
 </main>

@@ -121,19 +121,50 @@ Checkpoint Dashboard 26/11/2026:
 - [x] pipeline 691 validou a revisão visual em cinco stages;
 - [ ] validação visual final no PROD pelo usuário; se houver diferença, continuar ajustando contra `02_dashboard.png` sem reinterpretar o layout.
 
+Import — checklist literal de `docs/screens/03_import.png`:
+
+- [x] header usa ícone Upload e subtitle da referência;
+- [x] cards `Destination`, `Ingestion Progress`, `Files` e `Ingestion Configuration` seguem a mesma ordem e densidade;
+- [x] `Destination` usa Collection + New collection + Create Collection no mesmo eixo visual;
+- [x] `Ingestion Progress` usa status, barra, percentual, contadores e Pause/Resume;
+- [x] `Files` usa dropzone central e botões Select files / Select folder;
+- [x] `Ingestion Configuration` usa Manual / Automatic (LLM) e painel explicativo;
+- [ ] validação visual final no PROD.
+
+Documents — checklist literal de `docs/screens/04_documents.png`:
+
+- [x] filtros no topo: collection, status, search e Refresh;
+- [x] barra de seleção/ações em linha separada;
+- [x] tabela com Document, Collection, Status, AI Suggestion, Progress, Size, Updated e Actions;
+- [x] linhas usam file badge, progress bar, chips/status e ações compactas;
+- [x] paginação inferior com 25 linhas por página;
+- [ ] validação visual final no PROD.
+
+Search — checklist literal de `docs/screens/05_search.png`:
+
+- [x] barra principal única com lupa, query, limpar e Search;
+- [x] faixa Top-k / Reranker / Scope;
+- [x] `Collection Scope` em duas colunas com regra default e toggles por collection;
+- [x] resultado em duas colunas: Answer/evidence à esquerda e Retrieved Results à direita;
+- [x] reason/score/fonte continuam usando dados reais do retrieval;
+- [x] observabilidade técnica continua disponível no código, mas fora do layout principal aprovado;
+- [ ] validação visual final no PROD.
+
+Settings — checklist literal de `docs/screens/06_settings.png`:
+
+- [x] `Models & Runtime` em duas colunas: modelos à esquerda e estado de worker/queue à direita;
+- [x] quatro linhas de modelo com ícones distintos;
+- [x] `Collection Search Behavior` e `Directory Sources & Auto-Sync` lado a lado;
+- [x] `System / Server` com quatro cards;
+- [x] dados apresentados vêm do runtime/configuração real; nenhum número decorativo foi inventado;
+- [x] controles avançados antigos permanecem no DOM para compatibilidade, mas fora do layout principal aprovado;
+- [ ] validação visual final no PROD.
+
 ### Estado atual da UI
 
-- Dashboard e estrutura principal já foram retrabalhados.
-- Search foi retomado e agora possui:
-  - Evidence Preview;
-  - Ranked Results;
-  - dados reais do resultado;
-  - reason/method/score de seleção;
-  - diagnostics e observabilidade existentes preservados.
-- Settings usa dados reais para:
-  - Collection Search Behavior;
-  - Directory Sources & Auto-Sync;
-  - System / Server.
+- Dashboard aprovado visualmente pelo usuário após o pixel-contract.
+- Import, Documents, Search e Settings foram reestruturados pelo mesmo método contra `docs/screens/03..06`.
+- Dados reais, reason/method/score e comportamentos existentes foram preservados; o layout principal foi alinhado às referências.
 - Não introduzir dados decorativos/fakes para imitar screenshots.
 
 ## 5. Retrieval

@@ -13,7 +13,7 @@ const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS_LABEL[s] || s)}
 
 let state = {
   collections: [], categories: [], sources: [], events: [], models: [], settings: {}, effective: null,
-  mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 50,
+  mode: "manual", suggestion: null, docsOffset: 0, docsLimit: 25,
   pollTick: 0, lastActive: 0, uploading: false,
   selectedDocs: new Set(), currentDocIds: [], docsHasPendingAI: false, activeTab: "dashboard",
   docCollectionFilters: new Map(), bulkBusy:false, docFilterEpoch:0,
@@ -71,10 +71,10 @@ const fmtTime = (s) => s ? new Date(s).toLocaleTimeString("en-US") : "";
 
 const TAB_META = {
   dashboard: ["Dashboard", "RAG MCP overview, system health, and retrieval pipeline at a glance."],
-  import: ["Import", "Add documents and route them into the knowledge base."],
-  documents: ["Documents", "Inspect, filter, classify, and manage indexed documents."],
-  search: ["Search", "Run semantic retrieval across the selected knowledge collections."],
-  settings: ["Settings", "Configure models, ingestion defaults, and runtime behavior."],
+  import: ["Import", "Add files, folders, and automate routing into collections."],
+  documents: ["Documents", "Inspect, classify, organize, and maintain your indexed library."],
+  search: ["Search", "Query the retrieval system across enabled collections."],
+  settings: ["Settings", "Configure runtime, collection behavior, and directory sources."],
 };
 
 function showTab(name, { persist = true } = {}) {
@@ -429,6 +429,8 @@ function renderIngest(s) {
       ? `Processing <b>${s.active_documents}</b> document(s) — <b>${s.chunks_embedded}</b> of <b>${s.chunks_total}</b> chunks embedded (${pct}%); <b>${s.chunks_remaining}</b> remaining.`
       : `No active ingestion. ${s.counts.ready || 0} document(s) indexed.`;
   ["ingestSummary", "importIngestSummary"].forEach((id) => { const el = $(id); if (el) el.innerHTML = summary; });
+  if ($("importProgressPct")) $("importProgressPct").textContent = pct + "%";
+  if ($("importStatusLabel")) $("importStatusLabel").textContent = s.paused ? "Paused" : (s.active_documents > 0 ? "Indexing" : "Idle");
   const order = ["staged", "pending", "extracting", "chunking", "embedding", "waiting", "ready", "error"];
   const countsHtml = order
     .filter((k) => s.counts[k])
@@ -973,34 +975,36 @@ async function loadDocuments(){
   try {
     const data = await api("/api/documents?" + params);
     if(epoch!==state.docFilterEpoch)return;
-    $("docsTotal").textContent = `${data.total} document(s) · page ${Math.floor(state.docsOffset / state.docsLimit) + 1}`;
+    const pageNumber = Math.floor(state.docsOffset / state.docsLimit) + 1;
+    const from = data.total ? state.docsOffset + 1 : 0;
+    const to = Math.min(state.docsOffset + data.items.length, data.total);
+    $("docsTotal").textContent = `Showing ${from}–${to} of ${data.total.toLocaleString()} documents`;
+    if ($("docsPageIndicator")) $("docsPageIndicator").textContent = pageNumber;
     $("docsPrev").disabled = state.docsOffset === 0;
     $("docsNext").disabled = state.docsOffset + state.docsLimit >= data.total;
     state.currentDocIds = data.items.map((d) => d.id);
     state.docsHasPendingAI = data.items.some((d) => d.meta?.auto_classify && !d.auto_suggestion);
-    $("docsTable").innerHTML = `<table><thead><tr>
-      <th></th><th>Document</th><th>Collection</th><th>Category</th><th>Status</th><th>Classification</th><th>Progress</th><th>Size</th><th>Updated</th><th></th>
+    $("docsTable").innerHTML = `<table class="documents-table"><thead><tr>
+      <th></th><th>Document ↕</th><th>Collection ↕</th><th>Status ↕</th><th>AI Suggestion ⓘ</th><th>Progress ↕</th><th>Size ↕</th><th>Updated ↕</th><th>Actions</th>
     </tr></thead><tbody>` + data.items.map((d) => {
       const pct = d.chunks_total ? Math.round((d.chunks_embedded / d.chunks_total) * 100) : 0;
       const selected = state.selectedDocs.has(d.id) ? "checked" : "";
       return `<tr>
         <td><input type="checkbox" class="doc-select" ${selected} onchange="toggleDocSelection('${d.id}', this.checked)"></td>
-        <td><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></td>
-        <td>${esc(d.collection)}</td>
-        <td>${esc(d.category || "Uncategorized")}</td>
-        <td>${badge(d.status)}${d.error ? `<div class="docpath" style="color:var(--red);max-width:260px">${esc(d.error.slice(0, 120))}</div>` : ""}</td>
+        <td><div class="doc-title-cell"><span class="file-kind">${d.filename.toLowerCase().endsWith(".md") ? "MD" : "PDF"}</span><div><div class="docname">${esc(d.filename)}</div><div class="docpath">${esc(d.source_path)}</div></div></div></td>
+        <td><span class="collection-cell">◇ ${esc(d.collection)}</span></td>
+        <td>${badge(d.status)}${d.error ? `<div class="docpath" style="color:var(--red);max-width:220px">${esc(d.error.slice(0, 90))}</div>` : ""}</td>
         <td>${classificationSummary(d)}</td>
-        <td>${d.chunks_total ? `<span class="mini-progress"><div style="width:${pct}%"></div></span> <span class="small muted">${d.chunks_embedded}/${d.chunks_total}</span>` : "—"}</td>
+        <td>${d.chunks_total ? `<span class="mini-progress"><div style="width:${pct}%"></div></span> <span class="small progress-pct">${pct}%</span>` : "—"}</td>
         <td class="small muted">${fmtBytes(d.size_bytes)}</td>
         <td class="small muted">${fmtDate(d.updated_at)}</td>
         <td><div class="row" style="margin:0;flex-wrap:nowrap">
-          <button class="btn mini" onclick="docDetails('${d.id}')">Details</button>
+          <button class="btn mini" onclick="docDetails('${d.id}')">▤ Details</button>
           ${["error", "waiting"].includes(d.status) ? `<button class="btn mini" onclick="retryDoc('${d.id}')">Retry</button>` : ""}
           ${["pending", "extracting", "chunking", "embedding", "waiting", "cancelling"].includes(d.status) ? `<button class="btn mini danger" onclick="cancelDoc(&quot;${d.id}&quot;)">Cancel</button>` : ""}
-          <button class="btn mini" onclick="classifyDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Classify</button>
-          <button class="btn mini" onclick="openMoveDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, '${d.collection_id}')">Move</button>
-          <button class="btn mini" onclick="reindexDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Reindex</button>
-          <button class="btn mini danger" onclick="deleteDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">Delete</button>
+          <button class="btn mini" onclick="classifyDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">✧ Classify</button>
+          <button class="btn mini" onclick="openMoveDoc('${d.id}', ${esc(JSON.stringify(d.filename))}, '${d.collection_id}')">□ Move</button>
+          <button class="btn mini" onclick="reindexDoc('${d.id}', ${esc(JSON.stringify(d.filename))})">↻ Reindex</button>
         </div></td>
       </tr>`;
     }).join("") + `</tbody></table>`;
@@ -1089,39 +1093,21 @@ function closeModal() { $("modal").classList.add("hidden"); }
 
 /* ---------------- search ---------------- */
 function renderSearchCollections() {
-  $("searchCollections").innerHTML = state.collections.map((c) =>
-    `<label class="check chip"><input type="checkbox" class="searchCol" value="${esc(c.name)}"> ${esc(c.name)}${c.default_search ? '' : ' · default OFF'}</label>`).join("")
-    || `<span class="muted small">No collections.</span>`;
+  $("searchCollections").innerHTML = state.collections.map((c) => `
+    <label class="search-collection-row"><span class="search-collection-name">◇ ${esc(c.name)}</span><input type="checkbox" class="searchCol" value="${esc(c.name)}" ${c.default_search ? "checked" : ""}><span class="search-toggle ${c.default_search ? "on" : ""}"></span><em>${c.default_search ? "Enabled (default)" : "Disabled (default)"}</em></label>`).join("") || `<span class="muted small">No collections.</span>`;
 }
 function renderReferenceSearchResults(results, message = "") {
   const evidence = $("evidencePreview");
   const ranked = $("rankedResults");
   if (!evidence || !ranked) return;
   if (!results?.length) {
-    evidence.innerHTML = `<p class="muted small">${esc(message || "No results.")}</p>`;
-    ranked.innerHTML = `<p class="muted small">No ranked evidence.</p>`;
+    evidence.innerHTML = `<div class="reference-result-head"><span class="sparkle">✧</span><div><h2>Answer</h2><p>Grounded evidence from retrieved documents.</p></div></div><p class="muted small">${esc(message || "No results.")}</p>`;
+    ranked.innerHTML = `<div class="reference-result-head"><span>◇</span><div><h2>Retrieved Results</h2><p>Ranked sources from the retrieval system for this query.</p></div></div><p class="muted small">No ranked evidence.</p>`;
     return;
   }
   const top = results[0];
-  evidence.innerHTML = `
-    <div class="card-head"><h2>Evidence Preview</h2><span class="result-count">${results.length} result(s)</span></div>
-    <div class="evidence-body">
-      <div class="evidence-source">${esc(top.document || top.source_path || "Top result")}</div>
-      <div class="result-loc">${esc(top.collection || "")}${top.location_label ? " · " + esc(top.location_label) : ""}</div>
-      <div class="evidence-text">${esc(top.content || "")}</div>
-      <div class="evidence-grounding">Top-ranked retrieved evidence · score ${Number(top.rerank_score ?? top.score ?? 0).toFixed(3)}</div>
-      <div class="evidence-sources">${results.slice(0, 3).map((x) => `
-        <div class="evidence-source-card"><b>${esc(x.document || x.source_path || "Document")}</b><span>${esc(x.location_label || x.collection || "")}</span></div>`).join("")}</div>
-    </div>`;
-  ranked.innerHTML = `
-    <div class="card-head"><h2>Ranked Results</h2><span class="result-count">${results.length}</span></div>
-    <div class="ranked-list">${results.map((x, i) => `
-      <div class="ranked-row">
-        <span class="rank-number">${i + 1}</span>
-        <div><b>${esc(x.document || x.source_path || "Document")}</b><span>${esc(x.location_label || x.collection || "")}${x.selection?.reason ? " · " + esc(x.selection.reason) : ""}</span></div>
-        <em>${esc(x.selection?.method || "retrieval")}</em>
-        <strong>${Number(x.rerank_score ?? x.score ?? 0).toFixed(3)}</strong>
-      </div>`).join("")}</div>`;
+  evidence.innerHTML = `<div class="reference-result-head"><span class="sparkle">✧</span><div><h2>Answer</h2><p>Grounded evidence from retrieved documents.</p></div><em>✓ Grounded (${results.length} sources)</em></div><div class="answer-copy">${esc(top.content || "")}</div><div class="answer-sources-title">◇ Sources (${Math.min(3,results.length)})</div><div class="answer-source-cards">${results.slice(0,3).map(x=>`<div class="answer-source-card"><span>▤</span><div><b>${esc(x.document || x.source_path || "Document")}</b><small>${esc(x.collection || "")}</small></div></div>`).join("")}</div>`;
+  ranked.innerHTML = `<div class="reference-result-head"><span>◇</span><div><h2>Retrieved Results</h2><p>Ranked sources from the retrieval system for this query.</p></div><em>${results.length} results</em></div><div class="reference-ranked-list">${results.map((x,i)=>`<div class="reference-ranked-row"><span class="rank-number">${i+1}</span><div><b>${esc(x.document || x.source_path || "Document")}</b><small>${esc((x.content || "").slice(0,95))}${x.selection?.reason ? " · " + esc(x.selection.reason) : ""}</small></div><em>${esc(x.collection || "")}</em><strong>${Number(x.rerank_score ?? x.score ?? 0).toFixed(2)}<small>Confidence</small></strong></div>`).join("")}</div>`;
 }
 
 async function doSearch() {
