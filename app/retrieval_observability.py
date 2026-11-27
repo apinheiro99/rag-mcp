@@ -66,7 +66,8 @@ async def retrieval_metrics(hours: int = 24, recent_limit: int = 20) -> dict[str
                           round(avg(usefulness_score)::numeric,4) AS avg_usefulness_score,
                           round(avg(estimated_model_input_tokens)::numeric,2) AS avg_model_input_tokens,
                           round(avg(returned_context_tokens)::numeric,2) AS avg_returned_context_tokens,
-                          round(percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms)::numeric,2) AS p95_total_ms
+                          round(percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms)::numeric,2) AS p95_total_ms,
+                          round(percentile_cont(0.99) WITHIN GROUP (ORDER BY total_ms)::numeric,2) AS p99_total_ms
                    FROM retrieval_events
                    WHERE ts >= now() - (%s * interval '1 hour')""",
                 (hours,),
