@@ -90,6 +90,28 @@ Regra reforçada por André em 26/11/2026:
 - header/topo deve seguir a composição da referência, inclusive escala de título/subtítulo/status;
 - única exceção continua sendo o fundo: manter `app/static/branding/rag-mcp-background.png`.
 
+Pipeline/UI checkpoint 26/11/2026:
+
+- pipeline 692 (`ec66701`, branch `fix/ui-dashboard-literal`): **FAILED**;
+- pipeline 693 (`f849bf2`, `main`): **SUCCESS**;
+- aprovação visual **não concedida**; o Dashboard ainda diverge da referência.
+
+Regra de execução a partir deste ponto: abrir e medir `docs/screens/02_dashboard.png` diretamente e tratar cada elemento como contrato visual, sem inferência. A referência original mede **1672×941 px**. Medidas observadas para o Dashboard: sidebar ~214 px; divisor/header ~98 px; linha de KPIs ~115 px; painéis operacionais ~300 px; painel Model Runtime ~310 px. Não compactar nem expandir por preferência própria.
+
+Dashboard — checklist literal de `docs/screens/02_dashboard.png`:
+
+- [x] sidebar com ícones individuais: Home, Upload, Document, Search, Settings;
+- [x] header com ícone Home antes de `Dashboard`, pill `Ready`, divisor e ícone de usuário;
+- [x] KPI `Collections` usa **três losangos/camadas empilhados**, não cubo;
+- [x] KPI `Documents` usa documento; `Ready` usa check em círculo; `Queue` usa camadas; `Search Requests` usa lupa; `Chunks` usa círculo pontilhado;
+- [x] `Runtime Health` e `Recent Activity` usam traço de atividade; `Collection Status` usa camadas; `Model Runtime` usa microchip;
+- [x] Runtime Health usa ícones por serviço (PostgreSQL, LM Studio/camadas, Worker/gear, Classification Queue/camadas);
+- [x] Recent Activity usa ícones circulares por tipo e horário alinhado à direita;
+- [x] Model Runtime: Embedding=camadas ciano; Reranker=camadas claras; Classification=estrela/sparkle; Resident=cubo;
+- [x] dimensões restauradas pelas medidas da referência: KPI ~115 px, ops ~300 px, Model Runtime ~310 px;
+- [x] pipeline 695 validou a implementação do pixel contract em branch;
+- [ ] validação visual final após deploy no `main`; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência.
+
 Checkpoint Dashboard 26/11/2026:
 
 - [x] KPI cards compactados para a densidade vertical da referência;

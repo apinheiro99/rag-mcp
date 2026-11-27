@@ -27,8 +27,9 @@ def test_import_keeps_live_ingestion_progress_in_import_tab():
 
 
 def test_primary_navigation_is_english():
-    for label in ("Dashboard", "Import", "Documents", "Search", "Settings"):
-        assert f">{label}</button>" in HTML
+    for tab, label in (("dashboard","Dashboard"),("import","Import"),("documents","Documents"),("search","Search"),("settings","Settings")):
+        assert f'data-tab="{tab}"' in HTML
+        assert f'<span>{label}</span></button>' in HTML
 
 
 def test_import_exposes_automatic_book_classification_without_staging_collection():
@@ -227,3 +228,22 @@ def test_reference_layout_keeps_current_background_exception():
     assert "settings-two-col" in html
     assert css.count("rag-mcp-background.png") == 1
     assert "07_background.png" not in css
+
+
+def test_dashboard_pixel_contract_contains_reference_iconography_and_dimensions():
+    html = Path("app/static/index.html").read_text()
+    js = Path("app/static/app.js").read_text()
+    css = Path("app/static/style.css").read_text()
+    assert 'id="pageHeaderIcon"' in html
+    assert '<span>Dashboard</span></button>' in html
+    assert 'layers: `<svg' in js
+    assert '["layers", totals.collections, "Collections"]' in js
+    assert 'stroke-dasharray="1.2 3.1"' in js
+    assert '["embedding","Embedding Model"' in js
+    assert '["rerank","Reranker (4B)"' in js
+    assert '["classify","Classification"' in js
+    assert '["resident","Resident-Model Behavior"' in js
+    assert ':root{--sidebar-w:214px}' in css
+    assert 'height:115px!important' in css
+    assert 'height:300px;min-height:300px' in css
+    assert 'height:310px;min-height:310px' in css
