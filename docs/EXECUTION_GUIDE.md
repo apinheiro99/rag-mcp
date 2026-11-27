@@ -322,12 +322,12 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 
 ### Reais, mas exigem decisão pequena antes
 
-- [ ] AUD-013 — source sync versus documento em ingestão ativa.
-- [ ] AUD-014 — movimento entre coleções com embeddings incompatíveis.
-- [ ] AUD-015 — sync manual e background simultâneos da mesma source.
-- [ ] AUD-016 — reindex de coleção com documento ativo.
-- [ ] AUD-018 — GraphRAG opcional falhando depois do core ingest.
-- [ ] AUD-003 — fila GPU: se requisito continua sendo fila única, reutilizar scheduler existente; nunca criar segundo scheduler.
+- [x] AUD-013 — source-sync adia alteração/deleção de documento em `ACTIVE_STATUSES`; próximo ciclo aplica quando a ingestão terminar.
+- [x] AUD-014 — já resolvido no HEAD: move de documento `ready` rejeita coleção destino com modelo/dimensão incompatíveis; integração existente cobre o caso.
+- [x] AUD-015 — syncs da mesma source são serializados por `asyncio.Lock` no processo único atual; sem lock distribuído desnecessário.
+- [x] AUD-016 — reindex consulta/locka documentos ativos e retorna 409 antes de apagar chunks.
+- [x] AUD-018 — falha de enriquecimento GraphRAG é fail-open após core ingest; `graph_indexed_at` fica stale e o graph worker tenta novamente.
+- [ ] AUD-003 — scheduler existente já controla residência em search/ingest/rerank, mas validar/fechar fila única de **operações** antes de considerar resolvido; nunca criar segundo scheduler.
 
 ### Não alterar sem decisão/medição explícita
 

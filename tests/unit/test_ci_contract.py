@@ -88,3 +88,12 @@ def test_ingest_start_rejects_ready_documents_and_e2e_defaults_match_prod_topolo
     assert "WHERE d.id = ANY(%s::uuid[]) AND d.status='staged'" in api
     assert 'http://docker-prod01.lab:8000' in e2e
     assert 'http://192.168.1.10:1234' in e2e
+
+
+def test_reindex_blocks_active_documents_and_graph_enrichment_is_fail_open():
+    api = Path("app/api.py").read_text()
+    ingest = Path("app/ingest.py").read_text()
+    assert 'SELECT id FROM documents WHERE collection_id=%s AND status IN {ACTIVE_STATUSES} FOR UPDATE' in api
+    assert 'coleção possui documento em processamento; reindexe após a ingestão terminar' in api
+    assert 'graph enrichment failed; background worker will retry' in ingest
+    assert 'except Exception:' in ingest[ingest.index('await rebuild_document_mentions(doc_id)')-120:ingest.index('await rebuild_document_mentions(doc_id)')+220]

@@ -52,3 +52,12 @@ def test_source_sync_skips_deletion_pass_after_scan_error_and_gcs_old_blobs():
     assert 'obsolete_blobs.append(str(old["stored_path"]))' in source
     assert "await _gc_blobs(obsolete_blobs)" in source
     assert "SELECT DISTINCT stored_path FROM documents WHERE stored_path = ANY(%s)" in source
+
+
+def test_source_sync_defers_active_documents_and_serializes_same_source():
+    source = Path("app/source_sync.py").read_text()
+    assert 'if old and old["status"] in ACTIVE_STATUSES:' in source
+    assert 'if old["status"] in ACTIVE_STATUSES:' in source
+    assert '_source_sync_locks: dict[str, asyncio.Lock] = {}' in source
+    assert 'async with lock:' in source
+    assert 'return await _sync_collection_source_unlocked(source_id)' in source
