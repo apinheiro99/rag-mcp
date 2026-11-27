@@ -231,6 +231,14 @@ def analyze_query_intent(query: str, scfg: dict) -> dict:
     if phrases:
         reasons.append("title_like_phrase")
         metadata_terms.extend(phrases)
+        # A short technical token that only identifies an explicit book/title
+        # (e.g. RAG in "RAG with Python Cookbook") is metadata evidence, not a
+        # reason to run a broad full-text lexical scan by itself.
+        title_words = {w.casefold() for phrase in phrases for w in re.findall(r"[A-Za-z0-9+.#:/-]+", phrase)}
+        lexical_terms = [
+            term for term in lexical_terms
+            if not (term.casefold() in title_words and len(term) <= 6 and term.upper() == term)
+        ]
 
     concept = re.findall(
         r"\b([A-Z][A-Za-z0-9+-]*(?:\s+[A-Z][A-Za-z0-9+-]*){0,2}\s+"

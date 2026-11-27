@@ -324,3 +324,17 @@ def test_lexical_sql_requires_all_plain_query_lexemes():
     source = __import__("pathlib").Path("app/search.py").read_text()
     assert "plainto_tsquery('english', %s)" in source
     assert "string_agg(quote_literal(lexeme), ' | ')" not in source
+
+
+def test_book_title_acronym_uses_metadata_without_broad_lexical_scan():
+    cfg={
+        "hybrid_enabled":True,"hybrid_query_aware_enabled":True,
+        "hybrid_metadata_terms_max":4,"hybrid_min_dense_score":.55,
+        "hybrid_min_dense_candidates":8,
+    }
+    query="In RAG with Python Cookbook, what three components are used for hybrid search?"
+    intent=analyze_query_intent(query,cfg)
+    assert "RAG with Python Cookbook" in intent["metadata_terms"]
+    assert "RAG" not in intent["lexical_terms"]
+    dense=[{"score":.8} for _ in range(8)]
+    assert should_apply_lexical(query,dense,8,cfg,intent=intent)==(False,"dense_sufficient")
