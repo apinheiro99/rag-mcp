@@ -109,7 +109,8 @@ Dashboard — checklist literal de `docs/screens/02_dashboard.png`:
 - [x] Recent Activity usa ícones circulares por tipo e horário alinhado à direita;
 - [x] Model Runtime: Embedding=camadas ciano; Reranker=camadas claras; Classification=estrela/sparkle; Resident=cubo;
 - [x] dimensões restauradas pelas medidas da referência: KPI ~115 px, ops ~300 px, Model Runtime ~310 px;
-- [ ] validação visual final após deploy; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência.
+- [x] pipeline 695 validou a implementação do pixel contract em branch;
+- [ ] validação visual final após deploy no `main`; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência.
 
 Checkpoint Dashboard 26/11/2026:
 
