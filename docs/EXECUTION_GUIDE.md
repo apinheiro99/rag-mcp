@@ -339,7 +339,7 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 
 - [ ] AUD-017 — rollback/migração.
 - [ ] AUD-020 — thresholds P95/P99.
-- [ ] AUD-021 — pipeline 724 mediu fixture PostgreSQL isolado: planning 2.228 ms, execution 29.194 ms. Reexecutar uma vez registrando nodes/indexes do plano; não alterar índice com base em fixture pequeno.
+- [x] AUD-021 — `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` medido no PostgreSQL isolado do CI. Pipeline 725: planning 2.005 ms, execution 3.775 ms; plano `Limit -> Sort -> Nested Loop -> Bitmap Heap Scan -> Bitmap Index Scan -> Index Scan`, usando `chunks_collection_idx` e `documents_graph_stale_idx`. Fixture pequeno não escolheu o GIN FTS; **nenhuma mudança de índice** sem evidência de workload real.
 - [ ] AUD-005 — retenção/redaction de queries.
 - [ ] AUD-023 — fallback de senha DB.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.
@@ -374,7 +374,7 @@ Estado atual:
 4. [x] concluir adaptive top_k + documentação;
 5. [x] rodar avaliação avançada real;
 6. [x] corrigir apenas misses comprovados do hybrid/decomposition (nenhum miss restante nos 12 casos avançados);
-7. [ ] executar testes PostgreSQL focados no job Integration do CI; novos testes AUD-021/022 aguardam pipeline.
+7. [x] testes PostgreSQL focados executados no Integration: pipeline 725 PASS; hybrid real + EXPLAIN lexical aprovados.
 8. [x] commit/push retrieval;
 9. [x] iniciar bugs locais da auditoria em pequenos grupos; grupo 1 = AUD-008/010/011.
 
