@@ -137,7 +137,7 @@ The runtime keeps the required profile resident and evicts incompatible extra mo
 
 ### Search is observable
 
-Retrieval events capture query, collections and filters, dense/lexical/rerank timings, effective `top_k`, hybrid/decomposition usage, candidate counts, scores and provenance.
+Retrieval events capture query, collections and filters, dense/lexical/rerank timings, effective `top_k`, hybrid/decomposition usage, candidate counts, scores and provenance. Aggregated observability includes P95/P99 latency without imposing an arbitrary SLO gate.
 
 ---
 
@@ -167,15 +167,68 @@ The numbered files in `docs/screens/` are the visual reference set used by the r
 
 ---
 
-## MCP
+## MCP access
 
-Streamable HTTP MCP endpoint:
+RAG MCP exposes a **read-only Streamable HTTP MCP** endpoint at:
 
 ```text
 /mcp
 ```
 
-Core operations include semantic/hybrid search, retrieval metrics, collection discovery and document retrieval.
+Core operations include semantic/hybrid search, an experimental evidence graph, retrieval metrics, collection discovery and document retrieval. The endpoint uses the same retrieval implementation as the HTTP API.
+
+```mermaid
+flowchart LR
+    GPT[ChatGPT / OpenAI surfaces]
+    RESP[OpenAI Responses API / Codex]
+    CLAUDE[Claude Code on reachable network]
+    OTHER[Other MCP clients]
+    OT[OpenAI Secure MCP Tunnel]
+    TC[tunnel-client sidecar]
+    MCP[RAG MCP /mcp]
+
+    GPT -->|Tunnel connection| OT
+    RESP -->|tunnel_id| OT
+    OT --> TC
+    TC -->|private HTTP| MCP
+    CLAUDE -->|Streamable HTTP| MCP
+    OTHER -->|direct/VPN/public HTTPS when configured| MCP
+```
+
+### ChatGPT / OpenAI
+
+The RAG server is intentionally private. For ChatGPT, Codex or the Responses API, use **OpenAI Secure MCP Tunnel** instead of exposing `/mcp` publicly. The repository already contains the optional `deploy/tunnel.compose.yml` sidecar and production deploy integration; the operator still needs to create the OpenAI tunnel, provision its runtime key/config outside the repository, associate the tunnel with the intended OpenAI organization/workspace, and connect it in ChatGPT.
+
+High-level flow:
+
+```text
+ChatGPT / OpenAI
+  -> OpenAI-hosted tunnel endpoint
+  -> outbound tunnel-client connection
+  -> http://app:8000/mcp inside the private Compose network
+```
+
+For current OpenAI setup details, see:
+
+- https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
+- https://developers.openai.com/api/docs/guides/tools-connectors-mcp
+
+### Claude Code
+
+Claude Code does **not** use OpenAI Secure MCP Tunnel. If Claude Code runs on a host that can reach RAG MCP directly, add the Streamable HTTP endpoint:
+
+```bash
+claude mcp add --transport http rag-mcp http://docker-prod01.lab:8000/mcp
+claude mcp list
+```
+
+If `RAG_API_TOKEN` is enabled, configure the corresponding `Authorization: Bearer ...` header in Claude Code's local MCP configuration. Keep credentials out of committed `.mcp.json` files. Inside Claude Code, `/mcp` shows connection/authentication status.
+
+If Claude Code runs outside the private network, provide a network path it can actually reach (for example VPN/WireGuard or a separately secured public HTTPS MCP endpoint). OpenAI Secure MCP Tunnel is an OpenAI transport and is not a general tunnel for Claude Code.
+
+### “Sign in with ChatGPT” is a different feature
+
+OpenAI also offers **Sign in with ChatGPT** for eligible open-source applications. That flow lets an application call OpenAI's Responses API using a user's ChatGPT plan without an API key. It is **outbound model inference**, not an inbound MCP connection. Adding it to RAG MCP would let RAG MCP call OpenAI models; it would **not** make this RAG accessible from ChatGPT. The current architecture therefore keeps LM Studio as the model runtime and uses MCP/Tunnel for client access.
 
 ---
 
@@ -222,26 +275,61 @@ The repository contains code and defaults. The private root contains operator/ru
 ## CI/CD
 
 ```mermaid
-flowchart LR
-    C[Commit] --> P[Public Surface]
-    C --> U[Unit]
-    C --> R[Regression]
-    C --> I[Integration + pgvector]
-    P --> T[Green tag]
-    U --> T
-    R --> T
-    I --> T
-    T --> G[Publish GitHub]
+flowchart TD
+    B[Feature branch push] --> V[Validate: secret/public/static/unit/regression/integration]
+    V -->|green| W[Continue development or merge]
+
+    M[Push / merge to main] --> MV[Validate]
+    MV -->|green| T[Create green version tag]
+    T --> R[Build Release manifest]
+    R --> G[Publish GitHub main + tag]
     G --> D[Deploy PROD]
     D --> H[Health + retrieval benchmark]
-    H -->|fail| B[Automatic rollback]
+    H -->|fail| RB[Automatic rollback]
 ```
 
-A release is published only from the tested SHA.
+Feature branches **validate only**. They do not create tags, releases, GitHub publications or production deployments. A release is produced only from a validated `main` SHA. Failed pipelines remain pipeline evidence and do not create `*-fail` version tags.
 
 ---
 
-## Quick start
+## Two-minute local setup
+
+The fastest path is:
+
+1. install **LM Studio**;
+2. download/load the two reference models below;
+3. clone RAG MCP;
+4. configure `.env`;
+5. run `./install.sh && ./start.sh`;
+6. open the UI and verify `/api/health` + `/mcp`.
+
+### 1. LM Studio models
+
+In **LM Studio → Discover**, search for:
+
+| Role | Search/download name | Reference LM Studio model ID | Notes |
+|---|---|---|---|
+| Embeddings | `Qwen3-Embedding-8B` | `text-embedding-qwen3-embedding-8b` | 4096-dimensional embeddings; required by the reference deployment |
+| Reranker | `Qwen3-Reranker-4B` | `qwen3-reranker-4b` | resident reranker used by the reference deployment |
+
+Choose a **4-bit quantization or better** when your hardware permits. The exact GGUF publisher/file is intentionally not hardcoded because LM Studio's catalog evolves. The canonical upstream model names are `Qwen/Qwen3-Embedding-8B` and `Qwen/Qwen3-Reranker-4B`.
+
+Start the LM Studio local server and confirm the model catalog is visible at:
+
+```bash
+curl http://127.0.0.1:1234/v1/models
+```
+
+The reference deployment currently expects/selects:
+
+```text
+text-embedding-qwen3-embedding-8b
+qwen3-reranker-4b
+```
+
+If your LM Studio exposes different IDs, select those IDs in RAG MCP Settings instead of renaming models artificially.
+
+### 2. Install RAG MCP
 
 ```bash
 git clone https://github.com/apinheiro99/rag-mcp.git
@@ -256,6 +344,15 @@ Then open:
 ```text
 http://localhost:8000
 ```
+
+Smoke test:
+
+```bash
+curl http://localhost:8000/api/health
+curl http://localhost:8000/mcp
+```
+
+If `RAG_API_TOKEN` is configured, send the matching bearer token for protected API/MCP requests.
 
 ---
 
@@ -285,18 +382,28 @@ Rules:
 
 Tasks:
 1. Verify Docker, Docker Compose, Git and network prerequisites.
-2. Clone the repository.
-3. Inspect .env.example and create .env.
-4. Ask me for the LM Studio URL and desired persistent RAG_PRIVATE_PATH only
+2. Verify LM Studio is installed and its local server is reachable.
+3. Inspect `GET <LMSTUDIO_URL>/v1/models`. If the reference models are absent, tell me exactly what must be downloaded in LM Studio Discover:
+   - `Qwen3-Embedding-8B` (reference ID `text-embedding-qwen3-embedding-8b`);
+   - `Qwen3-Reranker-4B` (reference ID `qwen3-reranker-4b`).
+   Do not silently substitute a different embedding dimension or reranker family.
+4. Clone the repository.
+5. Inspect .env.example and create .env.
+6. Ask me for the LM Studio URL and desired persistent RAG_PRIVATE_PATH only
    if they cannot be detected safely.
-5. Run the repository's own installation/start scripts.
-6. Start PostgreSQL/pgvector and the RAG application.
-7. Validate /api/health, the web UI, PostgreSQL/pgvector connectivity,
+7. Run the repository's own installation/start scripts.
+8. Start PostgreSQL/pgvector and the RAG application.
+9. Validate /api/health, the web UI, PostgreSQL/pgvector connectivity,
    embedding access, reranker access and /mcp.
-8. Run the repository test suite.
-9. Perform one sample retrieval and confirm source provenance.
-10. Return a short final report with services, URLs, persistent paths, models,
-    test results and remaining manual steps.
+10. Run the repository test suite.
+11. Perform one sample retrieval and confirm source provenance.
+12. If this machine runs Claude Code and can reach the RAG server, offer to add
+    the HTTP MCP endpoint with `claude mcp add --transport http rag-mcp <RAG_URL>/mcp`.
+13. If ChatGPT/OpenAI access is desired, explain that the private deployment
+    requires OpenAI Secure MCP Tunnel provisioning and that this is separate
+    from installing the RAG itself.
+14. Return a short final report with services, URLs, persistent paths, models,
+    test results, MCP connectivity and remaining manual steps.
 
 Do not stop after generating instructions. Execute the installation and validation.
 ```
