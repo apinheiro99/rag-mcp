@@ -299,3 +299,28 @@ def test_title_only_query_uses_metadata_without_forcing_full_lexical_search():
     assert should_apply_lexical(query, dense, 8, cfg, intent=intent) == (
         False, "dense_sufficient"
     )
+
+
+@pytest.mark.parametrize("requested, configured_max, expected", [(1, 8, 1), (2, 8, 2), (5, 2, 2)])
+def test_adaptive_top_k_never_exceeds_ceiling(requested, configured_max, expected):
+    cfg = {"adaptive_top_k_enabled": True, "adaptive_top_k_min": 3,
+           "adaptive_top_k_max": configured_max}
+    rows = [{"rerank_score": .99}] * 8
+    chosen, _ = choose_adaptive_top_k(rows, requested, cfg, explicit=True)
+    assert chosen == expected
+
+
+def test_evaluation_accepts_alternative_sources_for_same_evidence_need():
+    results=[
+        {"document":"PostgreSQL Server Programming, 2nd Edition.pdf","content":"useful evidence with enough words to count normally"},
+        {"document":"Domain-Driven Design.epub","content":"more useful evidence with enough words for metrics"},
+    ]
+    m=evaluate(results, [["Learning PostgreSQL","PostgreSQL Server Programming"], "Domain-Driven Design"], 5)
+    assert m["known_source_recall"] == 1.0
+    assert m["reciprocal_rank"] == 1.0
+
+
+def test_lexical_sql_requires_all_plain_query_lexemes():
+    source = __import__("pathlib").Path("app/search.py").read_text()
+    assert "plainto_tsquery('english', %s)" in source
+    assert "string_agg(quote_literal(lexeme), ' | ')" not in source

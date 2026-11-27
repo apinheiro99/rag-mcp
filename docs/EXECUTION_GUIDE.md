@@ -129,7 +129,8 @@ Pendências:
 - [ ] rodar novamente avaliação avançada contra serviço real/PROD;
 - [ ] validar nomes de livros, termos técnicos, padrões e conceitos nomeados;
 - [ ] investigar individualmente cada caso fraco;
-- [ ] usar `EXPLAIN ANALYZE` antes de mexer em SQL/índice lexical;
+- [ ] usar `EXPLAIN ANALYZE` antes de mexer em índice lexical;
+- [x] reduzir o lexical query de OR entre todos os lexemas para `plainto_tsquery` (AND), preservando o mesmo GIN; motivação: dogfooding mostrou 0,6–3,5 s em termos amplos como `Strategy pattern`; validar no PROD antes de qualquer mudança de índice.
 - [ ] adicionar poucos testes PostgreSQL reais de lexical/hybrid;
 - [ ] não trocar heurística determinística por LLM planner sem evidência e aprovação.
 
@@ -147,7 +148,7 @@ Estado:
 - [x] adicionados testes de regressão;
 - [x] 18 testes de retrieval-fusion passam;
 - [ ] rodar suíte relevante completa;
-- [ ] documentar contrato MCP/API como teto;
+- [x] documentar contrato MCP/API como teto;
 - [ ] commit/push isolado.
 
 ### 5.3 Query decomposition
@@ -255,7 +256,7 @@ Estado atual:
 
 1. [x] terminar e validar branch de UI `feat/ui-match-docs-screens`;
 2. [x] commit/push da UI sem misturar retrieval;
-3. [ ] voltar à branch `fix/retrieval-eval-followup`;
+3. [x] voltar à branch `fix/retrieval-eval-followup`;
 4. [ ] concluir adaptive top_k + documentação;
 5. [ ] rodar avaliação avançada real;
 6. [ ] corrigir apenas misses comprovados do hybrid/decomposition;

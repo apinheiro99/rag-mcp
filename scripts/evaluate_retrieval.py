@@ -11,17 +11,32 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 
+def _expected_source_groups(expected):
+    groups = []
+    for item in expected:
+        values = item if isinstance(item, list) else [item]
+        group = {str(x).casefold() for x in values if str(x).strip()}
+        if group:
+            groups.append(group)
+    return groups
+
+
 def evaluate(results, expected, k):
-    """Document-level metrics against known relevant sources, not exhaustive recall."""
-    expected = {x.casefold() for x in expected}
+    """Document-level metrics against known relevant source groups, not exhaustive recall.
+
+    Each expected item may be one source substring or a list of acceptable alternatives
+    for the same evidence need. This avoids treating an equally valid book as a miss.
+    """
+    groups = _expected_source_groups(expected)
     hits = set()
     first = 0
     for rank, row in enumerate(results[:k], 1):
-        matches = {x for x in expected if x in row["document"].casefold()}
-        if matches and not first:
+        document = row["document"].casefold()
+        matched = {i for i, group in enumerate(groups) if any(x in document for x in group)}
+        if matched and not first:
             first = rank
-        hits.update(matches)
-    return {"known_source_recall": len(hits)/len(expected),
+        hits.update(matched)
+    return {"known_source_recall": len(hits)/len(groups) if groups else 1.0,
             "reciprocal_rank": 1/first if first else 0,
             "source_hit_at_k": bool(hits),
             "heading_only_count": sum(len(x["content"].split()) <= 5 for x in results[:k])}
