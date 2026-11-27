@@ -110,7 +110,8 @@ Dashboard — checklist literal de `docs/screens/02_dashboard.png`:
 - [x] Model Runtime: Embedding=camadas ciano; Reranker=camadas claras; Classification=estrela/sparkle; Resident=cubo;
 - [x] dimensões restauradas pelas medidas da referência: KPI ~115 px, ops ~300 px, Model Runtime ~310 px;
 - [x] pipeline 695 validou a implementação do pixel contract em branch;
-- [ ] validação visual final após deploy no `main`; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência.
+- [x] pipeline 697 (`19fbff4`, `main`) publicou/deployou o pixel-contract do Dashboard;
+- [ ] validação visual final pelo usuário; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência.
 
 Checkpoint Dashboard 26/11/2026:
 
@@ -138,6 +139,13 @@ Checkpoint Dashboard 26/11/2026:
 ## 5. Retrieval
 
 ### 5.1 Query-aware hybrid
+
+Dogfooding após pipeline 697:
+
+- `Strategy pattern`: lexical ~148 ms, `effective_top_k=4`;
+- comparação PostgreSQL/DDD: lexical ~59 ms, decomposition ativa, `effective_top_k=5`;
+- título `RAG with Python Cookbook`: lexical ~686 ms porque o acrônimo curto `RAG` ainda forçava full-text; correção local em andamento para tratar acrônimo contido no título como metadata, não como lexical obrigatório.
+
 
 Já existe em `main`:
 
