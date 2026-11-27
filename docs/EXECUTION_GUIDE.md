@@ -130,6 +130,7 @@ Import — checklist literal de `docs/screens/03_import.png`:
 - [x] `Files` usa dropzone central e botões Select files / Select folder;
 - [x] `Ingestion Configuration` usa Manual / Automatic (LLM) e painel explicativo;
 - [x] pipeline 701 validou o pixel-contract em branch;
+- [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
 - [ ] validação visual final no PROD.
 
 Documents — checklist literal de `docs/screens/04_documents.png`:
@@ -140,6 +141,7 @@ Documents — checklist literal de `docs/screens/04_documents.png`:
 - [x] linhas usam file badge, progress bar, chips/status e ações compactas;
 - [x] paginação inferior com 25 linhas por página;
 - [x] pipeline 701 validou o pixel-contract em branch;
+- [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
 - [ ] validação visual final no PROD.
 
 Search — checklist literal de `docs/screens/05_search.png`:
@@ -151,6 +153,7 @@ Search — checklist literal de `docs/screens/05_search.png`:
 - [x] reason/score/fonte continuam usando dados reais do retrieval;
 - [x] observabilidade técnica continua disponível no código, mas fora do layout principal aprovado;
 - [x] pipeline 701 validou o pixel-contract em branch;
+- [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
 - [ ] validação visual final no PROD.
 
 Settings — checklist literal de `docs/screens/06_settings.png`:
@@ -162,6 +165,7 @@ Settings — checklist literal de `docs/screens/06_settings.png`:
 - [x] dados apresentados vêm do runtime/configuração real; nenhum número decorativo foi inventado;
 - [x] controles avançados antigos permanecem no DOM para compatibilidade, mas fora do layout principal aprovado;
 - [x] pipeline 701 validou o pixel-contract em branch;
+- [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
 - [ ] validação visual final no PROD.
 
 ### Estado atual da UI
