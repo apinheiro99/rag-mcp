@@ -17,6 +17,7 @@ let state = {
   pollTick: 0, lastActive: 0, uploading: false,
   selectedDocs: new Set(), currentDocIds: [], docsHasPendingAI: false, activeTab: "dashboard",
   docCollectionFilters: new Map(), bulkBusy:false, docFilterEpoch:0,
+  health: null, ingestStatus: null, searchSummary: null,
 };
 
 /* ---------------- infra ---------------- */
@@ -114,26 +115,22 @@ function fillCollectionSelects() {
   renderDocCollectionFilter();
 }
 function renderCollections() {
-  $("collectionsGrid").innerHTML = state.collections.map((c) => `
-    <div class="card col-card">
-      <h3>${esc(c.name)}</h3>
-      <div class="desc">${esc(c.description || "")}</div>
-      <div class="col-stats">
-        <span><b>${c.doc_count}</b> docs</span>
-        <span><b>${c.ready_count}</b> indexed</span>
-        <span><b>${c.chunk_count}</b> chunks</span>
-        ${Number(c.error_count) ? `<span style="color:var(--red)"><b>${c.error_count}</b> errors</span>` : ""}
-        ${Number(c.staged_count) ? `<span style="color:var(--yellow)"><b>${c.staged_count}</b> waiting</span>` : ""}
-      </div>
-      <div class="muted small">${c.embedding_model ? "🧬 " + esc(c.embedding_model) : "no embeddings yet"}</div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn mini ${c.default_search ? 'primary' : ''}" onclick="toggleDefaultSearch('${c.id}', ${!c.default_search})">Default search: ${c.default_search ? 'ON' : 'OFF'}</button>
-        <button class="btn mini" onclick="renameCollection('${c.id}', ${esc(JSON.stringify(c.name))})">Rename</button>
-        <button class="btn mini" onclick="reindexCollectionModal('${c.id}')">Reindex all</button>
-        <button class="btn mini danger" onclick="deleteCollection('${c.id}', ${esc(JSON.stringify(c.name))})">Delete</button>
-      </div>
-    </div>`).join("") || `<p class="muted">No collections yet. Create one from the Import tab.</p>`;
+  const box = $("collectionBehaviorTable");
+  if (box) {
+    box.innerHTML = state.collections.length ? `
+      <table class="settings-table">
+        <thead><tr><th>Collection</th><th>Documents</th><th>Default Search</th></tr></thead>
+        <tbody>${state.collections.map((c) => `
+          <tr>
+            <td><span class="collection-name-cell">◇ <b>${esc(c.name)}</b></span></td>
+            <td>${Number(c.doc_count || 0).toLocaleString()}</td>
+            <td><button class="toggle-pill ${c.default_search ? "on" : ""}" onclick="toggleDefaultSearch('${c.id}', ${!c.default_search})">${c.default_search ? "On" : "Off"}</button></td>
+          </tr>`).join("")}</tbody>
+      </table>` : `<p class="muted small">No collections.</p>`;
+  }
+  renderDashboardOverview(state.health);
 }
+
 async function createCollection() {
   toast("Top-level collections are fixed. Create book categories in Settings.", true);
 }
@@ -418,6 +415,7 @@ async function pollStatus() {
   } catch { /* health polling reports server availability */ }
 }
 function renderIngest(s) {
+  state.ingestStatus = s;
   const pct = s.active_documents > 0 && s.chunks_total > 0 ? Math.round((s.chunks_embedded / s.chunks_total) * 100) : 0;
   ["ingestBar", "importIngestBar"].forEach((id) => { const el = $(id); if (el) el.style.width = pct + "%"; });
   ["btnPause", "importBtnPause"].forEach((id) => { const el = $(id); if (el) el.classList.toggle("hidden", s.paused); });
@@ -438,43 +436,134 @@ function renderIngest(s) {
     ? `Now: <b>${esc(s.current_document.filename)}</b> — ${badge(s.current_document.status)} ${s.current_document.chunks_embedded}/${s.current_document.chunks_total} chunks`
     : "";
   ["currentDoc", "importCurrentDoc"].forEach((id) => { const el = $(id); if (el) el.innerHTML = currentHtml; });
-  $("problems").innerHTML = (s.problems || []).map((p) => `
+  const problemsBox = $("problems");
+  if (problemsBox) problemsBox.innerHTML = (s.problems || []).map((p) => `
     <div class="problem ${p.status === "waiting" ? "waiting" : ""}">
       <b>${esc(p.filename)}</b> ${badge(p.status)}
       ${p.status === "error" ? `<button class="btn mini" onclick="retryDoc('${p.id}')">Retry</button>` : ""}
       <div class="err-msg">${esc(p.error || "")}</div>
     </div>`).join("");
+  renderDashboardOverview(state.health);
 }
+
+function dashboardTotals() {
+  const collections = state.collections || [];
+  const documents = collections.reduce((n, c) => n + Number(c.doc_count || 0), 0);
+  const ready = collections.reduce((n, c) => n + Number(c.ready_count || 0), 0);
+  const errors = collections.reduce((n, c) => n + Number(c.error_count || 0), 0);
+  const chunks = collections.reduce((n, c) => n + Number(c.chunk_count || 0), 0);
+  const counts = state.ingestStatus?.counts || {};
+  const queue = ["staged","pending","extracting","chunking","embedding","waiting"]
+    .reduce((n, key) => n + Number(counts[key] || 0), 0);
+  return { collections: collections.length, documents, ready, errors, chunks, queue };
+}
+
+function statusRow(label, ok, detail = "") {
+  return `<div class="status-row">
+    <span class="status-service">${esc(label)}</span>
+    <span class="status-value ${ok ? "ok" : "bad"}">${ok ? "✓ Healthy" : "● Attention"}</span>
+    ${detail ? `<span class="status-detail">${esc(detail)}</span>` : ""}
+  </div>`;
+}
+
+function renderDashboardOverview(h = state.health) {
+  const totals = dashboardTotals();
+  const stats = $("dashboardStats");
+  if (stats) {
+    const queries = Number(state.searchSummary?.queries || 0);
+    const items = [
+      ["◇", totals.collections, "Collections"],
+      ["▤", totals.documents.toLocaleString(), "Documents"],
+      ["✓", totals.ready.toLocaleString(), "Ready"],
+      ["≋", totals.queue.toLocaleString(), "Queue"],
+      ["⌕", queries.toLocaleString(), "Search Requests", "24h"],
+      ["⠿", totals.chunks.toLocaleString(), "Chunks"],
+    ];
+    stats.innerHTML = items.map(([icon, value, label, sub]) => `
+      <div class="card kpi-card">
+        <span class="kpi-icon">${icon}</span>
+        <div><div class="kpi-value">${value}</div><div class="kpi-label">${label}${sub ? `<span>${sub}</span>` : ""}</div></div>
+      </div>`).join("");
+  }
+
+  const health = $("runtimeHealth");
+  if (health) {
+    health.innerHTML = h ? [
+      statusRow("PostgreSQL", Boolean(h.database)),
+      statusRow("LM Studio", Boolean(h.lmstudio?.reachable)),
+      statusRow("Worker", Boolean(h.worker?.running) && !h.worker?.paused, h.worker?.paused ? "paused" : ""),
+      statusRow("Classification Queue", Boolean(h.classification_worker?.running), h.classification_worker?.current_document ? "running" : "idle"),
+    ].join("") : `<p class="muted small">Server unavailable.</p>`;
+  }
+
+  const collectionStatus = $("collectionStatus");
+  if (collectionStatus) {
+    const queued = Math.max(0, totals.documents - totals.ready - totals.errors);
+    const total = Math.max(1, totals.documents);
+    const readyPct = (totals.ready / total) * 100;
+    const queuePct = (queued / total) * 100;
+    const readyEnd = readyPct;
+    const queueEnd = readyPct + queuePct;
+    collectionStatus.innerHTML = `
+      <div class="donut-wrap">
+        <div class="donut" style="--ready:${readyEnd}%;--queue:${queueEnd}%"><div><b>${totals.documents.toLocaleString()}</b><span>Documents</span></div></div>
+        <div class="donut-legend">
+          <div><i class="legend-dot ready"></i><span>Ready</span><b>${totals.ready.toLocaleString()}</b><small>${totals.documents ? ((totals.ready/totals.documents)*100).toFixed(1) : "0.0"}%</small></div>
+          <div><i class="legend-dot queue"></i><span>Queue</span><b>${queued.toLocaleString()}</b><small>${totals.documents ? ((queued/totals.documents)*100).toFixed(1) : "0.0"}%</small></div>
+          <div><i class="legend-dot error"></i><span>Error</span><b>${totals.errors.toLocaleString()}</b><small>${totals.documents ? ((totals.errors/totals.documents)*100).toFixed(1) : "0.0"}%</small></div>
+        </div>
+      </div>`;
+  }
+
+  const activity = $("dashboardActivity");
+  if (activity) {
+    const events = (state.events || []).slice(0, 5);
+    activity.innerHTML = events.length ? events.map((e) => `
+      <div class="activity-row ${esc(e.level || "info")}">
+        <span class="activity-dot"></span>
+        <div><b>${esc(e.message)}</b><span>${fmtDate(e.ts)}</span></div>
+      </div>`).join("") : `<p class="muted small">No recent activity.</p>`;
+  }
+
+  const runtime = $("modelRuntimeGrid");
+  if (runtime) {
+    const loaded = new Set(h?.model_runtime?.current_models || []);
+    const embedding = state.settings.embedding_model || "Not configured";
+    const reranker = state.settings.reranker_model || state.effective?.rerank?.model || "Not configured";
+    const cards = [
+      ["◇","Embedding Model",embedding,loaded.has(embedding) ? "In Use" : "Configured"],
+      ["◇","Reranker",reranker,loaded.has(reranker) ? "In Use" : "Configured"],
+      ["✧","Classification","Embedding + Reranker","Existing categories only"],
+      ["□","Resident-Model Behavior","Exact resident profile","Embedding + reranker"],
+    ];
+    runtime.innerHTML = cards.map(([icon,label,value,status]) => `
+      <div class="model-card"><div class="model-card-head"><span>${icon}</span><b>${esc(label)}</b><em>${esc(status)}</em></div><strong>${esc(value)}</strong></div>`).join("");
+  }
+
+  const system = $("systemServerGrid");
+  if (system) {
+    const version = h?.build?.version || "dev";
+    const models = h?.model_runtime?.current_models || [];
+    system.innerHTML = `
+      <div class="system-card"><b>PostgreSQL</b><span>${h?.database ? "✓ Healthy" : "● Offline"}</span><small>Database / pgvector</small></div>
+      <div class="system-card"><b>LM Studio</b><span>${h?.lmstudio?.reachable ? "✓ Healthy" : "● Offline"}</span><small>${esc(h?.lmstudio?.url || "Not configured")} · ${models.length} resident</small></div>
+      <div class="system-card"><b>Worker</b><span>${h?.worker?.running ? "✓ Running" : "● Stopped"}</span><small>${h?.worker?.current_document ? "processing document" : "idle"}</small></div>
+      <div class="system-card"><b>Version / Build</b><span>${esc(version)}</span><small>${esc(h?.build?.commit || "")}</small></div>`;
+  }
+}
+
 async function pollHealth() {
   let h = null;
   try { h = await api("/api/health"); } catch { /* offline */ }
+  state.health = h;
   const version = h?.build?.version || "dev";
   if ($("versionText")) $("versionText").textContent = version;
   if ($("sidebarVersion")) $("sidebarVersion").classList.toggle("offline", !h);
   const status = document.querySelector(".app-header-status");
   if (status) status.classList.toggle("offline", !h || h.status !== "ok");
-  $("healthCards").innerHTML = h ? `
-    <div class="card"><div class="stat-label">PostgreSQL + pgvector</div>
-      <div class="stat" style="color:${h.database ? "var(--green)" : "var(--red)"}">${h.database ? "online" : "offline"}</div></div>
-    <div class="card"><div class="stat-label">LM Studio</div>
-      <div class="stat" style="color:${h.lmstudio?.reachable ? "var(--green)" : "var(--red)"}">${h.lmstudio?.reachable ? "online" : "offline"}</div>
-      <div class="muted small">${esc(h.lmstudio?.url || "")}${h.lmstudio?.reachable && state.models.length ? ` · ${state.models.length} known model(s)` : ""}</div>
-      ${h.lmstudio?.error ? `<div class="small" style="color:var(--yellow)">${esc(h.lmstudio.error)}</div>` : ""}</div>
-    <div class="card"><div class="stat-label">Ingestion worker</div>
-      <div class="stat" style="color:${h.worker?.paused ? "var(--yellow)" : "var(--green)"}">${h.worker?.paused ? "paused" : h.worker?.running ? "active" : "stopped"}</div>
-      <div class="muted small">${h.worker?.current_document ? "doc " + esc(h.worker.current_document) : "idle"}</div></div>
-    <div class="card"><div class="stat-label">Classification worker</div>
-      <div class="stat" style="color:${h.classification_worker?.running ? "var(--green)" : "var(--red)"}">${h.classification_worker?.running ? "active" : "stopped"}</div>
-      <div class="muted small">${h.classification_worker?.current_document ? "doc " + esc(h.classification_worker.current_document) : "idle"}</div></div>
-    <div class="card"><div class="stat-label">Source sync worker</div>
-      <div class="stat" style="color:${h.source_worker?.running ? "var(--green)" : "var(--red)"}">${h.source_worker?.running ? "active" : "stopped"}</div></div>
-    <div class="card"><div class="stat-label">Graph worker</div>
-      <div class="stat" style="color:${h.graph_worker?.last_error ? "var(--red)" : h.graph_worker?.running ? "var(--green)" : "var(--red)"}">${h.graph_worker?.last_error ? "error" : h.graph_worker?.running ? "active" : "stopped"}</div>
-      <div class="muted small">${h.graph_worker?.current_document ? "doc " + esc(h.graph_worker.current_document) : (h.graph_worker?.indexed_documents || 0) + " indexed this run"}${h.graph_worker?.last_error ? " · " + esc(h.graph_worker.last_error) : ""}</div></div>
-    <div class="card"><div class="stat-label">Model runtime</div>
-      <div class="stat">${h.model_runtime?.queued || 0} queued</div>
-      <div class="muted small">${h.model_runtime?.current_job ? "job " + esc(h.model_runtime.current_job) : "idle"} · ${(h.model_runtime?.current_models || []).map(esc).join(", ") || "no resident models"}</div></div>` : "";
+  renderDashboardOverview(h);
 }
+
 function renderEvents() {
   const all = state.events || [];
   const level = $("eventLevel")?.value || "";
@@ -488,12 +577,14 @@ function renderEvents() {
       <div class="bad"><b>${count("error")}</b><span>Errors</span></div>`;
   }
   const events = all.filter((e) => (!level || e.level === level) && (!query || String(e.message || "").toLowerCase().includes(query)));
-  $("eventsLog").innerHTML = events.map((e) => `
+  const log = $("eventsLog");
+  if (log) log.innerHTML = events.map((e) => `
     <div class="event ${esc(e.level)}">
       <span class="ts">${fmtDate(e.ts)}</span>
       <span class="event-level">${esc((e.level || "info").toUpperCase())}</span>
       <span class="msg">${esc(e.message)}</span>
     </div>`).join("") || `<p class="muted small event-empty">No events match these filters.</p>`;
+  renderDashboardOverview(state.health);
 }
 async function pollEvents() {
   try {
@@ -514,27 +605,34 @@ function sourceIntervalOptions(selected) {
   return values.map((v) => `<option value="${v}" ${Number(selected) === Number(v) ? "selected" : ""}>${formatInterval(Number(v))}</option>`).join("");
 }
 async function loadCollectionSources() {
-  if (!$("sourcesList")) return;
+  const box = $("sourcesList");
+  if (!box) return;
   try {
     const data = await api("/api/collection-sources");
     state.sources = data.sources || [];
-    $("sourcesList").innerHTML = state.sources.length ? `<div class="upload-list">` + state.sources.map((s) => {
-      const stats = s.last_stats || {};
-      const summary = s.last_sync_at
-        ? `last ${fmtDate(s.last_sync_at)} · +${stats.new || 0} ~${stats.changed || 0} -${stats.deleted || 0}`
-        : "not synced yet";
-      return `<div class="upload-item">
-        <span><b>${esc(s.collection)}</b>${s.category ? ` · ${esc(s.category)}` : ""} · <code>${esc(s.path)}</code><br><span class="muted small">${summary}${s.last_error ? ` · error: ${esc(s.last_error)}` : ""}</span></span>
-        <span class="row" style="margin:0">
-          <span class="pill">${s.enabled ? "ON" : "OFF"} · ${formatInterval(Number(s.interval_seconds))}</span>
-          <button class="btn mini" onclick="syncSource('${s.id}')">Sync now</button>
-          <button class="btn mini" onclick="editSource('${s.id}')">Edit</button>
-          <button class="btn mini" onclick="cloneSource('${s.id}')">Clone</button>
-          <button class="btn mini danger" onclick="deleteSource('${s.id}')">Delete</button>
-        </span>
-      </div>`;
-    }).join("") + `</div>` : `<p class="muted">No directory sources configured.</p>`;
-  } catch (e) { $("sourcesList").textContent = e.message; }
+    box.innerHTML = state.sources.length ? `
+      <table class="source-table">
+        <thead><tr><th>Source</th><th>Directory Path</th><th>Cadence</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>${state.sources.map((s) => {
+          const stats = s.last_stats || {};
+          const summary = s.last_sync_at
+            ? `last ${fmtDate(s.last_sync_at)} · +${stats.new || 0} ~${stats.changed || 0} -${stats.deleted || 0}`
+            : "not synced yet";
+          return `<tr>
+            <td><b>${esc(s.collection)}</b>${s.category ? `<span class="source-sync-meta">${esc(s.category)}</span>` : ""}</td>
+            <td><div class="source-path"><code>${esc(s.path)}</code></div><span class="source-sync-meta">${summary}${s.last_error ? ` · error: ${esc(s.last_error)}` : ""}</span></td>
+            <td>${formatInterval(Number(s.interval_seconds))}</td>
+            <td><span class="toggle-pill ${s.enabled ? "on" : ""}">${s.enabled ? "On" : "Off"}</span></td>
+            <td><div class="source-actions">
+              <button class="btn mini" onclick="syncSource('${s.id}')">Sync</button>
+              <button class="btn mini" onclick="editSource('${s.id}')">Edit</button>
+              <button class="btn mini" onclick="cloneSource('${s.id}')">Clone</button>
+              <button class="btn mini danger" onclick="deleteSource('${s.id}')">Delete</button>
+            </div></td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table>` : `<p class="muted small">No directory sources configured.</p>`;
+  } catch (e) { box.textContent = e.message; }
 }
 async function ensureSourceCategories() {
   const data = await api("/api/categories");
@@ -948,11 +1046,42 @@ function renderSearchCollections() {
     `<label class="check chip"><input type="checkbox" class="searchCol" value="${esc(c.name)}"> ${esc(c.name)}${c.default_search ? '' : ' · default OFF'}</label>`).join("")
     || `<span class="muted small">No collections.</span>`;
 }
+function renderReferenceSearchResults(results, message = "") {
+  const evidence = $("evidencePreview");
+  const ranked = $("rankedResults");
+  if (!evidence || !ranked) return;
+  if (!results?.length) {
+    evidence.innerHTML = `<p class="muted small">${esc(message || "No results.")}</p>`;
+    ranked.innerHTML = `<p class="muted small">No ranked evidence.</p>`;
+    return;
+  }
+  const top = results[0];
+  evidence.innerHTML = `
+    <div class="card-head"><h2>Evidence Preview</h2><span class="result-count">${results.length} result(s)</span></div>
+    <div class="evidence-body">
+      <div class="evidence-source">${esc(top.document || top.source_path || "Top result")}</div>
+      <div class="result-loc">${esc(top.collection || "")}${top.location_label ? " · " + esc(top.location_label) : ""}</div>
+      <div class="evidence-text">${esc(top.content || "")}</div>
+      <div class="evidence-grounding">Top-ranked retrieved evidence · score ${Number(top.rerank_score ?? top.score ?? 0).toFixed(3)}</div>
+      <div class="evidence-sources">${results.slice(0, 3).map((x) => `
+        <div class="evidence-source-card"><b>${esc(x.document || x.source_path || "Document")}</b><span>${esc(x.location_label || x.collection || "")}</span></div>`).join("")}</div>
+    </div>`;
+  ranked.innerHTML = `
+    <div class="card-head"><h2>Ranked Results</h2><span class="result-count">${results.length}</span></div>
+    <div class="ranked-list">${results.map((x, i) => `
+      <div class="ranked-row">
+        <span class="rank-number">${i + 1}</span>
+        <div><b>${esc(x.document || x.source_path || "Document")}</b><span>${esc(x.location_label || x.collection || "")}${x.selection?.reason ? " · " + esc(x.selection.reason) : ""}</span></div>
+        <em>${esc(x.selection?.method || "retrieval")}</em>
+        <strong>${Number(x.rerank_score ?? x.score ?? 0).toFixed(3)}</strong>
+      </div>`).join("")}</div>`;
+}
+
 async function doSearch() {
   const query = $("searchQuery").value.trim();
   if (!query) return;
   const cols = [...document.querySelectorAll(".searchCol:checked")].map((c) => c.value);
-  $("searchResults").innerHTML = `<p class="muted"><span class="spinner"></span> Searching…</p>`;
+  renderReferenceSearchResults([], "Searching…");
   try {
     const documentId = $("searchDocumentId").value.trim();
     const author = $("searchAuthor").value.trim();
@@ -998,29 +1127,21 @@ async function doSearch() {
         edges.length ? `<div class="upload-list">${edges.map(e => `<div class="upload-item"><span><b>${esc(e.concept)}</b></span><span class="muted"><code>${esc(e.source)}</code> → <code>${esc(e.target)}</code>${e.query_match ? " · query match" : ""}</span></div>`).join("")}</div>` :
         `<p class="muted">No cross-document evidence edges for this result set.</p>`}`;
     if (!r.results.length) {
-      $("searchResults").innerHTML = `<div class="card"><p class="muted">${esc(r.message || "No results.")}</p></div>`;
+      renderReferenceSearchResults([], r.message || "No results.");
       await loadSearchMetrics();
       return;
     }
-    $("searchResults").innerHTML = r.results.map((x) => `
-      <div class="result-card">
-        <div class="result-head">
-          <span class="result-source">📄 ${esc(x.source_path)}</span>
-          <span class="result-score">score ${x.score.toFixed(3)}</span>
-        </div>
-        <div class="result-loc">${esc(x.collection)}${x.location_label ? " · " + esc(x.location_label) : ""} · chunk #${x.chunk_seq}</div>
-        <div class="result-content">${esc(x.content)}</div>
-        <div class="result-meta">doc: ${esc(x.document)} · id: <code>${esc(x.document_id)}</code>${x.metadata?.title ? " · " + esc(x.metadata.title) : ""}</div>
-        <div class="result-meta">why: ${esc(x.selection?.reason || "retrieval ranking")}</div>
-      </div>`).join("");
+    renderReferenceSearchResults(r.results);
     await loadSearchMetrics();
-  } catch (e) { $("searchResults").innerHTML = ""; toast(e.message, true); }
+  } catch (e) { renderReferenceSearchResults([], e.message); toast(e.message, true); }
 }
 
 async function loadSearchMetrics() {
   try {
     const data = await api("/api/search/metrics?hours=24&recent_limit=10");
     const s = data.summary || {};
+    state.searchSummary = s;
+    renderDashboardOverview(state.health);
     const recent = data.recent || [];
     const parts = [
       `<span><b>${s.queries || 0}</b> queries/24h</span>`,
@@ -1086,7 +1207,7 @@ async function loadBookCategories() {
               <button class="btn mini danger" onclick="deleteBookCategory('${c.id}', ${esc(JSON.stringify(c.name))})">Delete</button>
             </span>
           </div>`).join("")}</div>`
-      : `<p class="muted">No categories yet. The first book can propose one automatically.</p>`;
+      : `<p class="muted">No categories yet. Create one here, then run classification.</p>`;
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1197,6 +1318,7 @@ async function pollDocumentsClassification() {
     refreshStaged();
     pollStatus();
     pollHealth();
+    loadSearchMetrics();
     showTab(localStorage.getItem("rag_active_tab") || "dashboard", { persist: false });
     setInterval(pollStatus, 1500);
     setInterval(pollDocumentsClassification, 2000);

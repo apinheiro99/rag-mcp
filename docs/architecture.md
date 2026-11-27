@@ -266,115 +266,117 @@ stateDiagram-v2
 
 ## 9. Retrieval pipeline
 
-### Base retrieval
+Retrieval is query-aware rather than a fixed vector-only pipeline.
 
 ```mermaid
 flowchart LR
-    Q[Query] --> QE[Query Embedding]
-    QE --> PG[pgvector Search]
-    PG --> F[Source Filters]
-    F --> MS[Min Score]
-    MS --> S[Sort by Vector Score]
-    S --> K[Top K]
+    Q[Query] --> I[Query intent analysis]
+    I --> D[Dense retrieval]
+    I --> M[Metadata/title retrieval when useful]
+    I --> L[Lexical retrieval for exact technical terms]
+    I --> X[Bounded decomposition for explicit compound comparisons]
+    D --> F[RRF fusion]
+    M --> F
+    L --> F
+    X --> F
+    F --> R[Qwen reranker]
+    R --> A[Adaptive result cutoff]
+    A --> O[Source-traceable results]
 ```
 
-Search can span collections that use compatible embedding model/dimension groups. With no explicit collection filter, retrieval searches every collection whose `Default search` flag is ON. A collection filter is only applied when the caller explicitly requests it; explicit selection can search a collection even when its default flag is OFF.
+### Dense retrieval
 
-Returned results preserve:
-- chunk id;
-- document id;
-- content;
-- vector score;
-- collection;
-- source filename/path;
-- location metadata;
-- document metadata.
+Dense retrieval remains the baseline. Query embeddings are searched against
+compatible collection/model/dimension groups in PostgreSQL + pgvector/HNSW.
+
+With no explicit collection filter, retrieval searches every collection whose
+Default search flag is ON. Explicit collection selection may search a
+collection even when its default flag is OFF.
+
+### Query-aware hybrid retrieval
+
+The query analyzer detects signals such as technical identifiers and acronyms,
+named technical concepts, quoted phrases, and book-title-like phrases.
+
+Metadata/title retrieval can complement dense retrieval even when the dense
+stage is strong. Full lexical retrieval is deliberately narrower and is used
+for exact technical terms or when dense retrieval is weak. This avoids the
+latency regression caused by broad full-text search on every technical query.
+
+Candidate rankings are fused with reciprocal rank fusion before reranking.
+
+### Query decomposition
+
+Only explicit compound comparison/difference questions are decomposed. The
+planner is deterministic and configuration-bounded; simple questions are not
+decomposed. Subqueries run in parallel, are fused with the original-query
+evidence, and are reranked against the original user question.
+
+### Adaptive top_k
+
+Caller top_k is a ceiling when adaptive cutoff is enabled. The system may
+return fewer results when additional chunks add noise rather than evidence.
 
 ### Filters
 
-Current search filters include document IDs, authors, source paths, chapters and pages.
+Current search filters include document IDs, authors, source paths, chapters
+and pages. Dense, lexical, metadata and decomposed retrieval paths preserve the
+same filter semantics.
+
+### Returned provenance
+
+Results preserve chunk/document ids, content, collection, filename/path,
+location/document metadata, vector score, optional lexical/metadata/fusion/
+rerank scores, and selection provenance.
 
 ---
 
-## 10. Reranking
+## 10. Reranking and model residency
 
-Reranking is a second retrieval stage. It does **not** replace embeddings.
+Reranking is a second retrieval stage. It does not replace embeddings.
 
 ```mermaid
 flowchart LR
-    Q[Query] --> E[Embedding Retrieval]
-    E --> CP[Candidate Pool]
-    CP --> RR[Configured Reranker]
+    Q[Query] --> C[Fused candidate pool]
+    C --> RR[Qwen reranker]
     Q --> RR
-    RR --> RS[Rerank Score]
-    RS --> FK[Final Top K]
+    RR --> RS[Rerank score]
+    RS --> AK[Adaptive top_k]
 ```
 
-The original vector `score` remains intact. Reranking adds `rerank_score`.
+### Current model roles
 
-### Model roles
+Normal retrieval uses an exact resident model profile:
 
-Three roles are explicit:
+- embedding_model: Qwen embedding model;
+- reranker_model: Qwen reranker.
 
-- `embedding_model`
-- `llm_model`
-- `reranker_model`
+Reference deployment:
 
-Reference deployment current reranker:
-`qwen3-reranker-4b` (resident runtime override)
+- text-embedding-qwen3-embedding-8b;
+- qwen3-reranker-4b.
 
-Repository fallback/default remains configuration-driven in `config/defaults.yaml`.
+A generative llm_model may exist for explicitly generative/admin workflows, but
+normal search and document classification do not require it.
 
-Current embedding:
-`text-embedding-qwen3-embedding-8b`
+### Exact residency contract
 
-### Switch mode
+Before normal retrieval/reranking, the runtime ensures the configured embedding
+plus reranker profile is resident. Models outside that profile are evicted from
+the normal retrieval path so VRAM does not accumulate unpredictably.
 
-Initial approved mode is model switching:
+The same residency policy is shared by search and classification.
 
-1. generate query embedding;
-2. retrieve larger candidate pool;
-3. acquire global model runtime lock;
-4. unload embedding model;
-5. load reranker;
-6. rerank;
-7. unload reranker;
-8. restore embedding model in `finally`;
-9. release lock.
+### Classification
 
-The ingestion worker uses the same global model runtime lock for embedding batches, preventing it from racing the reranker model switch.
+Document classification uses embeddings first and the reranker as fallback
+against categories that already exist. It never creates taxonomy silently and
+does not require Gemma/a generative model.
 
-### Model-switch sequence
+### Failure behavior
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Search
-    participant Lock as Model Runtime Lock
-    participant LM as LM Studio
-    participant PG as pgvector
-
-    Client->>Search: query
-    Search->>LM: embed(query) with Qwen 8B
-    LM-->>Search: query vector
-    Search->>PG: nearest-neighbor search
-    PG-->>Search: candidate pool
-    Search->>Lock: acquire
-    Search->>LM: unload embedding model
-    Search->>LM: load configured reranker
-    Search->>LM: rerank(query + candidates)
-    LM-->>Search: rerank scores
-    Search->>LM: unload reranker
-    Search->>LM: restore embedding model
-    Search->>Lock: release
-    Search-->>Client: final ranked results
-```
-
-### Fail-open invariant
-
-Reranking is a quality enhancement, not a prerequisite for retrieval.
-
-If reranking fails and `fail_open=true`, the original vector-ranked candidates are returned.
+Reranking is fail-open when configured that way: if it fails, fused/dense
+ranking remains available.
 
 ---
 
@@ -545,6 +547,35 @@ It is **not** a reason to redact operational credentials from the private KB.
 
 ---
 
+## 17.1 UI visual contract
+
+The web UI has a versioned visual reference set in `docs/screens/`.
+
+Reference authority:
+
+- `01_logo.png` — branding and lockup reference;
+- `02_dashboard.png` — dashboard layout and component styling;
+- `03_import.png` — import flow layout;
+- `04_documents.png` — documents table and controls;
+- `05_search.png` — retrieval/search layout;
+- `06_settings.png` — settings layout;
+- `07_background.png` — not authoritative for the runtime background.
+
+The runtime intentionally keeps the currently approved background asset under
+`app/static/branding/rag-mcp-background.png`. All other shell, spacing, card,
+control, typography, table and state styling should converge on screenshots
+01 through 06.
+
+Implementation rules:
+
+1. The visual contract must not change API or runtime behavior.
+2. Functional actions remain in `app/static/app.js`; presentation belongs in
+   `app/static/style.css` and semantic structure in `app/static/index.html`.
+3. Direct actions must not acquire confirmation or information modals merely
+   for visual consistency.
+4. Responsive behavior may collapse the desktop reference layout, but desktop
+   proportions remain the canonical visual target.
+5. Changes to the visual reference contract require an update to this section.
 ## 18. Documentation information architecture
 
 This documentation follows a task-oriented structure informed by **Docs for Developers** and the existing REACH documentation pattern:
@@ -728,7 +759,7 @@ Viável e rápido, mas 12B foi mais rápido e não mostrou perda de qualidade no
 
 ## 22. Current operational state
 
-**Atualizado:** 2026-11-23
+**Atualizado:** 2026-11-27
 
 RAG MCP está operacional:
 - API local: `http://127.0.0.1:8000`
@@ -740,11 +771,13 @@ RAG MCP está operacional:
 
 ### Models
 
-- embedding: `text-embedding-qwen3-embedding-8b`
-- reranker runtime: `qwen3-reranker-4b`
-- reranker mode: resident
-- rerank optimized: multiplier 2, max 8 candidates, 800 chars/candidate
-- repository still supports switch/resident strategies
+Current normal retrieval profile:
+
+- embedding: text-embedding-qwen3-embedding-8b;
+- reranker: qwen3-reranker-4b;
+- normal search/classification: no generative LLM required;
+- residency: exact embedding + reranker profile.
+
 
 ### Corpus organization
 
