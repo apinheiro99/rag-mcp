@@ -177,6 +177,7 @@ Feedback do usuário com screenshots reais de PROD (`1920×1032`):
 - correção obrigatória: manter fontes/controles legíveis como no Dashboard e obter densidade reduzindo padding/gaps, **nunca miniaturizando texto**;
 - Documents tinha bug real de apresentação: qualquer extensão diferente de `.md` virava `PDF`; corrigir por extensão real (`PDF`, `EPUB`, `AZW3`, `MD`, `PY`, `JSON`, `DOCX`, etc.);
 - depois desta correção, revalidar as quatro telas diretamente contra `03..06`, usando os screenshots de PROD como evidência de escala.
+- [x] pipeline 706 validou em branch a correção de escala/legibilidade, file-type badges reais e overlap do Search.
 
 ### Estado atual da UI
 
