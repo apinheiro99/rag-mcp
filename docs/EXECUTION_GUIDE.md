@@ -346,6 +346,20 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 - [x] pipeline 721 (`d99b562`, `main`) publicou/deployou a fila única; busca composta em PROD manteve Strategy + DDD, `effective_top_k=5`, usefulness high.
 - autoconfig com LLM pesado continua como item separado porque descarregar o LLM e restaurar imediatamente o perfil residente embedding+reranker exige política explícita de pós-job; não misturar essa decisão neste patch.
 
+### Evidência do próprio RAG para as decisões pendentes
+
+Dogfooding dos livros atuais:
+
+- retenção: *Building Microservices* recomenda ser frugal e remover/anônimizar dados sensíveis o mais cedo possível; materiais de agentes reforçam retenção configurável por classe de dado;
+- performance: *Graph Databases* e *PerfTestGuide* recomendam percentis e thresholds derivados de requisitos/baseline, não números arbitrários;
+- credenciais: *Release It!* trata default passwords como security misconfiguration e recomenda nunca permitir senha default em servidor de produção.
+
+Recomendação KISS deste ciclo:
+
+1. AUD-005: manter métricas; adicionar retenção configurável para texto de query, sem inventar vault/segundo datastore; prazo ainda precisa de decisão explícita.
+2. AUD-020: manter P95/P99 apenas como observabilidade por enquanto; não criar gate até existir baseline/SLO aprovado.
+3. AUD-023: remover fallback de senha `rag` e exigir `POSTGRES_PASSWORD` quando não houver `RAG_DSN`; preservar setup de testes/CI via env explícita.
+
 ### Decisões pendentes — opções KISS
 
 **AUD-005 — retenção/redaction de queries**
