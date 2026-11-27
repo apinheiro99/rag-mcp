@@ -85,6 +85,9 @@ function showTab(name, { persist = true } = {}) {
   const meta = TAB_META[name] || TAB_META.dashboard;
   if ($("pageTitle")) $("pageTitle").textContent = meta[0];
   if ($("pageSubtitle")) $("pageSubtitle").textContent = meta[1];
+  const headerIcon = $("pageHeaderIcon");
+  const navIcon = document.querySelector(`#nav button[data-tab="${name}"] svg`);
+  if (headerIcon && navIcon) headerIcon.innerHTML = navIcon.outerHTML;
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   if (name === "documents") loadDocuments();
@@ -458,10 +461,20 @@ function dashboardTotals() {
   return { collections: collections.length, documents, ready, errors, chunks, queue };
 }
 
-function statusRow(label, ok, detail = "") {
+function serviceIcon(kind) {
+  const icons = {
+    postgres: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5.5C8.2 3.8 10 3 12 3c3.9 0 6.8 2.7 6.8 6.2 0 2.1-.7 4.2-2.1 5.4-.8.7-1.8.8-2.8.2l-1.2-.7-.5 4.7-2.1 1.2.5-5.9-1.7.8c-1 .5-2 .2-2.7-.7C4.7 12.4 4.8 8 7 5.5Z"/><path d="M10.8 7.3c.5-.6 1.3-.6 1.8 0M14.4 7.2h.1M8.6 7.2h.1M12.5 10.2c1.1.8 2.3 1.2 3.7 1.1"/></svg>`,
+    layers: refIcon("layers"),
+    gear: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="7"/></svg>`,
+  };
+  return icons[kind] || icons.layers;
+}
+
+function statusRow(label, ok, detail = "", kind = "layers", statusText = "") {
+  const status = statusText || (ok ? "✓ Healthy" : "● Attention");
   return `<div class="status-row">
-    <span class="status-service">${esc(label)}</span>
-    <span class="status-value ${ok ? "ok" : "bad"}">${ok ? "✓ Healthy" : "● Attention"}</span>
+    <span class="status-icon">${serviceIcon(kind)}</span><span class="status-service">${esc(label)}</span>
+    <span class="status-value ${ok ? "ok" : "bad"}">${esc(status)}</span>
     ${detail ? `<span class="status-detail">${esc(detail)}</span>` : ""}
   </div>`;
 }
@@ -469,17 +482,18 @@ function statusRow(label, ok, detail = "") {
 function refIcon(kind, extra = "") {
   const cls = `ref-svg ${extra}`.trim();
   const icons = {
-    cube: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 20 7.2v9.6L12 21.2 4 16.8V7.2L12 2.8Z"/><path d="m4 7.2 8 4.5 8-4.5M12 11.7v9.5"/></svg>`,
+    layers: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4M4 17l8 4 8-4"/></svg>`,
+    cube: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7.5 4.2v9.6L12 21l-7.5-4.2V7.2L12 3Z"/><path d="m4.5 7.2 7.5 4.3 7.5-4.3M12 11.5V21"/></svg>`,
     document: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3v14H6z"/><path d="M15 3.5v4h4M9 11h6M9 14.5h6M9 18h4.5"/></svg>`,
     check: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.3 2.4 4.9-5.2"/></svg>`,
-    queue: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="4" rx="1.3"/><rect x="4" y="11" width="16" height="4" rx="1.3"/><rect x="4" y="17" width="16" height="2" rx="1"/></svg>`,
+    queue: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4M4 17l8 4 8-4"/></svg>`,
     search: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.1 15.1 5 5"/></svg>`,
-    chunks: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>`,
+    chunks: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke-dasharray="1.2 3.1" stroke-width="2.2"/></svg>`,
     runtime: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/><circle cx="9" cy="9" r="1.1"/><circle cx="15" cy="9" r="1.1"/><circle cx="9" cy="15" r="1.1"/><circle cx="15" cy="15" r="1.1"/><path d="M2.5 8h2.5M2.5 16h2.5M19 8h2.5M19 16h2.5M8 2.5V5M16 2.5V5M8 19v2.5M16 19v2.5"/></svg>`,
-    embedding: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 4-7 4-7-4 7-4Z"/><path d="m5 11 7 4 7-4M5 15l7 4 7-4"/></svg>`,
-    rerank: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h12M5 11h9M5 16h6"/><path d="m15.5 15.5 2 2 3.5-4"/></svg>`,
-    classify: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="6.5" r="2"/><circle cx="17.5" cy="6.5" r="2"/><circle cx="12" cy="17.5" r="2"/><path d="M8.2 7.6 10.8 16M15.8 7.6 13.2 16M8.5 6.5h7"/></svg>`,
-    resident: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="6" width="14" height="12" rx="2"/><path d="M8 10h8M8 14h8M3 9h2M3 15h2M19 9h2M19 15h2"/><circle cx="9" cy="10" r=".6" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r=".6" fill="currentColor" stroke="none"/></svg>`,
+    embedding: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4M4 17l8 4 8-4"/></svg>`,
+    rerank: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4M4 17l8 4 8-4"/></svg>`,
+    classify: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.9 4.6 3.2 7 7.5 8-4.3 1-6.6 3.4-7.5 8-.9-4.6-3.2-7-7.5-8 4.3-1 6.6-3.4 7.5-8Z"/></svg>`,
+    resident: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7.5 4.2v9.6L12 21l-7.5-4.2V7.2L12 3Z"/><path d="m4.5 7.2 7.5 4.3 7.5-4.3M12 11.5V21"/></svg>`,
   };
   return icons[kind] || icons.cube;
 }
@@ -490,7 +504,7 @@ function renderDashboardOverview(h = state.health) {
   if (stats) {
     const queries = Number(state.searchSummary?.queries || 0);
     const items = [
-      ["cube", totals.collections, "Collections"],
+      ["layers", totals.collections, "Collections"],
       ["document", totals.documents.toLocaleString(), "Documents"],
       ["check", totals.ready.toLocaleString(), "Ready"],
       ["queue", totals.queue.toLocaleString(), "Queue"],
@@ -507,10 +521,10 @@ function renderDashboardOverview(h = state.health) {
   const health = $("runtimeHealth");
   if (health) {
     health.innerHTML = h ? [
-      statusRow("PostgreSQL", Boolean(h.database)),
-      statusRow("LM Studio", Boolean(h.lmstudio?.reachable)),
-      statusRow("Worker", Boolean(h.worker?.running) && !h.worker?.paused, h.worker?.paused ? "paused" : ""),
-      statusRow("Classification Queue", Boolean(h.classification_worker?.running), h.classification_worker?.current_document ? "running" : "idle"),
+      statusRow("PostgreSQL", Boolean(h.database), "", "postgres"),
+      statusRow("LM Studio", Boolean(h.lmstudio?.reachable), "", "layers"),
+      statusRow("Worker", Boolean(h.worker?.running) && !h.worker?.paused, "", "gear"),
+      statusRow("Classification Queue", Boolean(h.classification_worker?.running), "", "layers", h.classification_worker?.running ? "▷ Running" : "● Attention"),
     ].join("") : `<p class="muted small">Server unavailable.</p>`;
   }
 
@@ -536,10 +550,25 @@ function renderDashboardOverview(h = state.health) {
   const activity = $("dashboardActivity");
   if (activity) {
     const events = (state.events || []).slice(0, 5);
+    const activityIcon = (e) => {
+      const msg = String(e.message || "").toLowerCase();
+      if (msg.includes("search")) return `<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4.5 4.5"/></svg>`;
+      if (msg.includes("started") || msg.includes("start")) return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16V7m0 0-3 3m3-3 3 3"/></svg>`;
+      return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.2 2.2 2.3 4.8-5"/></svg>`;
+    };
+    const activityTone = (e) => {
+      const msg = String(e.message || "").toLowerCase();
+      if (msg.includes("started") || msg.includes("start")) return "start";
+      if (msg.includes("search")) return "search";
+      if (String(e.level || "").toLowerCase() === "warning") return "warning";
+      if (String(e.level || "").toLowerCase() === "error") return "error";
+      return "success";
+    };
     activity.innerHTML = events.length ? events.map((e) => `
-      <div class="activity-row ${esc(e.level || "info")}">
-        <span class="activity-dot"></span>
-        <div><b>${esc(e.message)}</b><span>${fmtDate(e.ts)}</span></div>
+      <div class="activity-row ${activityTone(e)}">
+        <span class="activity-icon">${activityIcon(e)}</span>
+        <div class="activity-copy"><b>${esc(e.message)}</b><span>${esc(e.detail || "")}</span></div>
+        <time>${fmtTime(e.ts)}</time>
       </div>`).join("") : `<p class="muted small">No recent activity.</p>`;
   }
 
@@ -549,13 +578,13 @@ function renderDashboardOverview(h = state.health) {
     const embedding = state.settings.embedding_model || "Not configured";
     const reranker = state.settings.reranker_model || state.effective?.rerank?.model || "Not configured";
     const cards = [
-      ["embedding","Embedding Model",embedding,loaded.has(embedding) ? "In Use" : "Configured"],
-      ["rerank","Reranker",reranker,loaded.has(reranker) ? "In Use" : "Configured"],
-      ["classify","Classification","Embedding + Reranker","Existing categories only"],
-      ["resident","Resident-Model Behavior","Exact resident profile","Embedding + reranker"],
+      ["embedding","Embedding Model",embedding,loaded.has(embedding) ? "✓ In Use" : "Configured","Local (LM Studio)","cyan"],
+      ["rerank","Reranker (4B)",reranker,loaded.has(reranker) ? "✓ In Use" : "Configured","Local (LM Studio)","muted"],
+      ["classify","Classification","Embedding + Reranker","Existing categories only","Existing-category routing","muted"],
+      ["resident","Resident-Model Behavior","Exact resident profile","∞ Always On","Models remain loaded for low-latency inference","muted"],
     ];
-    runtime.innerHTML = cards.map(([icon,label,value,status]) => `
-      <div class="model-card"><div class="model-card-head"><span class="model-icon">${refIcon(icon)}</span><b>${esc(label)}</b><em>${esc(status)}</em></div><strong>${esc(value)}</strong></div>`).join("");
+    runtime.innerHTML = cards.map(([icon,label,value,status,detail,tone]) => `
+      <div class="model-card"><div class="model-card-head"><span class="model-icon ${tone}">${refIcon(icon)}</span><b>${esc(label)}</b><em>${esc(status)}</em></div><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
   }
 
   const system = $("systemServerGrid");
