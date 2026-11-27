@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+
+from .config import env
 from xml.etree import ElementTree as ET
 
 log = logging.getLogger("rag.extract")
@@ -757,7 +759,10 @@ def _extract_specialized(path: Path, filename: str, *, sample: bool) -> Extracte
 def _run_text_tool(args: list[str], tool: str) -> str:
     if shutil.which(tool) is None:
         raise ExtractionError(f"parser externo não instalado: {tool}")
-    proc = subprocess.run(args, capture_output=True, check=False)
+    try:
+        proc = subprocess.run(args, capture_output=True, check=False, timeout=env.external_parser_timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise ExtractionError(f"timeout ao extrair com {tool} após {env.external_parser_timeout}s") from exc
     if proc.returncode != 0:
         detail = decode_text_bytes(proc.stderr or proc.stdout).strip()
         raise ExtractionError(f"falha ao extrair com {tool}: {detail or 'erro desconhecido'}")
@@ -849,7 +854,10 @@ def extract_mobi_family(path: Path) -> ExtractedDoc:
     if shutil.which('mobitool') is None:
         raise ExtractionError("parser externo não instalado: mobitool")
     with tempfile.TemporaryDirectory(prefix='rag-mobi-') as td:
-        proc = subprocess.run(['mobitool', '-d', '-o', td, str(path)], capture_output=True, check=False)
+        try:
+            proc = subprocess.run(['mobitool', '-d', '-o', td, str(path)], capture_output=True, check=False, timeout=env.external_parser_timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise ExtractionError(f"timeout ao extrair MOBI/Kindle após {env.external_parser_timeout}s") from exc
         if proc.returncode != 0:
             detail = decode_text_bytes(proc.stderr or proc.stdout).strip()
             raise ExtractionError(f"falha ao extrair MOBI/Kindle: {detail or 'arquivo inválido ou protegido'}")
@@ -878,7 +886,10 @@ def extract_chm(path: Path) -> ExtractedDoc:
     if shutil.which('extract_chmLib') is None:
         raise ExtractionError("parser externo não instalado: extract_chmLib")
     with tempfile.TemporaryDirectory(prefix='rag-chm-') as td:
-        proc = subprocess.run(['extract_chmLib', str(path), td], capture_output=True, check=False)
+        try:
+            proc = subprocess.run(['extract_chmLib', str(path), td], capture_output=True, check=False, timeout=env.external_parser_timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise ExtractionError(f"timeout ao extrair CHM após {env.external_parser_timeout}s") from exc
         if proc.returncode != 0:
             detail = decode_text_bytes(proc.stderr or proc.stdout).strip()
             raise ExtractionError(f"falha ao extrair CHM: {detail or 'arquivo inválido'}")

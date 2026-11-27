@@ -214,45 +214,48 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
             initial_status = "pending" if auto_start else "staged"
             mtime_ns = path.stat().st_mtime_ns
             async with db.pool.connection() as conn:
-                cur = await conn.execute(
-                    """SELECT id FROM documents
-                       WHERE collection_id=%s AND content_sha256=%s AND (%s::uuid IS NULL OR id<>%s::uuid)""",
-                    (source["collection_id"], digest, str(old["id"]) if old else None,
-                     str(old["id"]) if old else None),
-                )
-                duplicate = await cur.fetchone()
-                if duplicate:
-                    stats["errors"] += 1
-                    continue
-                if old:
-                    await conn.execute("DELETE FROM chunks WHERE document_id=%s", (old["id"],))
-                    await conn.execute(
-                        """UPDATE documents SET filename=%s, stored_path=%s, content_sha256=%s,
-                               size_bytes=%s, source_mtime_ns=%s, status=%s, error=NULL,
-                               attempts=0, retry_at=NULL, chunks_total=0, chunks_embedded=0,
-                               ingest_config=%s::jsonb, meta=%s::jsonb, category_id=%s,
-                               updated_at=now(), processed_at=NULL
-                           WHERE id=%s""",
-                        (path.name, blob_rel, digest, size, mtime_ns, initial_status,
-                         json.dumps(auto_config) if auto_config else None,
-                         json.dumps(source_meta), source.get("category_id"), old["id"]),
+                async with conn.transaction():
+                    cur = await conn.execute(
+                        """SELECT id FROM documents
+                           WHERE collection_id=%s AND content_sha256=%s AND (%s::uuid IS NULL OR id<>%s::uuid)""",
+                        (source["collection_id"], digest, str(old["id"]) if old else None,
+                         str(old["id"]) if old else None),
                     )
-                    extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
-                    stats["changed"] += 1
-                else:
-                    doc_id = str(uuid.uuid4())
-                    await conn.execute(
-                        """INSERT INTO documents(
-                               id, collection_id, category_id, filename, source_path, stored_path,
-                               content_sha256, size_bytes, status, ingest_config,
-                               source_id, source_mtime_ns, meta)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)""",
-                        (doc_id, source["collection_id"], source.get("category_id"),
-                         path.name, rel, blob_rel, digest, size, initial_status,
-                         json.dumps(auto_config) if auto_config else None,
-                         source_id, mtime_ns, json.dumps(source_meta)),
-                    )
-                    stats["new"] += 1
+                    duplicate = await cur.fetchone()
+                    if duplicate:
+                        stats["errors"] += 1
+                        continue
+                    if old:
+                        await conn.execute("DELETE FROM chunks WHERE document_id=%s", (old["id"],))
+                        await conn.execute(
+                            """UPDATE documents SET filename=%s, stored_path=%s, content_sha256=%s,
+                                   size_bytes=%s, source_mtime_ns=%s, status=%s, error=NULL,
+                                   attempts=0, retry_at=NULL, chunks_total=0, chunks_embedded=0,
+                                   ingest_config=%s::jsonb, meta=%s::jsonb, category_id=%s,
+                                   updated_at=now(), processed_at=NULL
+                               WHERE id=%s""",
+                            (path.name, blob_rel, digest, size, mtime_ns, initial_status,
+                             json.dumps(auto_config) if auto_config else None,
+                             json.dumps(source_meta), source.get("category_id"), old["id"]),
+                        )
+                    else:
+                        doc_id = str(uuid.uuid4())
+                        await conn.execute(
+                            """INSERT INTO documents(
+                                   id, collection_id, category_id, filename, source_path, stored_path,
+                                   content_sha256, size_bytes, status, ingest_config,
+                                   source_id, source_mtime_ns, meta)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)""",
+                            (doc_id, source["collection_id"], source.get("category_id"),
+                             path.name, rel, blob_rel, digest, size, initial_status,
+                             json.dumps(auto_config) if auto_config else None,
+                             source_id, mtime_ns, json.dumps(source_meta)),
+                        )
+            if old:
+                extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
+                stats["changed"] += 1
+            else:
+                stats["new"] += 1
         except Exception:
             log.exception("source sync failed for %s", path)
             stats["errors"] += 1

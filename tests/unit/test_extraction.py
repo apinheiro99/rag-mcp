@@ -279,3 +279,32 @@ def test_extract_javascript_source_preserves_symbol_blocks(tmp_path):
     doc = extract(p, p.name)
     assert doc.meta["kind"] == "source_code"
     assert [seg.loc["symbol"] for seg in doc.segments] == ["<module>", "alpha", "beta"]
+
+
+def test_external_text_tool_uses_configured_timeout(monkeypatch):
+    from app import extraction
+    monkeypatch.setattr(extraction.shutil, "which", lambda tool: "/usr/bin/fake")
+    monkeypatch.setattr(extraction.env, "external_parser_timeout", 17)
+    seen = {}
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+        class P:
+            returncode = 0
+            stdout = b"ok"
+            stderr = b""
+        return P()
+    monkeypatch.setattr(extraction.subprocess, "run", fake_run)
+    assert extraction._run_text_tool(["fake"], "fake") == "ok"
+    assert seen["timeout"] == 17
+
+
+def test_external_text_tool_timeout_is_reported(monkeypatch):
+    from app import extraction
+    import subprocess
+    monkeypatch.setattr(extraction.shutil, "which", lambda tool: "/usr/bin/fake")
+    monkeypatch.setattr(extraction.env, "external_parser_timeout", 9)
+    def fake_run(args, **kwargs):
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+    monkeypatch.setattr(extraction.subprocess, "run", fake_run)
+    with pytest.raises(ExtractionError, match="timeout.*9s"):
+        extraction._run_text_tool(["fake"], "fake")

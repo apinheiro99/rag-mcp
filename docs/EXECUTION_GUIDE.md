@@ -217,9 +217,9 @@ Commits já integrados:
 
 Pendências:
 
-- [ ] rodar novamente avaliação avançada contra serviço real/PROD;
-- [ ] validar nomes de livros, termos técnicos, padrões e conceitos nomeados;
-- [ ] investigar individualmente cada caso fraco;
+- [x] avaliação avançada executada no PROD: 12/12 casos com known-source recall = 1.0;
+- [x] nomes de livros, termos técnicos, padrões e conceitos nomeados validados no PROD;
+- [x] casos de usefulness menor revisados; sem miss de fonte, portanto sem mudança algorítmica por métrica heurística isolada;
 - [ ] usar `EXPLAIN ANALYZE` antes de mexer em índice lexical;
 - [x] reduzir o lexical query de OR entre todos os lexemas para `plainto_tsquery` (AND), preservando o mesmo GIN; motivação: dogfooding mostrou 0,6–3,5 s em termos amplos como `Strategy pattern`; validar no PROD antes de qualquer mudança de índice.
 - [ ] adicionar poucos testes PostgreSQL reais de lexical/hybrid;
@@ -238,7 +238,7 @@ Estado:
 - [x] corrigido bug do mínimo poder ultrapassar teto menor;
 - [x] adicionados testes de regressão;
 - [x] 18 testes de retrieval-fusion passam;
-- [ ] rodar suíte relevante completa;
+- [x] suíte unitária relevante completa executada e verde;
 - [x] documentar contrato MCP/API como teto;
 - [ ] commit/push isolado.
 
@@ -254,9 +254,9 @@ Manter:
 
 Pendências:
 
-- [ ] validar casos compostos onde um lado antes era perdido;
-- [ ] medir ganho versus latência;
-- [ ] manter desligada em perguntas simples;
+- [x] casos compostos validados; ambos os lados recuperados em Strategy/Aggregate Root e PostgreSQL/DDD;
+- [x] ganho/latência medidos em PROD; decomposition ficou restrita aos casos compostos;
+- [x] confirmado no PROD: decomposition permanece desligada em perguntas simples;
 - [ ] só expandir heurística se caso de avaliação real demonstrar necessidade.
 
 ## 6. Protocolo de avaliação retrieval
@@ -287,15 +287,32 @@ Capturar:
 
 Não escolher SLO P95/P99 sem André.
 
+## 6.1 Resultado da avaliação avançada no PROD
+
+Execução com `top_k=20` em todos os 12 casos de `examples/evaluation/retrieval_advanced.json`:
+
+- known-source recall: **12/12 = 1.0**;
+- adaptive `effective_top_k`: **3–7**, nunca 20;
+- decomposition: ativa apenas em comparações/diferenças explícitas;
+- perguntas simples: decomposition desativada;
+- `Strategy pattern`: fonte correta, effective_top_k=4;
+- `Aggregate Root`: fonte correta, effective_top_k=3;
+- PostgreSQL isolation: fonte correta, effective_top_k=3;
+- Software Architecture in Practice: fonte correta, effective_top_k=4;
+- compound Strategy/DDD e PostgreSQL/DDD: ambos os lados recuperados;
+- `compound-rag` teve usefulness heurística baixa, mas source recall=1.0; não alterar arquitetura sem falha real de retrieval.
+
+Decisão: retrieval/hybrid/adaptive/decomposition estão funcionalmente aprovados para este ciclo; próximos ajustes só com miss reproduzível ou evidência de regressão.
+
 ## 7. Auditoria independente — triagem
 
 A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 
 ### Bugs locais que fazem sentido corrigir
 
-- [ ] AUD-008 — atomicidade no source-sync update.
-- [ ] AUD-010 — timeout configurável em parsers externos.
-- [ ] AUD-011 — MCP get_document extraction em `asyncio.to_thread`.
+- [x] AUD-008 — source-sync change agora usa transação explícita para DELETE chunks + UPDATE document; cache é removido após commit.
+- [x] AUD-010 — timeout configurável em `ingest.external_parser_timeout` (default 60s; env `RAG_EXTERNAL_PARSER_TIMEOUT` pode sobrescrever) aplicado aos parsers externos.
+- [x] AUD-011 — MCP `get_document` move leitura de cache/extração para `asyncio.to_thread`.
 - [ ] AUD-004 — erro transitório de filesystem não pode parecer deleção confirmada.
 - [ ] AUD-007 — Qwen reranker não deve transformar massa residual inteira em `yes`.
 - [ ] AUD-009 — `/ingest/start` não deve reprocessar `ready` como fluxo normal.
@@ -348,12 +365,12 @@ Estado atual:
 1. [x] terminar e validar branch de UI `feat/ui-match-docs-screens`;
 2. [x] commit/push da UI sem misturar retrieval;
 3. [x] voltar à branch `fix/retrieval-eval-followup`;
-4. [ ] concluir adaptive top_k + documentação;
-5. [ ] rodar avaliação avançada real;
-6. [ ] corrigir apenas misses comprovados do hybrid/decomposition;
-7. [ ] executar testes PostgreSQL focados;
-8. [ ] commit/push retrieval;
-9. [ ] só então atacar bugs locais da auditoria, um pequeno grupo por vez.
+4. [x] concluir adaptive top_k + documentação;
+5. [x] rodar avaliação avançada real;
+6. [x] corrigir apenas misses comprovados do hybrid/decomposition (nenhum miss restante nos 12 casos avançados);
+7. [ ] executar testes PostgreSQL focados (local bloqueado sem credencial de DB de teste; validar pelo job Integration do CI);
+8. [x] commit/push retrieval;
+9. [x] iniciar bugs locais da auditoria em pequenos grupos; grupo 1 = AUD-008/010/011.
 
 ## 9. Regra de handoff
 

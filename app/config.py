@@ -20,6 +20,14 @@ from psycopg.conninfo import make_conninfo
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _default_int(section: str, key: str, fallback: int) -> int:
+    try:
+        data = yaml.safe_load((BASE_DIR / "config" / "defaults.yaml").read_text(encoding="utf-8")) or {}
+        return int(data.get(section, {}).get(key, fallback))
+    except Exception:
+        return fallback
+
+
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
@@ -51,6 +59,7 @@ class Env:
         self.log_level = _env("LOG_LEVEL", "INFO").upper()
         self.build_version = _env("RAG_BUILD_VERSION", "dev")
         self.build_commit = _env("RAG_BUILD_COMMIT", "")
+        self.external_parser_timeout = _env_int("RAG_EXTERNAL_PARSER_TIMEOUT", _default_int("ingest", "external_parser_timeout", 60))
         self.lmstudio_url_default = _env("LMSTUDIO_URL", "http://127.0.0.1:1234").rstrip("/")
 
     @property

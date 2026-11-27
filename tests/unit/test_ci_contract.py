@@ -75,3 +75,8 @@ def test_release_version_is_the_pipeline_tag_and_deploy_consumes_manifest():
     assert "org.opencontainers.image.revision=$RAG_BUILD_COMMIT" in dockerfile
     assert "RAG_BUILD_VERSION: ${RAG_BUILD_VERSION:-dev}" in compose
     assert "RAG_BUILD_COMMIT: ${RAG_BUILD_COMMIT:-}" in compose
+
+
+def test_mcp_get_document_offloads_extraction_from_event_loop():
+    source = Path("app/mcp_server.py").read_text()
+    assert "text = await asyncio.to_thread(_load_text)" in source
