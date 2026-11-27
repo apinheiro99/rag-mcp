@@ -90,6 +90,14 @@ Regra reforçada por André em 26/11/2026:
 - header/topo deve seguir a composição da referência, inclusive escala de título/subtítulo/status;
 - única exceção continua sendo o fundo: manter `app/static/branding/rag-mcp-background.png`.
 
+Checkpoint Dashboard 26/11/2026:
+
+- [x] KPI cards compactados para a densidade vertical da referência;
+- [x] tipografia aumentada sem inflar os cards;
+- [x] `Model Runtime`, `Embedding Model`, `Reranker`, `Classification` e `Resident-Model Behavior` usam ícones distintos;
+- [x] pipeline 691 validou a revisão visual em cinco stages;
+- [ ] validação visual final no PROD pelo usuário; se houver diferença, continuar ajustando contra `02_dashboard.png` sem reinterpretar o layout.
+
 ### Estado atual da UI
 
 - Dashboard e estrutura principal já foram retrabalhados.
