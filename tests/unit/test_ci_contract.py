@@ -97,3 +97,13 @@ def test_reindex_blocks_active_documents_and_graph_enrichment_is_fail_open():
     assert 'coleção possui documento em processamento; reindexe após a ingestão terminar' in api
     assert 'graph enrichment failed; background worker will retry' in ingest
     assert 'except Exception:' in ingest[ingest.index('await rebuild_document_mentions(doc_id)')-120:ingest.index('await rebuild_document_mentions(doc_id)')+220]
+
+
+def test_ingest_and_search_gpu_work_use_single_runtime_fifo():
+    ingest = Path("app/ingest.py").read_text()
+    search = Path("app/search.py").read_text()
+    rerank_runtime = Path("app/rerank_runtime.py").read_text()
+    assert 'runtime_scheduler.run(\n                f"ingest-embed:{doc_id}"' in ingest
+    assert 'requirements.append(ModelRequirement(reranker_model, context_length))' in ingest
+    assert 'runtime_scheduler.run(\n            "search", client, requirements, execute_search_pipeline' in search
+    assert 'runtime_scheduler.run(\n            "rerank"' in rerank_runtime

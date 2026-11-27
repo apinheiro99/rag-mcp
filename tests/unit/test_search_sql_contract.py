@@ -14,4 +14,4 @@ def test_binary_hnsw_candidate_stage_keeps_document_filters_after_shortlist():
 
 def test_search_requires_exact_embedding_reranker_model_profile():
     search = Path("app/search.py").read_text()
-    assert "runtime_scheduler.ensure_resident(client, requirements, exact=True)" in search
+    assert 'runtime_scheduler.run(\n            "search", client, requirements, execute_search_pipeline' in search
