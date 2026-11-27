@@ -39,6 +39,7 @@ Baseline observado no início desta continuidade: `312e173`.
 - contrato visual: `tests/unit/test_static_ui_contract.py`
 - estado após retomada: **22/22 testes do contrato visual passando**.
 - suíte unitária completa da branch: PASS.
+- commit UI: `5c8eaee` (push realizado).
 - arquivos principais alterados:
   - `README.md`
   - `app/static/app.js`
@@ -220,7 +221,7 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 ## 8. Ordem de execução atual
 
 1. [x] terminar e validar branch de UI `feat/ui-match-docs-screens`;
-2. [ ] commit/push da UI sem misturar retrieval;
+2. [x] commit/push da UI sem misturar retrieval;
 3. [ ] voltar à branch `fix/retrieval-eval-followup`;
 4. [ ] concluir adaptive top_k + documentação;
 5. [ ] rodar avaliação avançada real;
