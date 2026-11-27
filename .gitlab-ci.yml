@@ -89,7 +89,7 @@ default:
     POSTGRES_USER: rag
     POSTGRES_PASSWORD: rag-ci-only
   script:
-    - python3 scripts/ci_gate.py "Integration" python3 -m pytest -q tests/integration
+    - python3 scripts/ci_gate.py "Integration" python3 -m pytest -q -rP tests/integration
 
 .ci-tag:
   stage: tag

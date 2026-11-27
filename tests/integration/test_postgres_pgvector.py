@@ -1513,6 +1513,110 @@ async def test_lexical_retrieval_uses_real_postgres_and_respects_scope(live_db, 
     assert not await search_module._lexical_search("quizzical", [{"id":uuid.uuid4()}], search_module.SearchFilters(), 5)
 
 @pytest.mark.asyncio
+async def test_hybrid_fusion_uses_real_postgres_lexical_and_metadata_candidates(live_db, monkeypatch):
+    monkeypatch.setattr(search_module, "db", live_db)
+    col = uuid.uuid4()
+    lexical_doc, metadata_doc = uuid.uuid4(), uuid.uuid4()
+    lexical_chunk, metadata_chunk = uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, col, f"hybrid-{col}", model="integration-test", dim=3)
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+               content_sha256,size_bytes,status)
+               VALUES
+               (%s,%s,'generic.txt','notes/generic.txt','blobs/hybrid-lex',%s,100,'ready'),
+               (%s,%s,'Strategy Pattern Handbook.epub','books/strategy.epub','blobs/hybrid-meta',%s,100,'ready')""",
+            (lexical_doc, col, uuid.uuid4().hex, metadata_doc, col, uuid.uuid4().hex),
+        )
+        await conn.execute(
+            """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+               VALUES
+               (%s,%s,%s,0,'The strategy pattern encapsulates interchangeable algorithms behind one interface.',TRUE),
+               (%s,%s,%s,0,'This opening passage intentionally omits the title words.',TRUE)""",
+            (lexical_chunk, lexical_doc, col, metadata_chunk, metadata_doc, col),
+        )
+
+    filters = search_module.SearchFilters()
+    lexical = [dict(row) for row in await search_module._lexical_search(
+        "strategy pattern", [{"id": col}], filters, 5
+    )]
+    metadata = [dict(row) for row in await search_module._metadata_search(
+        ["Strategy Pattern"], [{"id": col}], filters, 5
+    )]
+    fused = search_module.fuse_rankings([lexical, metadata], 60)
+
+    assert lexical and lexical[0]["chunk_id"] == lexical_chunk
+    assert metadata and metadata[0]["chunk_id"] == metadata_chunk
+    assert {row["chunk_id"] for row in fused[:2]} == {lexical_chunk, metadata_chunk}
+    assert all(row["fusion_score"] > 0 for row in fused[:2])
+
+
+@pytest.mark.asyncio
+async def test_lexical_sql_explain_analyze_is_measured_on_real_postgres(live_db):
+    col, doc = uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, col, f"explain-{col}", model="integration-test", dim=3)
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+               content_sha256,size_bytes,status)
+               VALUES (%s,%s,'explain.txt','explain.txt','blobs/explain',%s,100,'ready')""",
+            (doc, col, uuid.uuid4().hex),
+        )
+        rows = [
+            (uuid.uuid4(), doc, col, i, f"strategy pattern retrieval fixture {i}", True)
+            for i in range(64)
+        ]
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                rows,
+            )
+        plan_row = await (await conn.execute(
+            """EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+               SELECT c.id,
+                      ts_rank_cd(to_tsvector('english', c.content), q.term) AS lexical_score
+               FROM chunks c
+               JOIN documents d ON d.id=c.document_id
+               CROSS JOIN (SELECT plainto_tsquery('english', %s) AS term) q
+               WHERE c.collection_id = %s
+                 AND c.embedded
+                 AND d.status='ready'
+                 AND to_tsvector('english', c.content) @@ q.term
+               ORDER BY lexical_score DESC, c.id
+               LIMIT 24""",
+            ("strategy pattern", col),
+        )).fetchone()
+        idx = await (await conn.execute(
+            "SELECT to_regclass('chunks_content_english_fts_idx') AS idx"
+        )).fetchone()
+
+    payload = plan_row["QUERY PLAN"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    root = payload[0]
+    assert idx["idx"] == "chunks_content_english_fts_idx"
+    assert root["Planning Time"] >= 0
+    assert root["Execution Time"] >= 0
+    assert root["Plan"]["Actual Rows"] <= 24
+    def walk_plan(node):
+        yield node
+        for child in node.get("Plans", []):
+            yield from walk_plan(child)
+
+    nodes = list(walk_plan(root["Plan"]))
+    print(
+        "LEXICAL_EXPLAIN",
+        json.dumps({
+            "planning_ms": root["Planning Time"],
+            "execution_ms": root["Execution Time"],
+            "plan_nodes": [node["Node Type"] for node in nodes],
+            "indexes": [node["Index Name"] for node in nodes if node.get("Index Name")],
+        }, sort_keys=True),
+    )
+
+
+@pytest.mark.asyncio
 async def test_high_dim_index_migrates_existing_vectors_and_refines(live_db, monkeypatch):
     from app.search_filters import SearchFilters
     dim = 4096

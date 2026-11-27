@@ -107,3 +107,8 @@ def test_ingest_and_search_gpu_work_use_single_runtime_fifo():
     assert 'requirements.append(ModelRequirement(reranker_model, context_length))' in ingest
     assert 'runtime_scheduler.run(\n            "search", client, requirements, execute_search_pipeline' in search
     assert 'runtime_scheduler.run(\n            "rerank"' in rerank_runtime
+
+
+def test_integration_ci_reports_passed_diagnostics_for_explain_measurements():
+    ci = Path(".gitlab-ci.yml").read_text()
+    assert 'python3 -m pytest -q -rP tests/integration' in ci
