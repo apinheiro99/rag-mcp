@@ -227,7 +227,7 @@ Pendências:
 - [x] `EXPLAIN ANALYZE` executado no PostgreSQL isolado do CI (pipeline 725); nenhuma mudança de índice justificada.
 - [x] reduzir o lexical query de OR entre todos os lexemas para `plainto_tsquery` (AND), preservando o mesmo GIN; motivação: dogfooding mostrou 0,6–3,5 s em termos amplos como `Strategy pattern`; validar no PROD antes de qualquer mudança de índice.
 - [x] adicionados testes PostgreSQL reais focados: lexical+metadata fusion e `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` do SQL lexical; validar no job Integration do CI.
-- [ ] não trocar heurística determinística por LLM planner sem evidência e aprovação.
+- [x] guardrail permanente: não trocar heurística determinística por LLM planner sem evidência e aprovação.
 
 ### 5.2 Adaptive top_k
 
@@ -261,7 +261,7 @@ Pendências:
 - [x] casos compostos validados; ambos os lados recuperados em Strategy/Aggregate Root e PostgreSQL/DDD;
 - [x] ganho/latência medidos em PROD; decomposition ficou restrita aos casos compostos;
 - [x] confirmado no PROD: decomposition permanece desligada em perguntas simples;
-- [ ] só expandir heurística se caso de avaliação real demonstrar necessidade.
+- [x] guardrail permanente: só expandir heurística se caso de avaliação real demonstrar necessidade.
 
 ## 6. Protocolo de avaliação retrieval
 
@@ -313,7 +313,7 @@ Pipeline checkpoint 26/11/2026:
 - 724: SUCCESS;
 - 725: SUCCESS;
 - 726: SUCCESS;
-- 727 (`0aa4198`, `main`): validate/tag/release/publish verdes; deploy pendente no momento deste checkpoint.
+- 727 (`0aa4198`, `main`): SUCCESS completo, inclusive deploy.
 
 ## 7. Auditoria independente — triagem
 
@@ -346,11 +346,34 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 - [x] pipeline 721 (`d99b562`, `main`) publicou/deployou a fila única; busca composta em PROD manteve Strategy + DDD, `effective_top_k=5`, usefulness high.
 - autoconfig com LLM pesado continua como item separado porque descarregar o LLM e restaurar imediatamente o perfil residente embedding+reranker exige política explícita de pós-job; não misturar essa decisão neste patch.
 
+### Decisões pendentes — opções KISS
+
+**AUD-005 — retenção/redaction de queries**
+
+- opção A (mínima): manter query completa e adicionar retenção configurável por dias;
+- opção B: reter métricas e truncar/hash/redactar `query_text`;
+- opção C: não persistir texto da query, somente métricas agregadas.
+- estado atual: query completa é persistida indefinidamente; não alterar sem política explícita.
+
+**AUD-020 — P95/P99**
+
+- opção A (mínima): continuar apenas medindo/mostrando, sem gate;
+- opção B: configurar threshold informativo (warning only);
+- opção C: transformar threshold em gate de CI/stress.
+- estado atual: não há SLO aprovado; não escolher número arbitrário.
+
+**AUD-023 — fallback de senha PostgreSQL**
+
+- opção A (mínima/mais segura): remover fallback `rag` e exigir `POSTGRES_PASSWORD` quando `RAG_DSN` não existir;
+- opção B: manter fallback apenas sob modo explícito de desenvolvimento/teste;
+- opção C: manter como está.
+- PROD já exige senha via Compose e o deploy gera segredo; impacto é compatibilidade local/standalone.
+
 ### Não alterar sem decisão/medição explícita
 
 - [x] AUD-017 — deploy atual já possui rollback automático para último commit saudável, migração explícita fora do startup e testes de contrato; finding original está obsoleto no HEAD atual.
 - [ ] AUD-020 — métricas P95/P99 existem, mas não há SLO/threshold aprovado; **não definir número sem decisão explícita do usuário**.
-- [x] AUD-021 — `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` medido no PostgreSQL isolado do CI. Pipeline 725: planning 2.005 ms, execution 3.775 ms; plano `Limit -> Sort -> Nested Loop -> Bitmap Heap Scan -> Bitmap Index Scan -> Index Scan`, usando `chunks_collection_idx` e `documents_graph_stale_idx`. Fixture pequeno não escolheu o GIN FTS; **nenhuma mudança de índice** sem evidência de workload real.
+- [x] AUD-021 — `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` medido no PostgreSQL isolado do CI. Pipeline 727 (main): planning 1.421 ms, execution 2.733 ms; plano `Limit -> Sort -> Nested Loop -> Bitmap Heap Scan -> Bitmap Index Scan -> Index Scan`, usando `chunks_collection_idx` e `documents_graph_stale_idx`. Fixture pequeno não escolheu o GIN FTS; **nenhuma mudança de índice** sem evidência de workload real.
 - [ ] AUD-005 — ainda real: `retrieval_events.query_text` grava query completa e não há retenção automática. Envolve política de privacidade/retention; não alterar sem decisão explícita.
 - [ ] AUD-023 — ainda real: `app/config.py` usa fallback `POSTGRES_PASSWORD=rag` quando não há `RAG_DSN`; compose PROD exige senha e deploy gera uma, então o risco é principalmente fora do compose/ambientes locais. Exige decisão de compatibilidade antes de remover fallback.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.
