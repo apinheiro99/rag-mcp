@@ -84,6 +84,8 @@ Regra reforçada por André em 26/11/2026:
 - as telas de `docs/screens/01..06` são **contrato visual literal**, não apenas inspiração;
 - copiar ícones/formas, proporções, hierarquia, tipografia, espaçamento, chips/badges e densidade visual o mais fielmente possível;
 - não substituir um ícone 3D/cube/chip por um caractere Unicode genérico; usar SVG/CSS equivalente;
+- **não usar um ícone apenas parecido**: cada ícone da referência deve ser reproduzido individualmente; `Model Runtime`, `Embedding Model`, `Reranker`, `Classification` e `Resident-Model Behavior` têm símbolos distintos;
+- cards KPI do Dashboard devem manter a densidade vertical da referência: curtos/compactos, sem espaço morto; aumentar legibilidade pela fonte, não aumentando a altura do card;
 - a tipografia deve manter a legibilidade/tamanho aparente das referências; evitar texto excessivamente pequeno;
 - header/topo deve seguir a composição da referência, inclusive escala de título/subtítulo/status;
 - única exceção continua sendo o fundo: manter `app/static/branding/rag-mcp-background.png`.

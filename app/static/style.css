@@ -883,3 +883,44 @@ tr:hover td{background:rgba(22,190,218,.035)}
 .sidebar nav button{font-size:.95rem;min-height:42px}
 .sidebar-version{font-size:.82rem}
 @media(max-width:1280px){.kpi-card{min-height:88px!important}.app-header h1{font-size:2rem}}
+
+
+/* Dashboard literal pass 2: match reference density rather than scaling cards up */
+.dashboard-kpis{gap:9px;margin-bottom:12px}
+.kpi-card{min-height:68px!important;height:68px;padding:10px 13px;gap:11px;border-radius:8px}
+.kpi-icon{width:26px;height:26px}
+.kpi-value{font-size:1.42rem;line-height:.98;font-weight:780}
+.kpi-label{font-size:.80rem;line-height:1.08;margin-top:4px;color:#9bb0be}
+.kpi-label span{font-size:.70rem;margin-top:1px}
+.dashboard-ops-grid{gap:10px;margin-bottom:12px}
+.dashboard-panel{min-height:186px;padding:15px 16px}
+.panel-title{gap:9px}
+.panel-title h2{font-size:.97rem}
+.panel-title p{font-size:.71rem;line-height:1.28}
+.panel-icon{width:20px;height:20px}
+.panel-icon.runtime-svg svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.45;stroke-linecap:round;stroke-linejoin:round}
+.status-list{margin-top:9px}
+.status-row{min-height:32px;font-size:.77rem}
+.status-value{font-size:.68rem;padding:2px 7px}
+.collection-status{height:128px}
+.donut{width:96px;height:96px}
+.donut::after{inset:11px}
+.donut b{font-size:1.08rem}
+.donut-wrap{gap:18px}
+.donut-legend>div{min-height:25px;font-size:.64rem}
+.activity-list{margin-top:7px}
+.activity-row{min-height:28px;padding:4px 0}
+.activity-row b{font-size:.69rem}
+.activity-row span:not(.activity-dot){font-size:.62rem}
+.model-runtime-panel{padding:15px 16px}
+.model-runtime-grid{gap:9px;padding-top:10px;margin-top:9px}
+.model-card{min-height:68px;height:68px;padding:9px 11px}
+.model-card-head{grid-template-columns:22px minmax(0,1fr) auto;gap:6px}
+.model-icon{width:20px;height:20px}
+.model-card-head b{font-size:.70rem}
+.model-card-head em{font-size:.60rem;padding:2px 6px}
+.model-card>strong{font-size:.80rem;margin-top:7px}
+.app-header{min-height:88px;padding:18px 2px 12px;margin-bottom:16px}
+.app-header h1{font-size:2rem}
+.app-header p{font-size:.96rem;margin-top:6px}
+.app-header-status{font-size:.86rem}
