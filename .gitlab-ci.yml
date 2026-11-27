@@ -2,7 +2,7 @@ workflow:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
       when: always
     - when: never
 
@@ -20,7 +20,6 @@ variables:
 
 default:
   tags: [scope]
-  # The pip download cache is keyed by the requirements files: jobs reuse it and install only when they change.
   cache:
     key:
       files:
@@ -37,21 +36,47 @@ default:
       when: never
     - if: '$CI_PIPELINE_SOURCE == "push"'
 
-"Public Surface":
-  extends: .branch-push-only
-  stage: validate
-  script:
-    - python3 scripts/public_surface_check.py
+.validation-summary:
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - ci-summary/
 
-"Unit + Regression":
-  extends: .branch-push-only
+.validation-job:
+  extends:
+    - .branch-push-only
+    - .validation-summary
   stage: validate
+
+"Secret Scan":
+  extends: .validation-job
   script:
-    - python3 -m pytest -q tests/unit tests/regression
+    - python3 scripts/ci_gate.py "Secret Scan" python3 scripts/secret_scan.py
+
+"Public Surface":
+  extends: .validation-job
+  script:
+    - python3 scripts/ci_gate.py "Public Surface" python3 scripts/public_surface_check.py
+
+"Static Checks":
+  extends: .validation-job
+  script:
+    - python3 scripts/ci_gate.py "Python Compile" python3 -m compileall -q app scripts
+    - python3 scripts/ci_gate.py "Shell Syntax" bash -n install.sh start.sh scripts/deploy-prod.sh scripts/migrate-rag-data.sh scripts/publish-github.sh scripts/reset-postgres-pgvector-dev.sh
+
+"Unit":
+  extends: .validation-job
+  script:
+    - python3 scripts/ci_gate.py "Unit" python3 -m pytest -q tests/unit
+
+"Regression":
+  extends: .validation-job
+  script:
+    - python3 scripts/ci_gate.py "Regression" python3 -m pytest -q tests/regression
 
 "Integration":
-  extends: .branch-push-only
-  stage: validate
+  extends: .validation-job
   services:
     - name: pgvector/pgvector:0.8.7-pg19
       alias: db
@@ -63,7 +88,7 @@ default:
     POSTGRES_USER: rag
     POSTGRES_PASSWORD: rag-ci-only
   script:
-    - python3 -m pytest -q tests/integration
+    - python3 scripts/ci_gate.py "Integration" python3 -m pytest -q tests/integration
 
 .ci-tag:
   stage: tag
@@ -87,7 +112,7 @@ ci-tag-green:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: on_success
 
 ci-tag-red:
@@ -97,16 +122,20 @@ ci-tag-red:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: on_failure
 
 "Publish GitHub":
   stage: publish
   tags: [rag-prod]
   before_script: []
+  interruptible: false
   needs:
+    - "Secret Scan"
     - "Public Surface"
-    - "Unit + Regression"
+    - "Static Checks"
+    - "Unit"
+    - "Regression"
     - "Integration"
     - "ci-tag-green"
   rules:
@@ -120,6 +149,7 @@ ci-tag-red:
   stage: deploy
   tags: [rag-prod]
   before_script: []
+  interruptible: false
   needs:
     - "Publish GitHub"
   script:

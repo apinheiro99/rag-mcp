@@ -22,3 +22,9 @@ git remote remove github 2>/dev/null || true
 git remote add github "$RAG_GITHUB_REPOSITORY"
 git push --force github "$CI_COMMIT_SHA:refs/heads/main"
 git push github "refs/tags/$TAG:refs/tags/$TAG"
+
+REMOTE_MAIN="$(git ls-remote github refs/heads/main | awk '{print $1}')"
+REMOTE_TAG="$(git ls-remote github "refs/tags/$TAG" | awk '{print $1}')"
+[ "$REMOTE_MAIN" = "$CI_COMMIT_SHA" ] || { echo "GitHub main SHA mismatch: expected $CI_COMMIT_SHA got $REMOTE_MAIN" >&2; exit 1; }
+[ "$REMOTE_TAG" = "$CI_COMMIT_SHA" ] || { echo "GitHub tag SHA mismatch: expected $CI_COMMIT_SHA got $REMOTE_TAG" >&2; exit 1; }
+echo "GitHub publication verified: $CI_COMMIT_SHA ($TAG)"
