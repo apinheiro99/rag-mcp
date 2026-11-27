@@ -28,13 +28,23 @@ def test_publish_depends_on_all_validation_gates_and_green_tag():
         "Regression",
         "Integration",
         "ci-tag-green",
+        "Release Gate",
     } <= needs
 
 
-def test_feature_branches_validate_but_do_not_publish_or_deploy():
-    ci = Path(".gitlab-ci.yml").read_text()
-    assert "$CI_PIPELINE_SOURCE == \"push\"" in ci
-    assert "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" in ci
+def test_feature_branches_show_all_four_stages_without_production_side_effects():
+    ci = yaml.safe_load(Path(".gitlab-ci.yml").read_text())
+    assert ci["stages"] == ["validate", "tag", "release", "publish", "deploy"]
+    for job in ("ci-tag-green", "ci-tag-red"):
+        assert "$CI_PIPELINE_SOURCE == 'push'" not in str(ci[job]["rules"])  # YAML stores the quoted expression without outer YAML quotes
+        assert '$CI_PIPELINE_SOURCE == "push"' in str(ci[job]["rules"])
+    assert ci["Release Gate"]["stage"] == "release"
+    assert '$CI_PIPELINE_SOURCE == "push"' in str(ci["Release Gate"]["rules"])
+    for job, stage in (("Publish Gate", "publish"), ("Deploy Gate", "deploy")):
+        assert ci[job]["stage"] == stage
+        assert "$CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH" in str(ci[job]["rules"])
+    for job in ("Publish GitHub", "Deploy Production"):
+        assert "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" in str(ci[job]["rules"])
 
 
 def test_publish_script_verifies_exact_github_sha():
