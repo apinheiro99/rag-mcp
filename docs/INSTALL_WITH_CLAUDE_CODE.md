@@ -1,17 +1,92 @@
-# Install with Claude Code
+# Install RAG MCP with an AI coding agent
 
-Paste this prompt into Claude Code on the target host:
+This guide is designed to be handed directly to Claude Code, Codex, ChatGPT Work or another coding agent running on the target host.
 
-> Install RAG Server from the public `rag-mcp` repository using Docker Compose. Read the repository README and `docs/architecture.md` first. Create a local `.env` from `.env.example`, ask me only for values that cannot be inferred safely, keep runtime data outside the public repository, start PostgreSQL + pgvector and the RAG application, then validate `/api/health`, the web UI, and the Streamable HTTP MCP endpoint at `/mcp`. Do not invent deployment defaults that are already configurable in the repository.
+## One-shot installation prompt
 
-For development, use `./install.sh` followed by `./start.sh`. For a managed production host, keep the environment/private runtime material in a separate private directory/repository.
+```text
+You are installing RAG MCP from:
 
-## Optional private ChatGPT connection with Secure MCP Tunnel
+https://github.com/apinheiro99/rag-mcp
 
-RAG MCP already exposes Streamable HTTP at `/mcp`. Production can optionally run OpenAI `tunnel-client` as a Compose sidecar without exposing that endpoint publicly.
+Before changing anything:
+1. Read README.md.
+2. Read docs/architecture.md.
+3. Read .env.example.
+4. Inspect docker-compose.yml and the install/start scripts.
 
-1. Create a Secure MCP Tunnel in OpenAI Platform and associate it with the intended ChatGPT workspace/organization.
-2. Provision the deployment-owned tunnel inputs once on the production host: the `tunnel-client` binary and a tunnel directory containing `tunnel-client.yaml` plus its credential file. Configure the MCP target as `http://app:8000/mcp`.
-3. Production exports `RAG_TUNNEL_BINARY=$HOME/rag-prod/bin/tunnel-client` and `RAG_TUNNEL_DIR=$HOME/rag-prod/tunnel`; the public repository does not provision or inspect credential contents.
-4. Redeploy. `scripts/deploy-prod.sh` adds `deploy/tunnel.compose.yml` when those host paths are provided and checks tunnel readiness after application health.
-5. In ChatGPT Plugins, add a custom MCP server, choose **Tunnel**, select/paste the matching `tunnel_id`, then create it as a private plugin.
+Target architecture:
+- public source code stays in the rag-mcp repository;
+- PostgreSQL + pgvector provides persistence and vector retrieval;
+- LM Studio provides the embedding/reranker model runtime;
+- runtime/private state lives outside the repository under RAG_PRIVATE_PATH;
+- the application exposes REST plus Streamable HTTP MCP at /mcp.
+
+Rules:
+- Do not redesign the project.
+- Do not replace existing scripts unless an existing script is broken.
+- Do not hardcode hostnames, ports, model names, limits or paths when configuration already exists.
+- Do not commit .env files, credentials, uploaded documents, PostgreSQL files or runtime state.
+- Do not disable TLS/security checks.
+- Ask the user only for values that cannot be inferred safely.
+- Validate each stage before continuing.
+
+Execute:
+
+A. Prerequisites
+- Verify git, Docker Engine and Docker Compose.
+- Verify the target host can reach the configured LM Studio endpoint.
+
+B. Source
+- Clone https://github.com/apinheiro99/rag-mcp
+- cd rag-mcp
+- inspect the current branch/release and repository status.
+
+C. Configuration
+- Copy .env.example to .env.
+- Select/create a persistent RAG_PRIVATE_PATH outside the repository.
+- Configure PostgreSQL credentials locally.
+- Configure the LM Studio endpoint using the project's existing settings mechanism.
+- Do not invent model names if the running LM Studio instance can be inspected.
+
+D. Installation
+- Run ./install.sh.
+- Run ./start.sh.
+- Use the repository Docker Compose topology as provided.
+
+E. Validation
+Validate all of the following:
+- docker compose services are healthy;
+- GET /api/health returns OK;
+- PostgreSQL and pgvector are reachable;
+- the configured embedding model is reachable;
+- the configured reranker is reachable;
+- the web UI responds;
+- /mcp responds as the MCP endpoint;
+- run unit/regression/integration tests where supported.
+
+F. Functional smoke test
+- ingest or use a small non-sensitive test document;
+- run one retrieval query;
+- verify results include source/document provenance;
+- report effective retrieval behavior and any error.
+
+G. Final report
+Return a concise report with:
+- installation directory;
+- RAG_PRIVATE_PATH;
+- service URLs;
+- models in use;
+- container/service health;
+- test results;
+- smoke-test result;
+- remaining manual configuration.
+
+Do not merely explain the steps. Carry them out.
+```
+
+## Optional ChatGPT access
+
+RAG MCP exposes Streamable HTTP MCP at `/mcp`.
+
+Production can optionally use OpenAI Secure MCP Tunnel without publishing the MCP service directly to the public internet. Tunnel credentials remain deployment-owned and outside the repository.
