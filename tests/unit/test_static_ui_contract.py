@@ -47,8 +47,8 @@ def test_brand_background_and_glass_have_single_shell_definition():
     assert "border-bottom:1px" not in brand
     assert "background:var(--glass-sidebar)" in css
     assert "background:var(--glass-card)" in css
-    assert 'class="collection-section"' in HTML
-    assert 'aria-label="Collections"' in HTML
+    assert 'id="dashboardStats"' in HTML
+    assert 'id="collectionBehaviorTable"' in HTML
 
 
 def test_document_bulk_actions_and_dialogs_are_available():
@@ -76,10 +76,20 @@ def test_api_does_not_expose_document_supersession():
     assert "superseded_by UUID" not in schema
 
 
-def test_dashboard_exposes_background_runtime_state():
+def test_dashboard_matches_reference_overview_structure():
+    html = Path("app/static/index.html").read_text()
     js = Path("app/static/app.js").read_text()
-    for token in ("Classification worker", "Source sync worker", "Graph worker", "Model runtime"):
-        assert token in js
+    for element_id in (
+        "dashboardStats",
+        "runtimeHealth",
+        "collectionStatus",
+        "dashboardActivity",
+        "modelRuntimeGrid",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "renderDashboardOverview" in js
+    assert "Embedding + Reranker" in js
+    assert "Existing categories only" in js
 
 
 def test_search_ui_exposes_trace_and_evidence_graph():
@@ -157,3 +167,63 @@ def test_classification_decision_endpoint_is_removed():
     api = Path("app/api.py").read_text()
     assert "classification-decision" not in api
     assert "ClassificationDecision" not in api
+
+
+def test_visual_reference_contract_uses_docs_screens_but_preserves_runtime_background():
+    css = Path("app/static/style.css").read_text()
+    architecture = Path("docs/architecture.md").read_text()
+    assert "Visual reference contract" in css
+    assert "--sidebar-w:198px" in css
+    assert "docs/screens/02..06" in css
+    assert "07_background.png" in architecture
+    assert "not authoritative for the runtime background" in architecture
+    assert "app/static/branding/rag-mcp-background.png" in architecture
+
+
+def test_ui_copy_matches_existing_category_only_classification_contract():
+    html = Path("app/static/index.html").read_text()
+    assert "asks you to approve a new one" not in html
+    assert "unknown topics wait for your approval" not in html
+    assert "otherwise the document stays uncategorized" in html
+    assert "unmatched books remain uncategorized" in html
+
+
+def test_portfolio_readme_uses_versioned_product_screenshots():
+    readme = Path("README.md").read_text()
+    for name in (
+        "02_dashboard.png",
+        "03_import.png",
+        "04_documents.png",
+        "05_search.png",
+        "06_settings.png",
+    ):
+        assert f"docs/screens/{name}" in readme
+
+
+def test_reference_search_and_settings_structure_are_real_data_driven():
+    html = Path("app/static/index.html").read_text()
+    js = Path("app/static/app.js").read_text()
+    for element_id in (
+        "evidencePreview",
+        "rankedResults",
+        "collectionBehaviorTable",
+        "sourcesList",
+        "systemServerGrid",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "renderReferenceSearchResults" in js
+    assert "top.content" in js
+    assert "state.collections" in js
+    assert "state.sources" in js
+    assert "Classification LLM" not in html + js
+
+
+def test_reference_layout_keeps_current_background_exception():
+    html = Path("app/static/index.html").read_text()
+    css = Path("app/static/style.css").read_text()
+    assert "dashboard-kpis" in html
+    assert "dashboard-ops-grid" in html
+    assert "search-output-grid" in html
+    assert "settings-two-col" in html
+    assert css.count("rag-mcp-background.png") == 1
+    assert "07_background.png" not in css

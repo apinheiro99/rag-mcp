@@ -143,19 +143,27 @@ Retrieval events capture query, collections and filters, dense/lexical/rerank ti
 
 ## Screenshots
 
-Product screenshots are intentionally kept as repository assets under `docs/images/`.
+### Dashboard
 
-The portfolio README uses three primary views:
+![RAG MCP dashboard](docs/screens/02_dashboard.png)
 
-- Dashboard / runtime overview
-- Documents and classification
-- Settings / Directory Sources
+### Import
 
-<!--
-![RAG MCP dashboard](docs/images/rag-dashboard.webp)
-![RAG MCP documents](docs/images/rag-documents.webp)
-![RAG MCP settings](docs/images/rag-settings.webp)
--->
+![RAG MCP import](docs/screens/03_import.png)
+
+### Documents and classification
+
+![RAG MCP documents](docs/screens/04_documents.png)
+
+### Search
+
+![RAG MCP search](docs/screens/05_search.png)
+
+### Settings and directory sources
+
+![RAG MCP settings](docs/screens/06_settings.png)
+
+The numbered files in `docs/screens/` are the visual reference set used by the runtime UI. The runtime intentionally keeps the currently approved application background instead of adopting `07_background.png`.
 
 ---
 

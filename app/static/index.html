@@ -38,51 +38,28 @@
   </header>
   <!-- ==================== DASHBOARD ==================== -->
   <section id="tab-dashboard" class="tab active">
-    <div class="grid-3" id="healthCards"></div>
+    <div id="dashboardStats" class="dashboard-kpis"></div>
 
-    <div class="card">
-      <div class="card-head">
-        <h2>Ingestion</h2>
-        <div>
-          <button id="btnPause" class="btn" onclick="pauseIngest()">Pause</button>
-          <button id="btnResume" class="btn primary hidden" onclick="resumeIngest()">Resume</button>
-        </div>
+    <div class="dashboard-ops-grid">
+      <div class="card dashboard-panel">
+        <div class="panel-title"><span class="panel-icon">⌁</span><div><h2>Runtime Health</h2><p>Status of core RAG MCP services.</p></div></div>
+        <div id="runtimeHealth" class="status-list"></div>
       </div>
-      <div id="ingestSummary" class="muted">Loading…</div>
-      <div class="progress-wrap"><div class="progress-bar" id="ingestBar"></div></div>
-      <div id="ingestCounts" class="chips"></div>
-      <div id="currentDoc" class="muted small"></div>
-      <div id="problems"></div>
+
+      <div class="card dashboard-panel">
+        <div class="panel-title"><span class="panel-icon">◇</span><div><h2>Collection Status</h2><p>Document readiness across collections.</p></div></div>
+        <div id="collectionStatus" class="collection-status"></div>
+      </div>
+
+      <div class="card dashboard-panel">
+        <div class="panel-title"><span class="panel-icon">⌁</span><div><h2>Recent Activity</h2><p>Latest indexing, import, sync, and search events.</p></div></div>
+        <div id="dashboardActivity" class="activity-list"></div>
+      </div>
     </div>
 
-    <section class="collection-section" aria-label="Collections">
-      <div class="card-head"><h2>Collections</h2>
-        <button class="btn" onclick="showTab('import')">+ Import documents</button></div>
-      <div id="collectionsGrid" class="grid-3"></div>
-    </section>
-
-    <div class="card">
-      <div class="card-head"><h2>Directory sources</h2>
-        <button class="btn" onclick="openAddSource()">+ Add source</button></div>
-      <p class="muted small">Automatic incremental sync for directories visible inside the RAG container.</p>
-      <div id="sourcesList"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-head"><div><h2>Recent events</h2><p class="muted small">Operational events recorded by RAG MCP.</p></div>
-        <button class="btn mini" onclick="pollEvents()">↻ Refresh</button>
-      </div>
-      <div id="eventStats" class="event-stats"></div>
-      <div class="event-toolbar">
-        <input type="search" id="eventSearch" placeholder="Search event messages…" oninput="renderEvents()">
-        <select id="eventLevel" onchange="renderEvents()">
-          <option value="">All levels</option>
-          <option value="info">Info</option>
-          <option value="warning">Warning</option>
-          <option value="error">Error</option>
-        </select>
-      </div>
-      <div id="eventsLog" class="events"></div>
+    <div class="card model-runtime-panel">
+      <div class="panel-title"><span class="panel-icon">▣</span><div><h2>Model Runtime</h2><p>Models used by retrieval, classification, and processing.</p></div></div>
+      <div id="modelRuntimeGrid" class="model-runtime-grid"></div>
     </div>
   </section>
 
@@ -97,7 +74,7 @@
           <select id="importCollection" onchange="onImportCollectionChange()"></select>
         </label>
       </div>
-      <p class="muted small">Use <b>Automatic classification</b> for books: files enter Computer Books, then the classifier assigns an existing category or asks you to approve a new one.</p>
+      <p class="muted small">Use <b>Automatic classification</b> for books: files enter Computer Books, then the classifier assigns an existing category when one matches; otherwise the document stays uncategorized.</p>
     </div>
 
     <div class="card" id="importProgressCard">
@@ -140,7 +117,7 @@
       </div>
       <div class="tabs-mini">
         <button id="modeManualBtn" class="active" onclick="setMode('manual')">Manual</button>
-        <button id="modeAutoBtn" onclick="setMode('auto')">Automatic (LLM)</button>
+        <button id="modeAutoBtn" onclick="setMode('auto')">Automatic configuration</button>
       </div>
 
       <div id="modeManual">
@@ -149,7 +126,7 @@
       </div>
 
       <div id="modeAuto" class="hidden">
-        <p class="muted small">An LM Studio LLM analyzes a document sample and recommends parameters. You review them before starting.</p>
+        <p class="muted small">An optional LM Studio model analyzes a document sample and recommends ingestion parameters. You review them before starting; category classification remains embedding + reranker.</p>
         <div class="row">
           <label>LLM model <select id="autoModel"></select></label>
           <button class="btn primary" id="btnSuggest" onclick="suggestConfig()">Analyze documents</button>
@@ -241,7 +218,12 @@
     </div>
     <div id="searchDiagnostics" class="card hidden"></div>
     <div id="evidenceGraph" class="card hidden"></div>
-    <div id="searchResults" class="search-results"></div>
+    <div id="searchResults" class="search-results">
+      <div class="search-output-grid">
+        <div id="evidencePreview" class="card evidence-preview"><p class="muted small">Run a search to preview the strongest evidence.</p></div>
+        <div id="rankedResults" class="card ranked-results"><p class="muted small">Ranked results will appear here.</p></div>
+      </div>
+    </div>
     <div class="card search-observability">
       <div class="card-head">
         <h2>Retrieval observability</h2>
@@ -253,29 +235,55 @@
 
   <!-- ==================== SETTINGS ==================== -->
   <section id="tab-settings" class="tab">
-    <div class="card">
-      <div class="card-head"><h2>LM Studio</h2></div>
-      <div class="row">
-        <input type="text" id="lmUrl" placeholder="http://192.168.1.50:1234" class="grow">
-        <button class="btn" onclick="testLM()">Test connection</button>
-        <button class="btn primary" onclick="saveLM()">Save</button>
-      </div>
-      <div id="lmTestResult" class="small"></div>
-      <div class="form-grid">
-        <label>Embedding model <select id="embeddingModel"></select></label>
-        <label>LLM model (automatic mode) <select id="llmModel"></select></label>
-        <label>Reranker model <select id="rerankerModel"></select></label>
-      </div>
-        <label class="check"><input type="checkbox" id="keepRerankerLoaded"> keep reranker loaded <span class="muted small">(loads on first search and stays resident)</span></label>
-      <div class="row">
-        <button class="btn" onclick="loadModels(true)">↻ Refresh models</button>
-        <button class="btn primary" onclick="saveModels()">Save models</button>
-        <span id="modelsInfo" class="muted small"></span>
+    <div class="card settings-section">
+      <div class="panel-title"><span class="panel-icon">◇</span><div><h2>Models & Runtime</h2><p>Configure models, inference behavior, and runtime execution parameters.</p></div></div>
+      <div class="settings-model-layout">
+        <div class="settings-model-list">
+          <div class="settings-field-row"><div><b>Embedding Model</b><span>Used for document and query embeddings.</span></div><select id="embeddingModel"></select></div>
+          <div class="settings-field-row"><div><b>Reranker</b><span>Used for result reranking and relevance.</span></div><select id="rerankerModel"></select></div>
+          <div class="settings-field-row"><div><b>LLM Model</b><span>Optional model for explicitly generative/automatic configuration workflows.</span></div><select id="llmModel"></select></div>
+          <div class="settings-field-row"><div><b>Resident-Model Behavior</b><span>Normal retrieval keeps embedding + reranker resident.</span></div>
+            <label class="check"><input type="checkbox" id="keepRerankerLoaded"> resident profile</label>
+          </div>
+        </div>
+        <div class="settings-runtime-box">
+          <label>LM Studio endpoint<input type="text" id="lmUrl" placeholder="http://192.168.1.50:1234"></label>
+          <div class="row">
+            <button class="btn" onclick="testLM()">Test connection</button>
+            <button class="btn primary" onclick="saveLM()">Save</button>
+          </div>
+          <div id="lmTestResult" class="small"></div>
+          <div class="row">
+            <button class="btn" onclick="loadModels(true)">↻ Refresh models</button>
+            <button class="btn primary" onclick="saveModels()">Save models</button>
+          </div>
+          <span id="modelsInfo" class="muted small"></span>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-head"><div><h2>Book categories</h2><p class="muted small">Categories live inside <b>Computer Books</b>. New books are categorized automatically when confidence is high; unknown topics wait for your approval.</p></div></div>
+    <div class="settings-two-col">
+      <div class="card settings-section">
+        <div class="panel-title"><span class="panel-icon">◇</span><div><h2>Collection Search Behavior</h2><p>Configure which collections participate in default search.</p></div></div>
+        <div id="collectionBehaviorTable"></div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="card-head">
+          <div class="panel-title"><span class="panel-icon">□</span><div><h2>Directory Sources & Auto-Sync</h2><p>Manage document sources and synchronization cadence.</p></div></div>
+          <button class="btn primary" onclick="openAddSource()">+ Add Source</button>
+        </div>
+        <div id="sourcesList"></div>
+      </div>
+    </div>
+
+    <div class="card settings-section">
+      <div class="panel-title"><span class="panel-icon">▣</span><div><h2>System / Server</h2><p>Core services, runtime health, and version information.</p></div></div>
+      <div id="systemServerGrid" class="system-server-grid"></div>
+    </div>
+
+    <div class="card settings-section">
+      <div class="card-head"><div><h2>Book categories</h2><p class="muted small">Categories live inside <b>Computer Books</b>. Books are classified only into existing categories; unmatched books remain uncategorized.</p></div></div>
       <div class="row">
         <input type="text" id="newCategoryName" placeholder="New category (e.g. Economics)" class="grow">
         <input type="text" id="newCategoryDescription" placeholder="Description / scope" class="grow">
@@ -284,7 +292,7 @@
       <div id="categoriesList"></div>
     </div>
 
-    <div class="card">
+    <div class="card settings-section">
       <div class="card-head"><h2>Processing defaults (advanced)</h2></div>
       <p class="muted small">JSON overrides on top of <code>config/defaults.yaml</code>. Persisted in PostgreSQL.
       Ex.: <code>{"ingest": {"chunk_size": 1200}, "search": {"top_k": 6}}</code></p>
@@ -295,7 +303,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card settings-section">
       <div class="card-head"><h2>Access</h2></div>
       <div class="row">
         <input type="password" id="apiTokenField" placeholder="API token (when RAG_API_TOKEN is configured)" class="grow">
