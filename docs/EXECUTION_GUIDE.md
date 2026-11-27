@@ -394,25 +394,23 @@ Recomendação KISS deste ciclo:
 
 ## 7.1 Contrato de CI/release
 
-Decisão confirmada por André e alinhada ao padrão do REACH:
+Decisão revisada por André em 26/11/2026:
 
-- todo pipeline de branch deve mostrar cinco stages: `validate -> tag -> release -> publish -> deploy`;
-- a tag verde e a release usam **o mesmo identificador** `vYYYY.MM.NNNNNN`;
-- o stage `release` não inventa outra versão: ele materializa o mesmo tag/version em um artefato imutável do SHA validado;
-- a imagem Docker deve carregar esse mesmo `version` e o `commit` correspondente em metadata/env;
-- em branch comum, `publish` e `deploy` podem ser gates sem efeitos externos;
-- no `main`, `Publish GitHub` e `Deploy Production` continuam reais;
-- o deploy de PROD deve consumir a release produzida pelo pipeline, não reconstruir identidade por conta própria.
+- **feature branches rodam somente `validate`**; commits intermediários não criam tag/version, não geram release, não publicam GitHub e não fazem deploy;
+- manter os commits normalmente na branch até o trabalho estar concluído;
+- somente após merge no `main` entra o fluxo completo `validate -> tag -> release -> publish -> deploy`;
+- no `main`, tag e release usam exatamente o mesmo identificador `vYYYY.MM.NNNNNN`;
+- a imagem Docker carrega esse `version` e o `commit` em metadata/env;
+- o deploy de PROD consome a release produzida pelo pipeline;
+- objetivo: evitar versionamento/deploy excessivo durante desenvolvimento e reduzir tempo/custo de CI.
 
 Estado atual:
 
-- [x] cinco stages definidos;
-- [x] tag real em todo push de branch;
-- [x] `Build Release` usa o mesmo cálculo de versão/tag;
-- [x] Dockerfile recebe `RAG_BUILD_VERSION` e `RAG_BUILD_COMMIT` como build args/labels/env;
-- [x] `deploy-prod.sh` valida/consome `release/manifest.json` e usa sua versão/commit no build;
-- [x] testes de contrato cobrem tag == release version e metadata da imagem;
-- [x] pipeline 683 validou os cinco stages em branch (`validate/tag/release/publish/deploy`).
+- [x] jobs reais de tag/release/publish/deploy restritos ao `main`;
+- [x] branch não possui gates no-op: executa apenas validação;
+- [x] testes de contrato exigem side effects apenas no `main`;
+- [ ] validar em pipeline real de branch que apenas `validate` aparece;
+- [ ] após merge, validar que o `main` continua executando os cinco stages reais.
 
 ## 8. Ordem de execução atual
 
