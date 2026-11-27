@@ -1215,7 +1215,7 @@ async def start_ingest(body: IngestStart):
                 """SELECT d.*, c.embedding_model AS col_model, c.ingest_config AS col_cfg,
                           c.name AS col_name
                    FROM documents d JOIN collections c ON c.id=d.collection_id
-                   WHERE d.id = ANY(%s::uuid[])""", (ids,))
+                   WHERE d.id = ANY(%s::uuid[]) AND d.status='staged'""", (ids,))
         else:
             cur = await conn.execute(
                 """SELECT d.*, c.embedding_model AS col_model, c.ingest_config AS col_cfg,

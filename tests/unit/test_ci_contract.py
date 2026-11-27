@@ -80,3 +80,11 @@ def test_release_version_is_the_pipeline_tag_and_deploy_consumes_manifest():
 def test_mcp_get_document_offloads_extraction_from_event_loop():
     source = Path("app/mcp_server.py").read_text()
     assert "text = await asyncio.to_thread(_load_text)" in source
+
+
+def test_ingest_start_rejects_ready_documents_and_e2e_defaults_match_prod_topology():
+    api = Path("app/api.py").read_text()
+    e2e = Path("scripts/e2e_check.py").read_text()
+    assert "WHERE d.id = ANY(%s::uuid[]) AND d.status='staged'" in api
+    assert 'http://docker-prod01.lab:8000' in e2e
+    assert 'http://192.168.1.10:1234' in e2e

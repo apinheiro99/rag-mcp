@@ -1,3 +1,4 @@
+from pathlib import Path
 import pytest
 from app.source_sync import is_excluded, validate_interval
 
@@ -40,3 +41,14 @@ def test_source_sync_change_is_explicitly_transactional():
     update = source.index('UPDATE documents SET filename=%s', delete)
     transaction = source.rfind('async with conn.transaction():', 0, delete)
     assert transaction < delete < update
+
+
+def test_source_sync_skips_deletion_pass_after_scan_error_and_gcs_old_blobs():
+    source = Path("app/source_sync.py").read_text()
+    assert "scan_complete = True" in source
+    assert "scan_complete = False" in source
+    assert "if scan_complete:" in source
+    assert "source sync deletion pass skipped because filesystem scan had errors" in source
+    assert 'obsolete_blobs.append(str(old["stored_path"]))' in source
+    assert "await _gc_blobs(obsolete_blobs)" in source
+    assert "SELECT DISTINCT stored_path FROM documents WHERE stored_path = ANY(%s)" in source

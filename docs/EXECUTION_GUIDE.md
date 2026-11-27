@@ -313,11 +313,11 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 - [x] AUD-008 — source-sync change agora usa transação explícita para DELETE chunks + UPDATE document; cache é removido após commit.
 - [x] AUD-010 — timeout configurável em `ingest.external_parser_timeout` (default 60s; env `RAG_EXTERNAL_PARSER_TIMEOUT` pode sobrescrever) aplicado aos parsers externos.
 - [x] AUD-011 — MCP `get_document` move leitura de cache/extração para `asyncio.to_thread`.
-- [ ] AUD-004 — erro transitório de filesystem não pode parecer deleção confirmada.
-- [ ] AUD-007 — Qwen reranker não deve transformar massa residual inteira em `yes`.
-- [ ] AUD-009 — `/ingest/start` não deve reprocessar `ready` como fluxo normal.
-- [ ] AUD-012 — GC de blob órfão após source-sync, respeitando SHA compartilhado.
-- [ ] AUD-019 — atualizar E2E para topologia atual.
+- [x] AUD-004 — qualquer erro durante scan de source marca o scan incompleto e pula a fase de deleções naquele ciclo.
+- [x] AUD-007 — Qwen reranker não converte massa residual não observada em `yes`; top-logprobs somente com `no` retornam 0.0.
+- [x] AUD-009 — `/ingest/start` com IDs explícitos aceita apenas documentos `staged`; `ready` exige fluxo de reindex dedicado.
+- [x] AUD-012 — source-sync coleta blobs antigos e remove apenas paths sem qualquer documento restante apontando para eles.
+- [x] AUD-019 — E2E atualizado para `docker-prod01.lab:8000` e LM Studio `192.168.1.10:1234`, com override por ambiente.
 - [ ] AUD-022 — poucos testes de integração lexical/hybrid reais.
 
 ### Reais, mas exigem decisão pequena antes
