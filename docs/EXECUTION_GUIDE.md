@@ -222,7 +222,7 @@ Pendências:
 - [x] casos de usefulness menor revisados; sem miss de fonte, portanto sem mudança algorítmica por métrica heurística isolada;
 - [ ] usar `EXPLAIN ANALYZE` antes de mexer em índice lexical;
 - [x] reduzir o lexical query de OR entre todos os lexemas para `plainto_tsquery` (AND), preservando o mesmo GIN; motivação: dogfooding mostrou 0,6–3,5 s em termos amplos como `Strategy pattern`; validar no PROD antes de qualquer mudança de índice.
-- [ ] adicionar poucos testes PostgreSQL reais de lexical/hybrid;
+- [x] adicionados testes PostgreSQL reais focados: lexical+metadata fusion e `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` do SQL lexical; validar no job Integration do CI.
 - [ ] não trocar heurística determinística por LLM planner sem evidência e aprovação.
 
 ### 5.2 Adaptive top_k
@@ -240,7 +240,7 @@ Estado:
 - [x] 18 testes de retrieval-fusion passam;
 - [x] suíte unitária relevante completa executada e verde;
 - [x] documentar contrato MCP/API como teto;
-- [ ] commit/push isolado.
+- [x] commit/push isolado concluído e integrado;
 
 ### 5.3 Query decomposition
 
@@ -318,7 +318,7 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 - [x] AUD-009 — `/ingest/start` com IDs explícitos aceita apenas documentos `staged`; `ready` exige fluxo de reindex dedicado.
 - [x] AUD-012 — source-sync coleta blobs antigos e remove apenas paths sem qualquer documento restante apontando para eles.
 - [x] AUD-019 — E2E atualizado para `docker-prod01.lab:8000` e LM Studio `192.168.1.10:1234`, com override por ambiente.
-- [ ] AUD-022 — poucos testes de integração lexical/hybrid reais.
+- [x] AUD-022 — cobertura PostgreSQL real ampliada com lexical + metadata + RRF/fusion em conjunto; sem mock do banco.
 
 ### Reais, mas exigem decisão pequena antes
 
@@ -339,7 +339,7 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 
 - [ ] AUD-017 — rollback/migração.
 - [ ] AUD-020 — thresholds P95/P99.
-- [ ] AUD-021 — SQL lexical: medir com `EXPLAIN ANALYZE` antes.
+- [ ] AUD-021 — teste de medição `EXPLAIN ANALYZE` adicionado; marcar concluído após observar o job Integration e registrar o plano/tempo, sem alterar índice.
 - [ ] AUD-005 — retenção/redaction de queries.
 - [ ] AUD-023 — fallback de senha DB.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.
@@ -374,7 +374,7 @@ Estado atual:
 4. [x] concluir adaptive top_k + documentação;
 5. [x] rodar avaliação avançada real;
 6. [x] corrigir apenas misses comprovados do hybrid/decomposition (nenhum miss restante nos 12 casos avançados);
-7. [ ] executar testes PostgreSQL focados (local bloqueado sem credencial de DB de teste; validar pelo job Integration do CI);
+7. [ ] executar testes PostgreSQL focados no job Integration do CI; novos testes AUD-021/022 aguardam pipeline.
 8. [x] commit/push retrieval;
 9. [x] iniciar bugs locais da auditoria em pequenos grupos; grupo 1 = AUD-008/010/011.
 
