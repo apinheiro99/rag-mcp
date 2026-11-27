@@ -238,7 +238,7 @@ Estado atual:
 - [x] Dockerfile recebe `RAG_BUILD_VERSION` e `RAG_BUILD_COMMIT` como build args/labels/env;
 - [x] `deploy-prod.sh` valida/consome `release/manifest.json` e usa sua versão/commit no build;
 - [x] testes de contrato cobrem tag == release version e metadata da imagem;
-- [ ] validar pipeline real após push.
+- [x] pipeline 683 validou os cinco stages em branch (`validate/tag/release/publish/deploy`).
 
 ## 8. Ordem de execução atual
 
