@@ -339,7 +339,7 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 
 - [ ] AUD-017 — rollback/migração.
 - [ ] AUD-020 — thresholds P95/P99.
-- [ ] AUD-021 — teste de medição `EXPLAIN ANALYZE` adicionado; marcar concluído após observar o job Integration e registrar o plano/tempo, sem alterar índice.
+- [ ] AUD-021 — pipeline 724 mediu fixture PostgreSQL isolado: planning 2.228 ms, execution 29.194 ms. Reexecutar uma vez registrando nodes/indexes do plano; não alterar índice com base em fixture pequeno.
 - [ ] AUD-005 — retenção/redaction de queries.
 - [ ] AUD-023 — fallback de senha DB.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.

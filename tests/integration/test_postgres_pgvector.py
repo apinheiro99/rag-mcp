@@ -1599,12 +1599,19 @@ async def test_lexical_sql_explain_analyze_is_measured_on_real_postgres(live_db)
     assert root["Planning Time"] >= 0
     assert root["Execution Time"] >= 0
     assert root["Plan"]["Actual Rows"] <= 24
+    def walk_plan(node):
+        yield node
+        for child in node.get("Plans", []):
+            yield from walk_plan(child)
+
+    nodes = list(walk_plan(root["Plan"]))
     print(
         "LEXICAL_EXPLAIN",
         json.dumps({
             "planning_ms": root["Planning Time"],
             "execution_ms": root["Execution Time"],
-            "plan_node": root["Plan"]["Node Type"],
+            "plan_nodes": [node["Node Type"] for node in nodes],
+            "indexes": [node["Index Name"] for node in nodes if node.get("Index Name")],
         }, sort_keys=True),
     )
 
