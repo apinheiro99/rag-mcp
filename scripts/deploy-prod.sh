@@ -2,6 +2,15 @@
 set -euo pipefail
 
 ROOT="${RAG_PROD_ROOT:-$HOME/rag-prod/rag-mcp}"
+RELEASE_MANIFEST="${RAG_RELEASE_MANIFEST:-$CI_PROJECT_DIR/release/manifest.json}"
+[ -f "$RELEASE_MANIFEST" ] || { echo "missing release manifest: $RELEASE_MANIFEST" >&2; exit 1; }
+RELEASE_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$RELEASE_MANIFEST")"
+RELEASE_TAG="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tag"])' "$RELEASE_MANIFEST")"
+RELEASE_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$RELEASE_MANIFEST")"
+[ "$RELEASE_VERSION" = "$RELEASE_TAG" ] || { echo "release version/tag mismatch" >&2; exit 1; }
+[ "$RELEASE_COMMIT" = "$CI_COMMIT_SHA" ] || { echo "release commit $RELEASE_COMMIT does not match pipeline $CI_COMMIT_SHA" >&2; exit 1; }
+export RAG_BUILD_VERSION="$RELEASE_VERSION"
+export RAG_BUILD_COMMIT="$RELEASE_COMMIT"
 : "${RAG_PRIVATE_PATH:?RAG_PRIVATE_PATH must point to the durable production private root}"
 PRIVATE="$(realpath -m "$RAG_PRIVATE_PATH")"
 RUNTIME_ENV="$PRIVATE/.env"
@@ -73,8 +82,6 @@ set -a
 set +a
 
 cd "$ROOT"
-export RAG_BUILD_VERSION="${RAG_BUILD_VERSION:-v$(date -u -d "$CI_PIPELINE_CREATED_AT" +%Y.%m).$(printf "%06d" "$CI_PIPELINE_IID")}"
-export RAG_BUILD_COMMIT="${RAG_BUILD_COMMIT:-$CI_COMMIT_SHA}"
 COMPOSE_ARGS=(-p rag-mcp -f deploy/prod/compose.yml)
 if [ -n "${RAG_TUNNEL_BINARY:-}" ] || [ -n "${RAG_TUNNEL_DIR:-}" ]; then
   : "${RAG_TUNNEL_BINARY:?RAG_TUNNEL_BINARY must be set when Secure MCP Tunnel is enabled}"

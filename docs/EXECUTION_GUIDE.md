@@ -218,6 +218,28 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 - [ ] AUD-023 — fallback de senha DB.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.
 
+## 7.1 Contrato de CI/release
+
+Decisão confirmada por André e alinhada ao padrão do REACH:
+
+- todo pipeline de branch deve mostrar cinco stages: `validate -> tag -> release -> publish -> deploy`;
+- a tag verde e a release usam **o mesmo identificador** `vYYYY.MM.NNNNNN`;
+- o stage `release` não inventa outra versão: ele materializa o mesmo tag/version em um artefato imutável do SHA validado;
+- a imagem Docker deve carregar esse mesmo `version` e o `commit` correspondente em metadata/env;
+- em branch comum, `publish` e `deploy` podem ser gates sem efeitos externos;
+- no `main`, `Publish GitHub` e `Deploy Production` continuam reais;
+- o deploy de PROD deve consumir a release produzida pelo pipeline, não reconstruir identidade por conta própria.
+
+Estado atual:
+
+- [x] cinco stages definidos;
+- [x] tag real em todo push de branch;
+- [x] `Build Release` usa o mesmo cálculo de versão/tag;
+- [x] Dockerfile recebe `RAG_BUILD_VERSION` e `RAG_BUILD_COMMIT` como build args/labels/env;
+- [x] `deploy-prod.sh` valida/consome `release/manifest.json` e usa sua versão/commit no build;
+- [x] testes de contrato cobrem tag == release version e metadata da imagem;
+- [ ] validar pipeline real após push.
+
 ## 8. Ordem de execução atual
 
 1. [x] terminar e validar branch de UI `feat/ui-match-docs-screens`;
