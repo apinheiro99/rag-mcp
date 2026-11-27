@@ -14,7 +14,7 @@ from typing import Any
 
 from .config import env
 from .db import db
-from .ingest import extraction_cache_path, resolve_ingest_config
+from .ingest import ACTIVE_STATUSES, extraction_cache_path, resolve_ingest_config
 from .ingest_policy import should_auto_start_upload, should_ignore_empty_upload
 from .settings import settings
 
@@ -149,7 +149,7 @@ async def ensure_repository_corpus() -> dict[str, Any] | None:
 
 
 
-async def sync_collection_source(source_id: str) -> dict[str, Any]:
+async def _sync_collection_source_unlocked(source_id: str) -> dict[str, Any]:
     eff = await settings.effective()
     source_cfg = eff.get("sources", {})
     async with db.pool.connection() as conn:
@@ -223,6 +223,10 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
             if old and old["content_sha256"] == digest:
                 stats["unchanged"] += 1
                 continue
+            if old and old["status"] in ACTIVE_STATUSES:
+                log.info("source sync deferred active document %s (%s)", rel, old["status"])
+                stats["ignored"] += 1
+                continue
             source_meta = (
                 {"source_type": "repository", "repository_commit": repository_revision,
                  "repository_path": rel}
@@ -284,6 +288,10 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
         for rel, old in existing.items():
             if rel in seen:
                 continue
+            if old["status"] in ACTIVE_STATUSES:
+                log.info("source sync deferred deletion of active document %s (%s)", rel, old["status"])
+                stats["ignored"] += 1
+                continue
             async with db.pool.connection() as conn:
                 await conn.execute("DELETE FROM documents WHERE id=%s", (old["id"],))
             extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
@@ -307,6 +315,15 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
         collection_id=source["collection_id"],
     )
     return stats
+
+
+_source_sync_locks: dict[str, asyncio.Lock] = {}
+
+
+async def sync_collection_source(source_id: str) -> dict[str, Any]:
+    lock = _source_sync_locks.setdefault(str(source_id), asyncio.Lock())
+    async with lock:
+        return await _sync_collection_source_unlocked(source_id)
 
 
 class SourceSyncWorker:

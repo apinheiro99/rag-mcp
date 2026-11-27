@@ -349,6 +349,12 @@ async def reindex_collection(col_id: str, body: ReindexAll):
     cfg["embedding_model"] = model
     async with db.pool.connection() as conn:
         async with conn.transaction():
+            cur = await conn.execute(
+                f"SELECT id FROM documents WHERE collection_id=%s AND status IN {ACTIVE_STATUSES} FOR UPDATE",
+                (col_id,),
+            )
+            if await cur.fetchone():
+                raise HTTPException(409, "coleção possui documento em processamento; reindexe após a ingestão terminar")
             if model != col["embedding_model"]:
                 await conn.execute(
                     """UPDATE collections SET embedding_model=NULL, embedding_dim=NULL,

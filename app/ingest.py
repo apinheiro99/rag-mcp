@@ -547,12 +547,16 @@ class DocumentIngestor:
             attempts=0,
             chunks_embedded=total,
         )
-        await rebuild_document_mentions(doc_id)
-        async with db.pool.connection() as conn:
-            await conn.execute(
-                "UPDATE documents SET graph_indexed_at=now() WHERE id=%s",
-                (doc_id,),
-            )
+        try:
+            await rebuild_document_mentions(doc_id)
+        except Exception:
+            log.exception("doc %s: graph enrichment failed; background worker will retry", doc_id)
+        else:
+            async with db.pool.connection() as conn:
+                await conn.execute(
+                    "UPDATE documents SET graph_indexed_at=now() WHERE id=%s",
+                    (doc_id,),
+                )
         await db.event(
             f"[ok] {doc['filename']} indexado ({total} chunks, modelo {model})",
             "info",
