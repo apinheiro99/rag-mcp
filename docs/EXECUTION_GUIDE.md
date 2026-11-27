@@ -332,6 +332,7 @@ A auditoria original foi feita sobre `99aa3b6`; sempre reconfirmar no HEAD.
 ### Nota de escopo do runtime GPU
 
 - fila única fechada neste ciclo para **ingest/query/rerank**, conforme decisão já registrada;
+- [x] pipeline 721 (`d99b562`, `main`) publicou/deployou a fila única; busca composta em PROD manteve Strategy + DDD, `effective_top_k=5`, usefulness high.
 - autoconfig com LLM pesado continua como item separado porque descarregar o LLM e restaurar imediatamente o perfil residente embedding+reranker exige política explícita de pós-job; não misturar essa decisão neste patch.
 
 ### Não alterar sem decisão/medição explícita
