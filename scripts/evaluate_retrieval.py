@@ -55,13 +55,22 @@ async def main(args):
                 if response.isError:
                     raise RuntimeError(str(data))
                 results = data["results"]
+                retrieval = data.get("retrieval") or {}
+                decomposition = retrieval.get("decomposition") or {}
                 row = {"id":case["id"], "ms":round((time.perf_counter()-started)*1000,2),
                        "trace_id": data.get("trace_id"),
+                       "effective_top_k": retrieval.get("effective_top_k", len(results)),
+                       "hybrid": bool(retrieval.get("hybrid")),
+                       "decomposition": bool(decomposition.get("enabled")),
+                       "lexical_reason": retrieval.get("lexical_skipped_reason"),
                        **evaluate(results,case["expected_sources"],args.k),
                        "results":[{key:x.get(key) for key in ("document","chunk_id","location_label","score","rerank_score")} for x in results]}
                 rows.append(row)
                 print(json.dumps(row,ensure_ascii=False),flush=True)
     summary = {key:statistics.mean(r[key] for r in rows) for key in ("ms","known_source_recall","reciprocal_rank","source_hit_at_k","heading_only_count")}
+    summary["avg_effective_top_k"] = statistics.mean(r["effective_top_k"] for r in rows)
+    summary["hybrid_rate"] = statistics.mean(1.0 if r["hybrid"] else 0.0 for r in rows)
+    summary["decomposition_rate"] = statistics.mean(1.0 if r["decomposition"] else 0.0 for r in rows)
     output = {"k":args.k,"cases":rows,"summary":summary}
     failures = []
     if summary["known_source_recall"] < args.min_recall:

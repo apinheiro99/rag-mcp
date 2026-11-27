@@ -1,7 +1,9 @@
 """Busca semântica sobre o pgvector com filtros e observabilidade."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import time
 from typing import Any
 
@@ -165,13 +167,146 @@ async def _search_group(
 
 
 
+_QUESTION_STARTERS = {
+    "what", "when", "where", "which", "who", "why", "how", "compare", "explain",
+    "describe", "does", "do", "is", "are", "in",
+}
+
+
+def analyze_query_intent(query: str, scfg: dict) -> dict:
+    """Detect queries where lexical/title evidence should complement dense retrieval."""
+    if not scfg.get("hybrid_query_aware_enabled", True):
+        return {"force_hybrid": False, "reasons": [], "metadata_terms": []}
+
+    text = " ".join((query or "").split())
+    reasons: list[str] = []
+    metadata_terms: list[str] = []
+
+    quoted = [m.group(1).strip() for m in re.finditer(r'["“]([^"”]{2,100})["”]', text)]
+    if quoted:
+        reasons.append("quoted_phrase")
+        metadata_terms.extend(quoted)
+
+    tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9_+.#:/-]*\b", text)
+    technical = []
+    for token in tokens:
+        bare = token.strip(".,:;!?()[]{}")
+        if (
+            re.fullmatch(r"[A-Z]{2,}[A-Z0-9-]*", bare)
+            or re.search(r"\d", bare)
+            or any(ch in bare for ch in ("_", "::", "/", "#", "+"))
+            or (len(bare) > 2 and any(ch.isupper() for ch in bare[1:]))
+        ):
+            technical.append(bare)
+    if technical:
+        reasons.append("technical_token")
+        metadata_terms.extend(technical)
+
+    # Capture title-like phrases such as "RAG with Python Cookbook" or
+    # "Domain-Driven Design" without requiring an LLM query planner.
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+.#:/-]*", text)
+    phrase: list[str] = []
+    phrases: list[str] = []
+    joiners = {"with", "of", "and", "the", "for", "in", "to"}
+    for word in words + ["__END__"]:
+        is_title = (
+            word != "__END__"
+            and (
+                (word[0].isupper() and word.casefold() not in _QUESTION_STARTERS)
+                or word.casefold() in joiners
+            )
+        )
+        if is_title:
+            phrase.append(word)
+        else:
+            meaningful = [w for w in phrase if w.casefold() not in joiners]
+            if len(meaningful) >= 2:
+                phrases.append(" ".join(phrase))
+            phrase = []
+    if phrases:
+        reasons.append("title_like_phrase")
+        metadata_terms.extend(phrases)
+
+    concept = re.findall(
+        r"\b([A-Z][A-Za-z0-9+-]*(?:\s+[A-Z][A-Za-z0-9+-]*){0,2}\s+"
+        r"(?:pattern|Pattern|root|Root|isolation|Isolation))\b",
+        text,
+    )
+    if concept:
+        reasons.append("named_concept")
+        metadata_terms.extend(concept)
+
+    clean_terms: list[str] = []
+    for term in metadata_terms:
+        term = re.sub(r"^(?:In|From|According to)\s+", "", term, flags=re.I).strip(" ,.:;!?")
+        if len(term) < 2:
+            continue
+        if term.casefold() not in {x.casefold() for x in clean_terms}:
+            clean_terms.append(term)
+    max_terms = max(0, int(scfg.get("hybrid_metadata_terms_max", 4)))
+    clean_terms = clean_terms[:max_terms]
+    return {
+        "force_hybrid": bool(reasons),
+        "reasons": reasons,
+        "metadata_terms": clean_terms,
+    }
+
+
+def decompose_query(query: str, scfg: dict) -> dict:
+    """Deterministically split only explicit compound comparison questions."""
+    if not scfg.get("decomposition_enabled", True):
+        return {"enabled": False, "reason": "disabled", "subqueries": []}
+
+    text = " ".join((query or "").split())
+    match = re.match(
+        r"(?i)^compare\s+(.+?)\s+(?:with|versus|vs\.?)\s+(.+?)(?::\s*(.+))?[?]?$",
+        text,
+    )
+    if not match:
+        match = re.match(
+            r"(?i)^how\s+does\s+(.+?)\s+differ\s+from\s+(.+?)(?:[?]$|$)",
+            text,
+        )
+        if match:
+            left, right = match.group(1).strip(), match.group(2).strip()
+            subqueries = [
+                f"What are the key characteristics of {left}?",
+                f"What are the key characteristics of {right}?",
+            ]
+            return {
+                "enabled": True,
+                "reason": "explicit_difference",
+                "subqueries": subqueries[: max(1, int(scfg.get("decomposition_max_subqueries", 2)))],
+            }
+        return {"enabled": False, "reason": "simple_query", "subqueries": []}
+
+    left, right, suffix = match.group(1).strip(), match.group(2).strip(), (match.group(3) or "").strip()
+    if suffix:
+        subqueries = [f"{left}: {suffix}", f"{right}: {suffix}"]
+    else:
+        subqueries = [
+            f"What are the key characteristics of {left}?",
+            f"What are the key characteristics of {right}?",
+        ]
+    return {
+        "enabled": True,
+        "reason": "explicit_comparison",
+        "subqueries": subqueries[: max(1, int(scfg.get("decomposition_max_subqueries", 2)))],
+    }
+
+
 def _score_for_utility(row: dict) -> float:
     return float(row.get("rerank_score", row.get("score", 0.0)) or 0.0)
 
 
 def choose_adaptive_top_k(rows: list[dict], requested_top_k: int, scfg: dict, *, explicit: bool) -> tuple[int, dict]:
     """Choose returned evidence count from relevance, never exceeding requested/configured bounds."""
-    if explicit or not scfg.get("adaptive_top_k_enabled", False) or not rows:
+    allow_below_explicit = bool(scfg.get("adaptive_top_k_allow_below_explicit", True))
+    if (
+        not scfg.get("adaptive_top_k_enabled", False)
+        or not rows
+        or (explicit and not allow_below_explicit)
+    ):
         return min(requested_top_k, len(rows)), {"enabled": False, "reason": "explicit_or_disabled"}
     lo = max(1, int(scfg.get("adaptive_top_k_min", 3)))
     hi = max(lo, min(requested_top_k, int(scfg.get("adaptive_top_k_max", requested_top_k))))
@@ -217,7 +352,14 @@ def retrieval_usefulness(rows: list[dict], scfg: dict) -> dict:
 
 def annotate_selection(rows: list[dict], *, hybrid: bool, expanded: bool) -> None:
     for final_rank, row in enumerate(rows, 1):
-        method = "hybrid" if hybrid and "lexical_score" in row else "dense"
+        if row.get("decomposition_query"):
+            method = "decomposition"
+        elif hybrid and "metadata_score" in row:
+            method = "hybrid_metadata"
+        elif hybrid and "lexical_score" in row:
+            method = "hybrid"
+        else:
+            method = "dense"
         rerank = row.get("rerank_score")
         reason = f"{method} retrieval"
         if rerank is not None:
@@ -258,10 +400,20 @@ def token_cost_estimate(query: str, rerank_pool: list[dict], final_rows: list[di
     }
 
 
-def should_apply_lexical(dense: list[dict], candidate_k: int, scfg: dict) -> tuple[bool, str | None]:
-    """Use lexical retrieval only when dense retrieval is weak or undersupplied."""
+def should_apply_lexical(
+    query: str,
+    dense: list[dict],
+    candidate_k: int,
+    scfg: dict,
+    *,
+    intent: dict | None = None,
+) -> tuple[bool, str | None]:
+    """Use lexical retrieval for weak dense results or explicit lexical intent."""
     if not scfg.get("hybrid_enabled"):
         return False, "disabled"
+    intent = intent or analyze_query_intent(query, scfg)
+    if intent.get("force_hybrid"):
+        return True, "query_lexical_intent"
     if not dense:
         return True, None
     min_candidates = max(1, min(candidate_k, int(scfg.get("hybrid_min_dense_candidates", candidate_k))))
@@ -285,6 +437,13 @@ def fuse_rankings(rankings: list[list[dict]], rank_constant: int) -> list[dict]:
             item = merged.setdefault(key, {**row, "fusion_score": 0.0})
             if "lexical_score" in row:
                 item["lexical_score"] = row["lexical_score"]
+            if "metadata_score" in row:
+                item["metadata_score"] = max(
+                    float(item.get("metadata_score", 0.0)),
+                    float(row["metadata_score"]),
+                )
+            if row.get("decomposition_query") and not item.get("decomposition_query"):
+                item["decomposition_query"] = row["decomposition_query"]
             item["fusion_score"] += 1 / (rank_constant + rank)
     return sorted(merged.values(), key=lambda x: (-x["fusion_score"], str(x["chunk_id"])))
 
@@ -311,6 +470,55 @@ async def _lexical_search(query, cols, filters, limit):
         return await cur.fetchall()
 
 
+async def _metadata_search(terms, cols, filters, limit):
+    terms = [str(x).strip().casefold() for x in terms if str(x).strip()]
+    if not terms or limit <= 0:
+        return []
+    filter_sql, params = filters.sql()
+    extra = f" AND {filter_sql}" if filter_sql else ""
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            f"""WITH candidates AS (
+                    SELECT c.id AS chunk_id, c.seq, c.content, c.loc,
+                           d.id AS document_id, d.filename, d.source_path, d.meta,
+                           col.name AS collection,
+                           max(length(t.term))::double precision AS metadata_score
+                    FROM documents d
+                    JOIN collections col ON col.id=d.collection_id
+                    JOIN chunks c ON c.document_id=d.id
+                    JOIN unnest(%s::text[]) AS t(term)
+                      ON lower(d.filename) LIKE ('%%' || t.term || '%%')
+                      OR lower(d.source_path) LIKE ('%%' || t.term || '%%')
+                    WHERE d.collection_id = ANY(%s::uuid[])
+                      AND d.status='ready'
+                      AND c.embedded{extra}
+                    GROUP BY c.id, c.seq, c.content, c.loc,
+                             d.id, d.filename, d.source_path, d.meta, col.name
+                ),
+                ranked AS (
+                    SELECT *,
+                           row_number() OVER (
+                               PARTITION BY document_id
+                               ORDER BY metadata_score DESC, seq
+                           ) AS doc_rank
+                    FROM candidates
+                )
+                SELECT chunk_id, seq, content, loc, document_id, filename, source_path,
+                       meta, collection, metadata_score
+                FROM ranked
+                WHERE doc_rank <= 2
+                ORDER BY metadata_score DESC, filename, doc_rank
+                LIMIT %s""",
+            (
+                terms,
+                [str(c["id"]) for c in cols],
+                *params,
+                limit,
+            ),
+        )
+        return await cur.fetchall()
+
+
 def _format_result(r):
     return {
         "chunk_id": str(r["chunk_id"]), "document_id": str(r["document_id"]),
@@ -320,6 +528,8 @@ def _format_result(r):
         "location_label": location_label(r["loc"]), "chunk_seq": r["seq"],
         "metadata": r["meta"],
         **({"lexical_score": float(r["lexical_score"])} if "lexical_score" in r else {}),
+        **({"metadata_score": float(r["metadata_score"])} if "metadata_score" in r else {}),
+        **({"decomposition_query": r["decomposition_query"]} if "decomposition_query" in r else {}),
     }
 
 
@@ -379,11 +589,24 @@ async def semantic_search(
     top_k = max(1, min(top_k, scfg["max_top_k"]))
     min_score = float(min_score if min_score is not None else scfg["min_score"])
     candidate_k = top_k
+    adaptive_return = bool(scfg.get("adaptive_top_k_enabled", False)) and (
+        not explicit_top_k or bool(scfg.get("adaptive_top_k_allow_below_explicit", True))
+    )
     if rcfg.get("enabled"):
-        candidate_k = max(top_k, min(
-            int(rcfg.get("max_candidates", 32)),
-            max(top_k, top_k * int(rcfg.get("candidate_multiplier", 4))),
-        ))
+        max_candidates = max(1, int(rcfg.get("max_candidates", 32)))
+        if adaptive_return:
+            candidate_k = min(
+                max_candidates,
+                max(
+                    int(scfg.get("adaptive_top_k_max", 8)),
+                    int(scfg.get("adaptive_top_k_min", 3)),
+                ),
+            )
+        else:
+            candidate_k = max(top_k, min(
+                max_candidates,
+                max(top_k, top_k * int(rcfg.get("candidate_multiplier", 4))),
+            ))
 
     started = time.perf_counter()
     embedding_ms = 0.0
@@ -424,6 +647,8 @@ async def semantic_search(
             requirements.append(ModelRequirement(reranker_model, context_length))
 
         hybrid_requested = bool(scfg.get("hybrid_enabled")) and min_score <= 0
+        query_intent = analyze_query_intent(query, scfg)
+        decomposition = decompose_query(query, scfg)
         hybrid = False
         lexical_skipped_reason = None
         adaptive = bool(scfg.get("adaptive_enabled")) and bool(rcfg.get("enabled"))
@@ -432,6 +657,8 @@ async def semantic_search(
             nonlocal embedding_ms, db_ms, results, expanded, dense_ms, lexical_ms, heading_ms, hybrid, lexical_skipped_reason
             dense = []
             lexical = []
+            metadata = []
+            decomposed_rankings: list[list[dict]] = []
             depth = max(candidate_k, int(scfg["adaptive_candidate_limit"])) if adaptive else candidate_k
             for (model, dim), group_cols in groups.items():
                 rows, emb_elapsed, db_elapsed = await _search_group(
@@ -443,17 +670,61 @@ async def semantic_search(
                 dense_ms += db_elapsed
                 dense.extend(_format_result(r) for r in rows if float(r["score"]) >= min_score)
             dense.sort(key=lambda x: x["score"], reverse=True)
+
+            if decomposition.get("enabled"):
+                per_query = max(1, int(scfg.get("decomposition_candidates_per_query", candidate_k)))
+
+                async def retrieve_subquery(subquery: str) -> tuple[list[dict], float, float]:
+                    ranking: list[dict] = []
+                    sub_embedding_ms = 0.0
+                    sub_db_ms = 0.0
+                    for (model, dim), group_cols in groups.items():
+                        rows, emb_elapsed, sub_db_elapsed = await _search_group(
+                            query=subquery, model=model, dim=dim, group_cols=group_cols,
+                            filters=filters, top_k=per_query, scfg=scfg, client=client,
+                        )
+                        sub_embedding_ms += emb_elapsed
+                        sub_db_ms += sub_db_elapsed
+                        ranking.extend(_format_result(r) for r in rows if float(r["score"]) >= min_score)
+                    ranking.sort(key=lambda x: x["score"], reverse=True)
+                    for item in ranking:
+                        item["decomposition_query"] = subquery
+                    return ranking, sub_embedding_ms, sub_db_ms
+
+                subquery_results = list(await asyncio.gather(
+                    *(retrieve_subquery(sq) for sq in decomposition["subqueries"])
+                ))
+                decomposed_rankings = [item[0] for item in subquery_results]
+                embedding_ms += sum(item[1] for item in subquery_results)
+                dense_ms += sum(item[2] for item in subquery_results)
+                db_ms += sum(item[2] for item in subquery_results)
+
             if hybrid_requested:
-                hybrid, lexical_skipped_reason = should_apply_lexical(dense, candidate_k, scfg)
+                hybrid, lexical_skipped_reason = should_apply_lexical(
+                    query, dense, candidate_k, scfg, intent=query_intent
+                )
+            rankings: list[list[dict]] = [dense]
             if hybrid:
                 t = time.perf_counter()
                 lexical = [_format_result(r) for r in await _lexical_search(
                     query, cols, filters, int(scfg["lexical_candidates"]))]
+                if query_intent.get("metadata_terms"):
+                    metadata = [_format_result(r) for r in await _metadata_search(
+                        query_intent["metadata_terms"],
+                        cols,
+                        filters,
+                        int(scfg.get("hybrid_metadata_candidates", 12)),
+                    )]
                 lexical_ms += (time.perf_counter()-t)*1000
                 db_ms += lexical_ms
-                results = fuse_rankings([dense, lexical], int(scfg["fusion_rank_constant"]))
-            else:
-                results = dense
+                rankings.extend([lexical, metadata])
+            rankings.extend(decomposed_rankings)
+            rankings = [ranking for ranking in rankings if ranking]
+            results = (
+                fuse_rankings(rankings, int(scfg["fusion_rank_constant"]))
+                if len(rankings) > 1
+                else (rankings[0] if rankings else [])
+            )
             for retrieval_rank, item in enumerate(results, 1):
                 item["retrieval_rank"] = retrieval_rank
             if scfg.get("expand_heading_context"):
@@ -502,7 +773,10 @@ async def semantic_search(
             "total_candidates": len(results),
             "retrieval": {
                 "hybrid_requested": hybrid_requested, "hybrid": hybrid,
-                "lexical_skipped_reason": lexical_skipped_reason, "expanded": expanded,
+                "lexical_skipped_reason": lexical_skipped_reason,
+                "query_intent": query_intent,
+                "decomposition": decomposition,
+                "expanded": expanded,
                 "requested_top_k": top_k, "effective_top_k": effective_top_k,
                 "adaptive_top_k": adaptive_top_k,
                 "usefulness": usefulness,

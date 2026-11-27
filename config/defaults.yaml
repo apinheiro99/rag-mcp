@@ -28,7 +28,13 @@ search:
   lexical_candidates: 24
   hybrid_min_dense_score: 0.55
   hybrid_min_dense_candidates: 8
+  hybrid_query_aware_enabled: true
+  hybrid_metadata_terms_max: 4
+  hybrid_metadata_candidates: 12
   fusion_rank_constant: 60
+  decomposition_enabled: true
+  decomposition_max_subqueries: 2
+  decomposition_candidates_per_query: 8
   expand_heading_context: true
   heading_context_chars: 1500
   graph_top_k: 12
@@ -37,6 +43,7 @@ search:
   adaptive_min_rerank_score: 0.45
   adaptive_candidate_limit: 24
   adaptive_top_k_enabled: true
+  adaptive_top_k_allow_below_explicit: true
   adaptive_top_k_min: 3
   adaptive_top_k_max: 8
   adaptive_top_k_min_score: 0.55
