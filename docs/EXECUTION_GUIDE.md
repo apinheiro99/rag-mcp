@@ -371,7 +371,7 @@ Recomendação KISS deste ciclo:
 
 **AUD-020 — P95/P99**
 
-- opção A (mínima): continuar apenas medindo/mostrando, sem gate;
+- opção A (mínima): **adotada neste ciclo** — continuar apenas medindo/mostrando P95/P99, sem gate;
 - opção B: configurar threshold informativo (warning only);
 - opção C: transformar threshold em gate de CI/stress.
 - estado atual: não há SLO aprovado; não escolher número arbitrário.
@@ -386,7 +386,7 @@ Recomendação KISS deste ciclo:
 ### Não alterar sem decisão/medição explícita
 
 - [x] AUD-017 — deploy atual já possui rollback automático para último commit saudável, migração explícita fora do startup e testes de contrato; finding original está obsoleto no HEAD atual.
-- [ ] AUD-020 — métricas P95/P99 existem, mas não há SLO/threshold aprovado; **não definir número sem decisão explícita do usuário**.
+- [x] AUD-020 — P95 e P99 expostos como observabilidade; decisão KISS deste ciclo é **sem threshold/gate/SLO arbitrário**. Gate futuro só com baseline/requisito aprovado.
 - [x] AUD-021 — `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` medido no PostgreSQL isolado do CI. Pipeline 727 (main): planning 1.421 ms, execution 2.733 ms; plano `Limit -> Sort -> Nested Loop -> Bitmap Heap Scan -> Bitmap Index Scan -> Index Scan`, usando `chunks_collection_idx` e `documents_graph_stale_idx`. Fixture pequeno não escolheu o GIN FTS; **nenhuma mudança de índice** sem evidência de workload real.
 - [ ] AUD-005 — ainda real: `retrieval_events.query_text` grava query completa e não há retenção automática. Envolve política de privacidade/retention; não alterar sem decisão explícita.
 - [x] AUD-023 — fallback hardcoded `POSTGRES_PASSWORD=rag` removido; sem `RAG_DSN`, `POSTGRES_PASSWORD` agora é obrigatório. `.env.example`, CI e PROD já usam credencial explícita.
