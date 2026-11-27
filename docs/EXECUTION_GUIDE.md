@@ -111,7 +111,7 @@ Dashboard — checklist literal de `docs/screens/02_dashboard.png`:
 - [x] dimensões restauradas pelas medidas da referência: KPI ~115 px, ops ~300 px, Model Runtime ~310 px;
 - [x] pipeline 695 validou a implementação do pixel contract em branch;
 - [x] pipeline 697 (`19fbff4`, `main`) publicou/deployou o pixel-contract do Dashboard;
-- [ ] validação visual final pelo usuário; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência.
+- [~] validação visual final pelo usuário; qualquer diferença restante deve ser corrigida pelo mesmo processo de recorte/medição da imagem, não por inferência. **UI congelada por decisão do usuário em 26/11/2026; não continuar ajustando neste ciclo.**
 
 Checkpoint Dashboard 26/11/2026:
 
@@ -119,7 +119,7 @@ Checkpoint Dashboard 26/11/2026:
 - [x] tipografia aumentada sem inflar os cards;
 - [x] `Model Runtime`, `Embedding Model`, `Reranker`, `Classification` e `Resident-Model Behavior` usam ícones distintos;
 - [x] pipeline 691 validou a revisão visual em cinco stages;
-- [ ] validação visual final no PROD pelo usuário; se houver diferença, continuar ajustando contra `02_dashboard.png` sem reinterpretar o layout.
+- [~] validação visual final no PROD pelo usuário; se houver diferença, continuar ajustando contra `02_dashboard.png` sem reinterpretar o layout. **UI congelada por decisão do usuário em 26/11/2026; não continuar ajustando neste ciclo.**
 
 Import — checklist literal de `docs/screens/03_import.png`:
 
@@ -131,7 +131,7 @@ Import — checklist literal de `docs/screens/03_import.png`:
 - [x] `Ingestion Configuration` usa Manual / Automatic (LLM) e painel explicativo;
 - [x] pipeline 701 validou o pixel-contract em branch;
 - [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
-- [ ] validação visual final no PROD.
+- [~] validação visual final no PROD. **UI congelada por decisão do usuário em 26/11/2026; não continuar ajustando neste ciclo.**
 
 Documents — checklist literal de `docs/screens/04_documents.png`:
 
@@ -142,7 +142,7 @@ Documents — checklist literal de `docs/screens/04_documents.png`:
 - [x] paginação inferior com 25 linhas por página;
 - [x] pipeline 701 validou o pixel-contract em branch;
 - [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
-- [ ] validação visual final no PROD.
+- [~] validação visual final no PROD. **UI congelada por decisão do usuário em 26/11/2026; não continuar ajustando neste ciclo.**
 
 Search — checklist literal de `docs/screens/05_search.png`:
 
@@ -154,7 +154,7 @@ Search — checklist literal de `docs/screens/05_search.png`:
 - [x] observabilidade técnica continua disponível no código, mas fora do layout principal aprovado;
 - [x] pipeline 701 validou o pixel-contract em branch;
 - [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
-- [ ] validação visual final no PROD.
+- [~] validação visual final no PROD. **UI congelada por decisão do usuário em 26/11/2026; não continuar ajustando neste ciclo.**
 
 Settings — checklist literal de `docs/screens/06_settings.png`:
 
@@ -166,7 +166,7 @@ Settings — checklist literal de `docs/screens/06_settings.png`:
 - [x] controles avançados antigos permanecem no DOM para compatibilidade, mas fora do layout principal aprovado;
 - [x] pipeline 701 validou o pixel-contract em branch;
 - [x] pipeline 703 (`2c049d9`, `main`) publicou/deployou o conjunto das quatro telas;
-- [ ] validação visual final no PROD.
+- [~] validação visual final no PROD. **UI congelada por decisão do usuário em 26/11/2026; não continuar ajustando neste ciclo.**
 
 ### Revisão visual após deploy 703
 
@@ -179,6 +179,10 @@ Feedback do usuário com screenshots reais de PROD (`1920×1032`):
 - depois desta correção, revalidar as quatro telas diretamente contra `03..06`, usando os screenshots de PROD como evidência de escala.
 - [x] pipeline 706 validou em branch a correção de escala/legibilidade, file-type badges reais e overlap do Search.
 - [x] pipeline 709 (`eda5bf3`, `main`) publicou/deployou a correção em PROD.
+
+### Freeze de UI
+
+Decisão explícita do usuário em 26/11/2026: **parar de mexer na UI neste ciclo**, mesmo que ainda existam diferenças visuais em relação às referências. Qualquer item visual restante fica congelado e não deve bloquear retrieval/auditoria/backend.
 
 ### Estado atual da UI
 
@@ -220,7 +224,7 @@ Pendências:
 - [x] avaliação avançada executada no PROD: 12/12 casos com known-source recall = 1.0;
 - [x] nomes de livros, termos técnicos, padrões e conceitos nomeados validados no PROD;
 - [x] casos de usefulness menor revisados; sem miss de fonte, portanto sem mudança algorítmica por métrica heurística isolada;
-- [ ] usar `EXPLAIN ANALYZE` antes de mexer em índice lexical;
+- [x] `EXPLAIN ANALYZE` executado no PostgreSQL isolado do CI (pipeline 725); nenhuma mudança de índice justificada.
 - [x] reduzir o lexical query de OR entre todos os lexemas para `plainto_tsquery` (AND), preservando o mesmo GIN; motivação: dogfooding mostrou 0,6–3,5 s em termos amplos como `Strategy pattern`; validar no PROD antes de qualquer mudança de índice.
 - [x] adicionados testes PostgreSQL reais focados: lexical+metadata fusion e `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` do SQL lexical; validar no job Integration do CI.
 - [ ] não trocar heurística determinística por LLM planner sem evidência e aprovação.
