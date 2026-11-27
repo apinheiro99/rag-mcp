@@ -141,8 +141,8 @@ async def test_qwen_reranker_uses_official_binary_protocol_and_logprobs():
 
     out = await rerank_results("which is best?", _results(), config, client)
 
-    assert [r["chunk_id"] for r in out] == ["b", "c", "a"]
-    assert out[0]["rerank_score"] > out[1]["rerank_score"] > out[2]["rerank_score"]
+    assert [r["chunk_id"] for r in out] == ["b", "a", "c"]
+    assert out[0]["rerank_score"] > out[1]["rerank_score"] == out[2]["rerank_score"] == 0.0
     assert len(client.calls) == 3
     call = client.calls[0]
     assert call["model"] == "qwen3-reranker-0.6b"
@@ -176,3 +176,12 @@ async def test_qwen_8b_fails_fast_when_rank_backend_is_unavailable():
             {"model": "qwen3-reranker-8b"},
             FakeClient("unused"),
         )
+
+
+def test_qwen_no_only_top_logprobs_do_not_turn_residual_mass_into_yes():
+    payload = _choice(
+        "No",
+        -1.2,
+        [("No", -1.2), ("Other", -1.4)],
+    )
+    assert qwen_yes_probability(payload) == 0.0

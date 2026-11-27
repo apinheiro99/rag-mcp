@@ -101,7 +101,8 @@ def qwen_yes_probability(payload: dict[str, Any]) -> float:
     if yes_prob > 0.0:
         return yes_prob
     if no_prob > 0.0:
-        return min(max(1.0 - no_prob, 0.0), 1.0)
+        # top_logprobs is truncated; unseen residual mass is unknown, not evidence for "yes".
+        return 0.0
 
     generated = _normalize_binary_token(
         str((choice.get("message") or {}).get("content") or row.get("token") or "")

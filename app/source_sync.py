@@ -60,6 +60,22 @@ def _copy_blob(path: Path, digest: str) -> str:
     return blob_rel
 
 
+async def _gc_blobs(stored_paths: list[str]) -> None:
+    if not stored_paths:
+        return
+    async with db.pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT DISTINCT stored_path FROM documents WHERE stored_path = ANY(%s)",
+            (stored_paths,),
+        )
+        still_used = {row["stored_path"] for row in await cur.fetchall()}
+    for stored_path in set(stored_paths) - still_used:
+        try:
+            (env.data_dir / stored_path).unlink(missing_ok=True)
+        except OSError:
+            log.warning("could not remove orphaned source-sync blob %s", stored_path)
+
+
 def repository_commit(root: Path) -> str | None:
     try:
         return subprocess.run(
@@ -181,6 +197,8 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
 
     stats = {"new": 0, "changed": 0, "deleted": 0, "unchanged": 0, "ignored": 0, "errors": 0}
     seen: set[str] = set()
+    obsolete_blobs: list[str] = []
+    scan_complete = True
     for path in sorted(root.rglob("*")):
         try:
             if path.is_symlink() or not path.is_file():
@@ -253,20 +271,28 @@ async def sync_collection_source(source_id: str) -> dict[str, Any]:
                         )
             if old:
                 extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
+                obsolete_blobs.append(str(old["stored_path"]))
                 stats["changed"] += 1
             else:
                 stats["new"] += 1
         except Exception:
+            scan_complete = False
             log.exception("source sync failed for %s", path)
             stats["errors"] += 1
 
-    for rel, old in existing.items():
-        if rel in seen:
-            continue
-        async with db.pool.connection() as conn:
-            await conn.execute("DELETE FROM documents WHERE id=%s", (old["id"],))
-        extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
-        stats["deleted"] += 1
+    if scan_complete:
+        for rel, old in existing.items():
+            if rel in seen:
+                continue
+            async with db.pool.connection() as conn:
+                await conn.execute("DELETE FROM documents WHERE id=%s", (old["id"],))
+            extraction_cache_path(str(old["id"])).unlink(missing_ok=True)
+            obsolete_blobs.append(str(old["stored_path"]))
+            stats["deleted"] += 1
+    else:
+        log.warning("source sync deletion pass skipped because filesystem scan had errors: %s", root)
+
+    await _gc_blobs(obsolete_blobs)
 
     async with db.pool.connection() as conn:
         await conn.execute(

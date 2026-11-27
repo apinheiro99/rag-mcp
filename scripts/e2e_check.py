@@ -4,9 +4,8 @@
 Roda somente com a stdlib do Python 3.10+ (nenhum pip install necessário).
 
 Uso típico (stack Docker no ar):
-    python3 scripts/e2e_check.py --url http://localhost:8000 \
-        --lm-url http://192.168.1.50:1234 \
-        --restart-cmd "docker compose restart app"
+    python3 scripts/e2e_check.py --url http://docker-prod01.lab:8000 \
+        --lm-url http://192.168.1.10:1234
 
 Com LM Studio simulado (validação sem LM Studio real):
     python3 scripts/fake_lmstudio.py --port 1234 &
@@ -224,8 +223,8 @@ def wait_docs(http: HTTP, col_id: str, timeout: float, expect_ready: int):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--url", default="http://localhost:8000")
-    ap.add_argument("--lm-url", default=None, help="URL do LM Studio a configurar no servidor")
+    ap.add_argument("--url", default=os.environ.get("RAG_E2E_URL", "http://docker-prod01.lab:8000"))
+    ap.add_argument("--lm-url", default=os.environ.get("RAG_E2E_LM_URL", "http://192.168.1.10:1234"), help="URL do LM Studio a configurar no servidor")
     ap.add_argument("--embed-model", default=None)
     ap.add_argument("--llm-model", default=None)
     ap.add_argument("--token", default=os.environ.get("RAG_API_TOKEN", ""))
