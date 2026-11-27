@@ -475,9 +475,11 @@ function refIcon(kind, extra = "") {
     queue: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="4" rx="1.3"/><rect x="4" y="11" width="16" height="4" rx="1.3"/><rect x="4" y="17" width="16" height="2" rx="1"/></svg>`,
     search: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.1 15.1 5 5"/></svg>`,
     chunks: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>`,
-    chip: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 9h6v6H9zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>`,
-    rerank: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h10M5 17h7"/><path d="m17 11 2 2 3-4"/></svg>`,
-    classify: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.2"/><circle cx="17" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/><path d="M8.9 8.2 10.9 15M15.1 8.2 13.1 15M9.2 7h5.6"/></svg>`,
+    runtime: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/><circle cx="9" cy="9" r="1.1"/><circle cx="15" cy="9" r="1.1"/><circle cx="9" cy="15" r="1.1"/><circle cx="15" cy="15" r="1.1"/><path d="M2.5 8h2.5M2.5 16h2.5M19 8h2.5M19 16h2.5M8 2.5V5M16 2.5V5M8 19v2.5M16 19v2.5"/></svg>`,
+    embedding: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 4-7 4-7-4 7-4Z"/><path d="m5 11 7 4 7-4M5 15l7 4 7-4"/></svg>`,
+    rerank: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h12M5 11h9M5 16h6"/><path d="m15.5 15.5 2 2 3.5-4"/></svg>`,
+    classify: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="6.5" r="2"/><circle cx="17.5" cy="6.5" r="2"/><circle cx="12" cy="17.5" r="2"/><path d="M8.2 7.6 10.8 16M15.8 7.6 13.2 16M8.5 6.5h7"/></svg>`,
+    resident: `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="6" width="14" height="12" rx="2"/><path d="M8 10h8M8 14h8M3 9h2M3 15h2M19 9h2M19 15h2"/><circle cx="9" cy="10" r=".6" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r=".6" fill="currentColor" stroke="none"/></svg>`,
   };
   return icons[kind] || icons.cube;
 }
@@ -547,10 +549,10 @@ function renderDashboardOverview(h = state.health) {
     const embedding = state.settings.embedding_model || "Not configured";
     const reranker = state.settings.reranker_model || state.effective?.rerank?.model || "Not configured";
     const cards = [
-      ["cube","Embedding Model",embedding,loaded.has(embedding) ? "In Use" : "Configured"],
+      ["embedding","Embedding Model",embedding,loaded.has(embedding) ? "In Use" : "Configured"],
       ["rerank","Reranker",reranker,loaded.has(reranker) ? "In Use" : "Configured"],
       ["classify","Classification","Embedding + Reranker","Existing categories only"],
-      ["chip","Resident-Model Behavior","Exact resident profile","Embedding + reranker"],
+      ["resident","Resident-Model Behavior","Exact resident profile","Embedding + reranker"],
     ];
     runtime.innerHTML = cards.map(([icon,label,value,status]) => `
       <div class="model-card"><div class="model-card-head"><span class="model-icon">${refIcon(icon)}</span><b>${esc(label)}</b><em>${esc(status)}</em></div><strong>${esc(value)}</strong></div>`).join("");
