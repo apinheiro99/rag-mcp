@@ -378,7 +378,7 @@ Recomendação KISS deste ciclo:
 
 **AUD-023 — fallback de senha PostgreSQL**
 
-- opção A (mínima/mais segura): remover fallback `rag` e exigir `POSTGRES_PASSWORD` quando `RAG_DSN` não existir;
+- opção A (mínima/mais segura): **adotada** — remover fallback `rag` e exigir `POSTGRES_PASSWORD` quando `RAG_DSN` não existir;
 - opção B: manter fallback apenas sob modo explícito de desenvolvimento/teste;
 - opção C: manter como está.
 - PROD já exige senha via Compose e o deploy gera segredo; impacto é compatibilidade local/standalone.
@@ -389,7 +389,7 @@ Recomendação KISS deste ciclo:
 - [ ] AUD-020 — métricas P95/P99 existem, mas não há SLO/threshold aprovado; **não definir número sem decisão explícita do usuário**.
 - [x] AUD-021 — `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` medido no PostgreSQL isolado do CI. Pipeline 727 (main): planning 1.421 ms, execution 2.733 ms; plano `Limit -> Sort -> Nested Loop -> Bitmap Heap Scan -> Bitmap Index Scan -> Index Scan`, usando `chunks_collection_idx` e `documents_graph_stale_idx`. Fixture pequeno não escolheu o GIN FTS; **nenhuma mudança de índice** sem evidência de workload real.
 - [ ] AUD-005 — ainda real: `retrieval_events.query_text` grava query completa e não há retenção automática. Envolve política de privacidade/retention; não alterar sem decisão explícita.
-- [ ] AUD-023 — ainda real: `app/config.py` usa fallback `POSTGRES_PASSWORD=rag` quando não há `RAG_DSN`; compose PROD exige senha e deploy gera uma, então o risco é principalmente fora do compose/ambientes locais. Exige decisão de compatibilidade antes de remover fallback.
+- [x] AUD-023 — fallback hardcoded `POSTGRES_PASSWORD=rag` removido; sem `RAG_DSN`, `POSTGRES_PASSWORD` agora é obrigatório. `.env.example`, CI e PROD já usam credencial explícita.
 - [x] AUD-002 — direção definida: `top_k` é teto quando adaptive selection está ativo; falta documentação.
 
 ## 7.1 Contrato de CI/release
