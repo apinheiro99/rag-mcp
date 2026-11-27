@@ -144,7 +144,7 @@ Dogfooding após pipeline 697:
 
 - `Strategy pattern`: lexical ~148 ms, `effective_top_k=4`;
 - comparação PostgreSQL/DDD: lexical ~59 ms, decomposition ativa, `effective_top_k=5`;
-- título `RAG with Python Cookbook`: lexical ~686 ms porque o acrônimo curto `RAG` ainda forçava full-text; correção local em andamento para tratar acrônimo contido no título como metadata, não como lexical obrigatório.
+- título `RAG with Python Cookbook`: lexical ~686 ms porque o acrônimo curto `RAG` ainda forçava full-text; correção concluída: acrônimo curto contido em título explícito é tratado como metadata, não como lexical obrigatório. Pipeline 699 (`beda68d`, `main`) PASS; no PROD o mesmo caso caiu de ~686 ms lexical para ~64 ms, mantendo `RAG with Python Cookbook` no topo e `effective_top_k=3`.
 
 
 Já existe em `main`:
