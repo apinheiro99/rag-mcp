@@ -42,23 +42,23 @@
 
     <div class="dashboard-ops-grid">
       <div class="card dashboard-panel">
-        <div class="panel-title"><span class="panel-icon">⌁</span><div><h2>Runtime Health</h2><p>Status of core RAG MCP services.</p></div></div>
+        <div class="panel-title"><span class="panel-icon icon-chip" aria-hidden="true"></span><div><h2>Runtime Health</h2><p>Status of core RAG MCP services.</p></div></div>
         <div id="runtimeHealth" class="status-list"></div>
       </div>
 
       <div class="card dashboard-panel">
-        <div class="panel-title"><span class="panel-icon">◇</span><div><h2>Collection Status</h2><p>Document readiness across collections.</p></div></div>
+        <div class="panel-title"><span class="panel-icon icon-cube" aria-hidden="true"></span><div><h2>Collection Status</h2><p>Document readiness across collections.</p></div></div>
         <div id="collectionStatus" class="collection-status"></div>
       </div>
 
       <div class="card dashboard-panel">
-        <div class="panel-title"><span class="panel-icon">⌁</span><div><h2>Recent Activity</h2><p>Latest indexing, import, sync, and search events.</p></div></div>
+        <div class="panel-title"><span class="panel-icon icon-activity" aria-hidden="true"></span><div><h2>Recent Activity</h2><p>Latest indexing, import, sync, and search events.</p></div></div>
         <div id="dashboardActivity" class="activity-list"></div>
       </div>
     </div>
 
     <div class="card model-runtime-panel">
-      <div class="panel-title"><span class="panel-icon">▣</span><div><h2>Model Runtime</h2><p>Models used by retrieval, classification, and processing.</p></div></div>
+      <div class="panel-title"><span class="panel-icon icon-chip" aria-hidden="true"></span><div><h2>Model Runtime</h2><p>Models used by retrieval, classification, and processing.</p></div></div>
       <div id="modelRuntimeGrid" class="model-runtime-grid"></div>
     </div>
   </section>
@@ -236,7 +236,7 @@
   <!-- ==================== SETTINGS ==================== -->
   <section id="tab-settings" class="tab">
     <div class="card settings-section">
-      <div class="panel-title"><span class="panel-icon">◇</span><div><h2>Models & Runtime</h2><p>Configure models, inference behavior, and runtime execution parameters.</p></div></div>
+      <div class="panel-title"><span class="panel-icon icon-cube" aria-hidden="true"></span><div><h2>Models & Runtime</h2><p>Configure models, inference behavior, and runtime execution parameters.</p></div></div>
       <div class="settings-model-layout">
         <div class="settings-model-list">
           <div class="settings-field-row"><div><b>Embedding Model</b><span>Used for document and query embeddings.</span></div><select id="embeddingModel"></select></div>
@@ -264,13 +264,13 @@
 
     <div class="settings-two-col">
       <div class="card settings-section">
-        <div class="panel-title"><span class="panel-icon">◇</span><div><h2>Collection Search Behavior</h2><p>Configure which collections participate in default search.</p></div></div>
+        <div class="panel-title"><span class="panel-icon icon-cube" aria-hidden="true"></span><div><h2>Collection Search Behavior</h2><p>Configure which collections participate in default search.</p></div></div>
         <div id="collectionBehaviorTable"></div>
       </div>
 
       <div class="card settings-section">
         <div class="card-head">
-          <div class="panel-title"><span class="panel-icon">□</span><div><h2>Directory Sources & Auto-Sync</h2><p>Manage document sources and synchronization cadence.</p></div></div>
+          <div class="panel-title"><span class="panel-icon icon-folder" aria-hidden="true"></span><div><h2>Directory Sources & Auto-Sync</h2><p>Manage document sources and synchronization cadence.</p></div></div>
           <button class="btn primary" onclick="openAddSource()">+ Add Source</button>
         </div>
         <div id="sourcesList"></div>
@@ -278,7 +278,7 @@
     </div>
 
     <div class="card settings-section">
-      <div class="panel-title"><span class="panel-icon">▣</span><div><h2>System / Server</h2><p>Core services, runtime health, and version information.</p></div></div>
+      <div class="panel-title"><span class="panel-icon icon-server" aria-hidden="true"></span><div><h2>System / Server</h2><p>Core services, runtime health, and version information.</p></div></div>
       <div id="systemServerGrid" class="system-server-grid"></div>
     </div>
 
