@@ -158,7 +158,7 @@ def test_query_aware_lexical_runs_even_when_dense_is_strong():
     dense = [{"score": .9} for _ in range(8)]
     intent = analyze_query_intent("What does RRF do in hybrid retrieval?", cfg)
     assert should_apply_lexical("What does RRF do in hybrid retrieval?", dense, 8, cfg, intent=intent) == (
-        True, "query_lexical_intent"
+        True, "query_exact_terms"
     )
 
 
@@ -280,3 +280,22 @@ async def test_semantic_search_decomposition_recovers_missing_side_of_comparison
     aggregate = next(item for item in out["results"] if item["document"] == "Domain-Driven Design.epub")
     assert aggregate["selection"]["method"] == "decomposition"
     assert out["trace_id"] == 123
+
+
+def test_title_only_query_uses_metadata_without_forcing_full_lexical_search():
+    cfg = {
+        "hybrid_enabled": True,
+        "hybrid_query_aware_enabled": True,
+        "hybrid_metadata_terms_max": 4,
+        "hybrid_min_dense_score": .55,
+        "hybrid_min_dense_candidates": 8,
+    }
+    query = "How does Building Microservices describe resilience and failure handling?"
+    intent = analyze_query_intent(query, cfg)
+    assert intent["force_hybrid"] is True
+    assert intent["metadata_terms"] == ["Building Microservices"]
+    assert intent["lexical_terms"] == []
+    dense = [{"score": .8} for _ in range(8)]
+    assert should_apply_lexical(query, dense, 8, cfg, intent=intent) == (
+        False, "dense_sufficient"
+    )

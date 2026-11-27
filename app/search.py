@@ -176,16 +176,18 @@ _QUESTION_STARTERS = {
 def analyze_query_intent(query: str, scfg: dict) -> dict:
     """Detect queries where lexical/title evidence should complement dense retrieval."""
     if not scfg.get("hybrid_query_aware_enabled", True):
-        return {"force_hybrid": False, "reasons": [], "metadata_terms": []}
+        return {"force_hybrid": False, "reasons": [], "metadata_terms": [], "lexical_terms": []}
 
     text = " ".join((query or "").split())
     reasons: list[str] = []
     metadata_terms: list[str] = []
+    lexical_terms: list[str] = []
 
     quoted = [m.group(1).strip() for m in re.finditer(r'["“]([^"”]{2,100})["”]', text)]
     if quoted:
         reasons.append("quoted_phrase")
         metadata_terms.extend(quoted)
+        lexical_terms.extend(quoted)
 
     tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9_+.#:/-]*\b", text)
     technical = []
@@ -201,6 +203,7 @@ def analyze_query_intent(query: str, scfg: dict) -> dict:
     if technical:
         reasons.append("technical_token")
         metadata_terms.extend(technical)
+        lexical_terms.extend(technical)
 
     # Capture title-like phrases such as "RAG with Python Cookbook" or
     # "Domain-Driven Design" without requiring an LLM query planner.
@@ -219,6 +222,8 @@ def analyze_query_intent(query: str, scfg: dict) -> dict:
         if is_title:
             phrase.append(word)
         else:
+            while phrase and phrase[-1].casefold() in joiners:
+                phrase.pop()
             meaningful = [w for w in phrase if w.casefold() not in joiners]
             if len(meaningful) >= 2:
                 phrases.append(" ".join(phrase))
@@ -235,6 +240,7 @@ def analyze_query_intent(query: str, scfg: dict) -> dict:
     if concept:
         reasons.append("named_concept")
         metadata_terms.extend(concept)
+        lexical_terms.extend(concept)
 
     clean_terms: list[str] = []
     for term in metadata_terms:
@@ -245,10 +251,21 @@ def analyze_query_intent(query: str, scfg: dict) -> dict:
             clean_terms.append(term)
     max_terms = max(0, int(scfg.get("hybrid_metadata_terms_max", 4)))
     clean_terms = clean_terms[:max_terms]
+
+    clean_lexical: list[str] = []
+    for term in lexical_terms:
+        term = term.strip(" ,.:;!?")
+        if len(term) < 2:
+            continue
+        if term.casefold() not in {x.casefold() for x in clean_lexical}:
+            clean_lexical.append(term)
+    clean_lexical = clean_lexical[:max_terms]
+
     return {
         "force_hybrid": bool(reasons),
         "reasons": reasons,
         "metadata_terms": clean_terms,
+        "lexical_terms": clean_lexical,
     }
 
 
@@ -412,8 +429,8 @@ def should_apply_lexical(
     if not scfg.get("hybrid_enabled"):
         return False, "disabled"
     intent = intent or analyze_query_intent(query, scfg)
-    if intent.get("force_hybrid"):
-        return True, "query_lexical_intent"
+    if intent.get("lexical_terms"):
+        return True, "query_exact_terms"
     if not dense:
         return True, None
     min_candidates = max(1, min(candidate_k, int(scfg.get("hybrid_min_dense_candidates", candidate_k))))
@@ -699,16 +716,29 @@ async def semantic_search(
                 dense_ms += sum(item[2] for item in subquery_results)
                 db_ms += sum(item[2] for item in subquery_results)
 
+            use_lexical = False
             if hybrid_requested:
-                hybrid, lexical_skipped_reason = should_apply_lexical(
+                use_lexical, lexical_skipped_reason = should_apply_lexical(
                     query, dense, candidate_k, scfg, intent=query_intent
                 )
+            use_metadata = bool(
+                hybrid_requested
+                and query_intent.get("metadata_terms")
+                and query_intent.get("force_hybrid")
+            )
+            hybrid = bool(use_lexical or use_metadata)
             rankings: list[list[dict]] = [dense]
             if hybrid:
                 t = time.perf_counter()
-                lexical = [_format_result(r) for r in await _lexical_search(
-                    query, cols, filters, int(scfg["lexical_candidates"]))]
-                if query_intent.get("metadata_terms"):
+                if use_lexical:
+                    lexical_query = (
+                        " ".join(query_intent["lexical_terms"])
+                        if lexical_skipped_reason == "query_exact_terms"
+                        else query
+                    )
+                    lexical = [_format_result(r) for r in await _lexical_search(
+                        lexical_query, cols, filters, int(scfg["lexical_candidates"]))]
+                if use_metadata:
                     metadata = [_format_result(r) for r in await _metadata_search(
                         query_intent["metadata_terms"],
                         cols,
