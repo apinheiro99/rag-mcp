@@ -129,6 +129,7 @@ Import — checklist literal de `docs/screens/03_import.png`:
 - [x] `Ingestion Progress` usa status, barra, percentual, contadores e Pause/Resume;
 - [x] `Files` usa dropzone central e botões Select files / Select folder;
 - [x] `Ingestion Configuration` usa Manual / Automatic (LLM) e painel explicativo;
+- [x] pipeline 701 validou o pixel-contract em branch;
 - [ ] validação visual final no PROD.
 
 Documents — checklist literal de `docs/screens/04_documents.png`:
@@ -138,6 +139,7 @@ Documents — checklist literal de `docs/screens/04_documents.png`:
 - [x] tabela com Document, Collection, Status, AI Suggestion, Progress, Size, Updated e Actions;
 - [x] linhas usam file badge, progress bar, chips/status e ações compactas;
 - [x] paginação inferior com 25 linhas por página;
+- [x] pipeline 701 validou o pixel-contract em branch;
 - [ ] validação visual final no PROD.
 
 Search — checklist literal de `docs/screens/05_search.png`:
@@ -148,6 +150,7 @@ Search — checklist literal de `docs/screens/05_search.png`:
 - [x] resultado em duas colunas: Answer/evidence à esquerda e Retrieved Results à direita;
 - [x] reason/score/fonte continuam usando dados reais do retrieval;
 - [x] observabilidade técnica continua disponível no código, mas fora do layout principal aprovado;
+- [x] pipeline 701 validou o pixel-contract em branch;
 - [ ] validação visual final no PROD.
 
 Settings — checklist literal de `docs/screens/06_settings.png`:
@@ -158,6 +161,7 @@ Settings — checklist literal de `docs/screens/06_settings.png`:
 - [x] `System / Server` com quatro cards;
 - [x] dados apresentados vêm do runtime/configuração real; nenhum número decorativo foi inventado;
 - [x] controles avançados antigos permanecem no DOM para compatibilidade, mas fora do layout principal aprovado;
+- [x] pipeline 701 validou o pixel-contract em branch;
 - [ ] validação visual final no PROD.
 
 ### Estado atual da UI
