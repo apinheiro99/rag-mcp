@@ -35,10 +35,11 @@ def test_publish_depends_on_all_validation_gates_and_green_tag():
 def test_feature_branches_run_validation_only_and_main_owns_release_side_effects():
     ci = yaml.safe_load(Path(".gitlab-ci.yml").read_text())
     assert ci["stages"] == ["validate", "tag", "release", "publish", "deploy"]
-    for job in ("ci-tag-green", "ci-tag-red", "Build Release", "Publish GitHub", "Deploy Production"):
+    for job in ("ci-tag-green", "Build Release", "Publish GitHub", "Deploy Production"):
         assert "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" in str(ci[job]["rules"])
     assert "Publish Gate" not in ci
     assert "Deploy Gate" not in ci
+    assert "ci-tag-red" not in ci
 
 def test_publish_script_verifies_exact_github_sha():
     script = Path("scripts/publish-github.sh").read_text()
