@@ -30,3 +30,13 @@ def test_repository_commit_reads_current_git_revision(tmp_path):
 
     expected = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
     assert repository_commit(tmp_path) == expected
+
+
+def test_source_sync_change_is_explicitly_transactional():
+    from pathlib import Path
+    source = Path("app/source_sync.py").read_text()
+    assert "async with conn.transaction():" in source
+    delete = source.index('DELETE FROM chunks WHERE document_id=%s')
+    update = source.index('UPDATE documents SET filename=%s', delete)
+    transaction = source.rfind('async with conn.transaction():', 0, delete)
+    assert transaction < delete < update

@@ -9,6 +9,7 @@ Montado em /mcp no mesmo processo/porta da interface web.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -148,22 +149,26 @@ def create_mcp() -> FastMCP:
             doc = await cur.fetchone()
         if not doc:
             return {"error": f"documento {document_id} não encontrado"}
-        text = None
-        cache = extraction_cache_path(str(doc["id"]))
-        if cache.exists():
-            try:
-                from .extraction import ExtractedDoc
-                data = json.loads(cache.read_text(encoding="utf-8"))
-                if data.get("sha256") == doc["content_sha256"]:
-                    text = ExtractedDoc.from_json(data).full_text()
-            except Exception:
-                text = None
-        if text is None:
-            try:
+        def _load_text() -> str:
+            text = None
+            cache = extraction_cache_path(str(doc["id"]))
+            if cache.exists():
+                try:
+                    from .extraction import ExtractedDoc
+                    data = json.loads(cache.read_text(encoding="utf-8"))
+                    if data.get("sha256") == doc["content_sha256"]:
+                        text = ExtractedDoc.from_json(data).full_text()
+                except Exception:
+                    text = None
+            if text is None:
                 extracted = extract(env.data_dir / doc["stored_path"], doc["filename"])
                 text = extracted.full_text()
-            except ExtractionError as e:
-                return {"error": f"não foi possível extrair o documento: {e}"}
+            return text
+
+        try:
+            text = await asyncio.to_thread(_load_text)
+        except ExtractionError as e:
+            return {"error": f"não foi possível extrair o documento: {e}"}
         return {
             "document_id": str(doc["id"]),
             "document": doc["filename"],
