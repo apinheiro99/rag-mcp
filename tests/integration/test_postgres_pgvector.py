@@ -2077,3 +2077,119 @@ async def test_directory_source_rejects_category_from_another_collection(live_db
             api_for_sources.CollectionSourcePatch(category_id=str(category_id)),
         )
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_metadata_retrieval_finds_book_title_outside_chunk_content(live_db, monkeypatch):
+    monkeypatch.setattr(search_module, "db", live_db)
+    col, doc, chunk = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    other_col, other_doc, other_chunk = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, col, f"metadata-{col}", model="integration-test", dim=3)
+        await _insert_collection(conn, other_col, f"metadata-other-{other_col}", model="integration-test", dim=3)
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+               content_sha256,size_bytes,status)
+               VALUES (%s,%s,'RAG with Python Cookbook.pdf','books/RAG with Python Cookbook.pdf',
+                       'blobs/meta',%s,100,'ready')""",
+            (doc, col, uuid.uuid4().hex),
+        )
+        await conn.execute(
+            """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+               VALUES (%s,%s,%s,0,'This opening chunk does not repeat the book title.',TRUE)""",
+            (chunk, doc, col),
+        )
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+               content_sha256,size_bytes,status)
+               VALUES (%s,%s,'RAG with Python Cookbook.pdf','books/RAG with Python Cookbook.pdf',
+                       'blobs/meta-other',%s,100,'ready')""",
+            (other_doc, other_col, uuid.uuid4().hex),
+        )
+        await conn.execute(
+            """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+               VALUES (%s,%s,%s,0,'Other collection copy.',TRUE)""",
+            (other_chunk, other_doc, other_col),
+        )
+
+    rows = await search_module._metadata_search(
+        ["RAG with Python Cookbook"],
+        [{"id": col}],
+        search_module.SearchFilters(),
+        5,
+    )
+    assert rows
+    assert rows[0]["chunk_id"] == chunk
+    assert all(row["document_id"] == doc for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_metadata_retrieval_prefers_more_specific_title_match(live_db, monkeypatch):
+    monkeypatch.setattr(search_module, "db", live_db)
+    col = uuid.uuid4()
+    specific_doc, generic_doc = uuid.uuid4(), uuid.uuid4()
+    specific_chunk, generic_chunk = uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, col, f"metadata-specific-{col}", model="integration-test", dim=3)
+        for doc_id, filename, chunk_id, stored in (
+            (specific_doc, "RAG with Python Cookbook.pdf", specific_chunk, "blobs/specific"),
+            (generic_doc, "Another RAG Handbook.pdf", generic_chunk, "blobs/generic"),
+        ):
+            await conn.execute(
+                """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+                   content_sha256,size_bytes,status)
+                   VALUES (%s,%s,%s,%s,%s,%s,100,'ready')""",
+                (doc_id, col, filename, filename, stored, uuid.uuid4().hex),
+            )
+            await conn.execute(
+                """INSERT INTO chunks(id,document_id,collection_id,seq,content,embedded)
+                   VALUES (%s,%s,%s,0,'fixture content',TRUE)""",
+                (chunk_id, doc_id, col),
+            )
+
+    rows = await search_module._metadata_search(
+        ["RAG", "RAG with Python Cookbook"],
+        [{"id": col}],
+        search_module.SearchFilters(),
+        5,
+    )
+    assert rows
+    assert rows[0]["document_id"] == specific_doc
+
+
+@pytest.mark.asyncio
+async def test_metadata_retrieval_respects_chapter_and_page_filters(live_db, monkeypatch):
+    monkeypatch.setattr(search_module, "db", live_db)
+    col, doc = uuid.uuid4(), uuid.uuid4()
+    wanted, other = uuid.uuid4(), uuid.uuid4()
+    async with live_db.pool.connection() as conn:
+        await _insert_collection(conn, col, f"metadata-filter-{col}", model="integration-test", dim=3)
+        await conn.execute(
+            """INSERT INTO documents(id,collection_id,filename,source_path,stored_path,
+               content_sha256,size_bytes,status,meta)
+               VALUES (%s,%s,'RAG with Python Cookbook.pdf','books/rag.pdf',
+                       'blobs/meta-filter',%s,100,'ready',%s::jsonb)""",
+            (doc, col, uuid.uuid4().hex, json.dumps({"author": "Dominik Polzer"})),
+        )
+        await conn.execute(
+            """INSERT INTO chunks(id,document_id,collection_id,seq,content,loc,embedded)
+               VALUES
+               (%s,%s,%s,0,'chapter seven',%s::jsonb,TRUE),
+               (%s,%s,%s,1,'chapter eight',%s::jsonb,TRUE)""",
+            (
+                wanted, doc, col, json.dumps({"chapter": "Retrieval", "page": 223}),
+                other, doc, col, json.dumps({"chapter": "Agentic RAG", "page": 224}),
+            ),
+        )
+
+    rows = await search_module._metadata_search(
+        ["RAG with Python Cookbook"],
+        [{"id": col}],
+        search_module.SearchFilters(
+            authors=["Polzer"],
+            chapters=["Retrieval"],
+            pages=[223],
+        ),
+        5,
+    )
+    assert [row["chunk_id"] for row in rows] == [wanted]

@@ -1,0 +1,14 @@
+[
+  {"id":"book-title-rag-cookbook","query":"In RAG with Python Cookbook, what three components are used for hybrid search?","expected_sources":["RAG with Python Cookbook"]},
+  {"id":"rrf-exact","query":"What is reciprocal rank fusion (RRF) and why is it useful in hybrid retrieval?","expected_sources":["RAG with Python Cookbook"]},
+  {"id":"bm25-exact","query":"Why is BM25 especially useful for product names, IDs, codes, and domain-specific terms?","expected_sources":["RAG with Python Cookbook"]},
+  {"id":"query-decomposition","query":"When should query decomposition be used or skipped in RAG?","expected_sources":["RAG with Python Cookbook"]},
+  {"id":"multiquery-vs-decomposition","query":"How does query decomposition differ from multiquery retrieval?","expected_sources":["RAG with Python Cookbook"]},
+  {"id":"strategy-pattern","query":"What is the Strategy pattern and how does it encapsulate interchangeable algorithms?","expected_sources":["Head First Design Patterns"]},
+  {"id":"aggregate-root","query":"What is an Aggregate Root and how does it protect invariants?","expected_sources":["Domain-Driven Design"]},
+  {"id":"postgres-mvcc","query":"How do PostgreSQL transaction isolation levels handle dirty reads, nonrepeatable reads, and phantom reads?","expected_sources":["Learning PostgreSQL"]},
+  {"id":"architecture-quality","query":"How do quality attributes and tactics guide software architecture decisions?","expected_sources":["Software Architecture in Practice"]},
+  {"id":"compound-pattern-ddd","query":"Compare the Strategy pattern with an Aggregate Root: what problem does each solve?","expected_sources":["Head First Design Patterns","Domain-Driven Design"]},
+  {"id":"compound-postgres-ddd","query":"Compare PostgreSQL transaction isolation with Domain-Driven Design invariants: what kind of consistency does each protect?","expected_sources":["Learning PostgreSQL","Domain-Driven Design"]},
+  {"id":"compound-rag","query":"Compare hybrid retrieval with query decomposition: when should each technique be used?","expected_sources":["RAG with Python Cookbook"]}
+]
